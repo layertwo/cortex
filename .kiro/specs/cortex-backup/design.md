@@ -2,20 +2,59 @@
 
 ## Overview
 
-Cortex is a zero-knowledge cloud backup system for photos and videos built on AWS serverless infrastructure. The system implements end-to-end encryption where all sensitive data (media content, metadata, tags, collections, and organizational structure) is encrypted client-side before transmission. The server operates exclusively on encrypted data, ensuring that neither service administrators nor the infrastructure provider can access user content.
+Cortex is a zero-knowledge cloud file storage and backup system built on AWS serverless infrastructure. The system implements end-to-end encryption where all sensitive data (file content, metadata, tags, collections, and organizational structure) is encrypted client-side before transmission. The server operates exclusively on encrypted data, ensuring that neither service administrators nor the infrastructure provider can access user content.
+
+The architecture implements a two-password model: an **account password** for authentication with AWS Cognito, and a separate **vault password** for encrypting/decrypting the vault's master key and all data. This separation allows users to change their account password without re-encrypting all vault data, and provides a more flexible security model.
 
 The architecture follows AWS best practices using Lambda for compute, API Gateway for API management, DynamoDB for metadata storage, S3 for object storage, and Cognito for authentication. The Smithy model defines the service contract, enabling type-safe API definitions and automatic SDK generation.
 
 ### Key Design Principles
 
-1. **Zero-Knowledge Architecture**: Server never has access to plaintext data or encryption keys
-2. **Client-Side Encryption**: All encryption/decryption happens on the client device
-3. **Direct S3 Access**: Presigned URLs enable fast uploads/downloads bypassing Lambda
-4. **Serverless Scalability**: Auto-scaling infrastructure with pay-per-use pricing
-5. **Multi-Device Support**: Password-based key derivation enables access from any device
-6. **Privacy-Preserving Search**: Encrypted tags and collections enable organization without exposing content
+1. **True Zero-Knowledge Architecture**: Server never has access to plaintext data, encryption keys, or encrypted key bundles
+2. **Two-Password Model**: Separate account password (authentication) and vault password (data encryption)
+3. **Client-Side Encryption**: All encryption/decryption happens on the client device using ChaCha20-Poly1305
+4. **Direct S3 Access**: Presigned URLs enable fast uploads/downloads bypassing Lambda
+5. **Serverless Scalability**: Auto-scaling infrastructure with pay-per-use pricing
+6. **Multi-Device Support**: Vault password + server-stored salt enables key derivation on any device
+7. **Privacy-Preserving Search**: Encrypted tags and collections enable organization without exposing content
+8. **No Server-Side Key Storage**: Vault keys are derived on-demand and stored only locally on devices
 
 ## Architecture
+
+### Two-Password Security Model
+
+Cortex implements a dual-password architecture that separates authentication from encryption:
+
+**Account Password:**
+- Used for authentication with AWS Cognito
+- Grants access to the user's account and vault metadata
+- Can be changed without re-encrypting vault data
+- Managed by AWS Cognito with standard password policies
+- Supports account recovery via recovery codes
+
+**Vault Password:**
+- Used exclusively for deriving vault encryption keys
+- Never transmitted to or stored by the server
+- Combined with server-stored vault salt to derive vault master key using Argon2id
+- Changing vault password requires re-encrypting all vault data
+- Supports vault recovery via recovery key (derived from vault master key)
+
+**Key Derivation Flow:**
+```
+Vault Password + Vault Salt → [Argon2id] → Vault Master Key (256-bit)
+                                                    ↓
+                                                 [HKDF]
+                                                    ↓
+                        ┌───────────────────────────┼───────────────────────────┐
+                        ↓                           ↓                           ↓
+              Data Encryption Key      Metadata Encryption Key    Share Key Derivation Key
+```
+
+This separation provides:
+- Flexibility to change account credentials without expensive re-encryption
+- True zero-knowledge architecture (server never sees vault password or keys)
+- Multi-device support (vault password + salt enables key derivation on any device)
+- Independent recovery mechanisms for account access vs. data access
 
 ### High-Level Architecture
 
@@ -86,58 +125,89 @@ The architecture follows AWS best practices using Lambda for compute, API Gatewa
 7. Client decrypts media locally
 
 **Multi-Device Flow:**
-1. New device: User enters password
-2. Client derives key from password using Argon2id
-3. Client retrieves encrypted key bundle from DynamoDB
-4. Client decrypts key bundle to obtain master key
-5. Client can now decrypt all user's media and metadata
+1. New device: User enters account password (authenticates with Cognito)
+2. User enters vault password
+3. Client retrieves vault salt from DynamoDB
+4. Client derives vault master key from vault password + salt using Argon2id
+5. Client derives data encryption key and metadata encryption key from vault master key using HKDF
+6. Client stores derived keys encrypted locally on device
+7. Client can now decrypt all user's files and metadata
 
-**Recovery Key Flow:**
-1. Initial setup: Client generates recovery key (BIP39 mnemonic format)
-2. Client displays recovery key to user with instructions to store securely offline
+**Vault Recovery Key Flow:**
+1. Initial setup: Client generates vault recovery key derived from vault master key
+2. Client displays recovery key to user once with instructions to store securely offline
 3. User confirms they have saved the recovery key before proceeding
-4. Password forgotten: User initiates recovery process
-5. User enters recovery key for authentication
-6. Client validates recovery key against stored hash
-7. Upon successful validation, user sets new password
-8. Client re-encrypts key bundle with new password-derived key
-9. Client updates encrypted key bundle in DynamoDB
+4. Vault password forgotten: User initiates recovery process
+5. User enters vault recovery key
+6. Client uses recovery key to re-derive the vault master key
+7. Upon successful validation, user sets new vault password
+8. Client continues using the same vault master key (no re-encryption needed)
+9. Server never receives or stores the vault recovery key
 
 ## Components and Interfaces
 
 ### 1. Client Application
 
 **Responsibilities:**
-- Generate and manage encryption keys
+- Generate and manage vault encryption keys locally
 - Encrypt/decrypt all user data before transmission/after receipt
-- Perform local image recognition for tagging
-- Derive keys from user passwords
-- Manage encrypted key bundles
+- Perform optional local content analysis for tagging
+- Derive vault master key from vault password + vault salt using Argon2id
+- Derive data and metadata encryption keys from vault master key using HKDF
+- Store derived keys encrypted locally on device only
 - Coordinate concurrent uploads for improved throughput (configurable based on network conditions)
+- Never transmit vault keys or vault password to server
+- Manage account password separately from vault password
+- Validate passwords against breach databases and enforce strength requirements
+- Handle automatic vault key rotation every 90 days
 
 **Key Modules:**
 
 **Encryption Engine:**
-- Algorithm: AES-256-GCM for symmetric encryption
-- Key derivation: Argon2id for password-to-key derivation
-- Random IV generation for each encryption operation
+- Algorithm: ChaCha20-Poly1305 for symmetric encryption (fast, secure, authenticated)
+- Key derivation: Argon2id for vault password-to-key derivation (64MB memory, 3 iterations, 4 parallelism)
+- HKDF for deriving multiple keys from vault master key
+- Random nonce generation for each encryption operation
 - Authenticated encryption to prevent tampering
 
 **Key Management:**
-- Master key generation (256-bit random key)
-- Password-based key derivation (Argon2id with salt)
-- Key bundle encryption/decryption
-- Recovery key generation (BIP39 mnemonic or similar)
-- Recovery key display and secure storage guidance for users
-- Recovery key validation during password reset flow
+- **Two-Password Architecture**: Separate account password (for AWS Cognito authentication) and vault password (for data encryption)
+- **Vault Master Key Derivation**: Argon2id(vault_password, vault_salt) → 256-bit vault master key
+- **Derived Key Generation**: HKDF used to derive multiple keys from vault master key:
+  - Data encryption key (for file content encryption)
+  - Metadata encryption key (for metadata, tags, collections encryption)
+  - Share key derivation key (for generating file share keys)
+- **Local Key Storage**: Derived keys encrypted with device-specific key and stored locally only (never transmitted to server)
+- **Vault Recovery Key**: Generated from vault master key, displayed once to user with secure offline storage guidance
+- **Recovery Key Validation**: Enables vault password reset without re-encrypting data
+- **Account Password Management**: Handled separately via AWS Cognito, can be changed without affecting vault encryption
+- **Password Validation**: Enforces minimum 12 characters, complexity requirements (uppercase, lowercase, numbers, special characters), and breach database checking
+- **Key Rotation**: Automatic vault key rotation every 90 days with background re-encryption
 
-**Image Recognition:**
-- Local ML model (e.g., TensorFlow Lite for mobile, Core ML for iOS, ONNX Runtime for desktop)
-- Offline tag generation (no network requests during recognition)
+**Content Analysis (Optional):**
+- Local ML model for image/video analysis (e.g., TensorFlow Lite for mobile, Core ML for iOS, ONNX Runtime for desktop)
+- Offline tag generation (no network requests during analysis)
 - Privacy-preserving (no data sent to external services or cloud APIs)
 - Model runs entirely on-device before encryption
 - Generated tags are encrypted before any transmission
 - Recommended models: MobileNet, EfficientNet (optimized for on-device inference)
+- Supports any file type, but analysis is optional and file-type specific
+
+**Sharing Module:**
+- Generate unique share keys for individual files (derived from share key derivation key)
+- Create share URLs containing file ID and base64-encoded share key
+- Support optional password protection (double-encrypt share key with password-derived key)
+- Handle time-limited expiration for shares
+- Enable share revocation
+- Anonymous access to shared files (no authentication required)
+
+**Key Rotation Module:**
+- Monitor key age and trigger rotation after 90 days
+- Generate new derived keys from vault master key using updated HKDF context
+- Re-encrypt vault data in background with new keys
+- Maintain dual-key access during transition period
+- Update local encrypted key storage upon completion
+- Minimize user disruption during rotation process
 
 ### 2. API Gateway
 
@@ -153,8 +223,12 @@ The architecture follows AWS best practices using Lambda for compute, API Gatewa
 **API Versioning Strategy:** The API uses URI versioning (e.g., `/v1/media/list`) to support backward-compatible evolution. The current version is v1. Breaking changes will result in a new version (v2), while non-breaking changes can be added to existing versions.
 
 ```
-POST   /v1/auth/login              - Initiate authentication
+POST   /v1/auth/login              - Initiate authentication with account password
 POST   /v1/auth/refresh            - Refresh credentials
+POST   /v1/auth/recover            - Initiate account recovery with recovery code
+
+POST   /v1/vaults                  - Create new vault with vault salt
+GET    /v1/vaults/{id}/salt        - Retrieve vault salt for key derivation
 
 POST   /v1/media/upload/init       - Initialize upload, get presigned URL
 POST   /v1/media/upload/complete   - Mark upload complete, store metadata
@@ -172,9 +246,13 @@ POST   /v1/collections/{id}/media  - Add media to collection
 DELETE /v1/collections/{id}/media/{mediaId} - Remove media from collection
 
 GET    /v1/tags/search             - Search by encrypted tag
-POST   /v1/keys/bundle             - Store encrypted key bundle
-GET    /v1/keys/bundle             - Retrieve encrypted key bundle
-PUT    /v1/keys/bundle             - Update encrypted key bundle
+
+POST   /v1/shares                  - Create file share with metadata
+GET    /v1/shares/{id}             - Access shared file (anonymous)
+DELETE /v1/shares/{id}             - Revoke share
+
+POST   /v1/recovery/codes          - Generate account recovery codes
+POST   /v1/recovery/validate       - Validate recovery code
 ```
 
 ### 3. Lambda Functions
@@ -209,15 +287,31 @@ PUT    /v1/keys/bundle             - Update encrypted key bundle
 - Manages media-collection associations
 - Supports multi-collection membership
 
-**Key Bundle Handler:**
-- Stores/retrieves encrypted key bundles
-- No access to plaintext keys
-- One bundle per user
+**Vault Salt Handler:**
+- Stores/retrieves vault salts for key derivation
+- Salt is non-secret information used for Argon2id
+- One salt per vault, generated using cryptographically secure random number generator
+- Ensures each vault salt is unique and never reused
+- No access to vault keys or passwords
+
+**Account Recovery Handler:**
+- Stores/retrieves account recovery codes (10 codes per user)
+- Validates recovery codes during account recovery flow
+- Invalidates used recovery codes to prevent reuse
+- Separate from vault recovery keys (which are never stored on server)
 
 **Tag Search Handler:**
 - Searches encrypted tags using exact match
 - Returns matching media items
 - No plaintext tag access
+
+**Share Handler:**
+- Creates share records with metadata (expiration, password protection flag)
+- Validates share access (checks expiration and revocation status)
+- Enables anonymous access to shared files
+- Increments access counter on each retrieval
+- Never stores share keys (embedded in URLs)
+- Generates presigned S3 URLs for shared file downloads
 
 ### 4. DynamoDB Schema
 
@@ -228,37 +322,50 @@ SK: PROFILE
 Attributes:
   - userId (string)
   - cognitoId (string)
+  - email (string)
   - createdAt (timestamp)
-  - encryptedKeyBundle (binary) - encrypted master key
-  - keyBundleSalt (binary) - salt for key derivation
-  - recoveryKeyHash (string) - hash of recovery key for validation
+  - updatedAt (timestamp)
 ```
 
-**Media Table:**
+**Vaults Table:**
 ```
 PK: USER#{userId}
-SK: MEDIA#{mediaId}
+SK: VAULT#{vaultId}
 Attributes:
-  - mediaId (string)
+  - vaultId (string)
+  - userId (string)
+  - vaultSalt (binary) - salt for Argon2id key derivation (non-secret)
+  - createdAt (timestamp)
+  - lastAccessedAt (timestamp)
+```
+
+**Files Table:**
+```
+PK: VAULT#{vaultId}
+SK: FILE#{fileId}
+Attributes:
+  - fileId (string)
+  - vaultId (string)
   - userId (string)
   - s3Key (string) - path in S3
-  - encryptedMetadata (binary) - encrypted filename, size, type, etc.
+  - encryptedMetadata (binary) - encrypted filename, size, MIME type, etc.
   - encryptedTags (list<binary>) - list of encrypted tags
   - uploadedAt (timestamp) - for sorting/filtering
   - sizeBytes (number) - for storage calculations
   
 GSI1:
-  PK: USER#{userId}#TAG#{encryptedTag}
-  SK: MEDIA#{mediaId}
-  - Enables tag-based queries
+  PK: VAULT#{vaultId}#TAG#{encryptedTag}
+  SK: FILE#{fileId}
+  - Enables tag-based queries within a vault
 ```
 
 **Collections Table:**
 ```
-PK: USER#{userId}
+PK: VAULT#{vaultId}
 SK: COLLECTION#{collectionId}
 Attributes:
   - collectionId (string)
+  - vaultId (string)
   - userId (string)
   - encryptedMetadata (binary) - encrypted name, description
   - createdAt (timestamp)
@@ -266,20 +373,54 @@ Attributes:
   - itemCount (number)
 ```
 
-**Media-Collection Association Table:**
+**File-Collection Association Table:**
 ```
 PK: COLLECTION#{collectionId}
-SK: MEDIA#{mediaId}
+SK: FILE#{fileId}
 Attributes:
   - collectionId (string)
-  - mediaId (string)
+  - fileId (string)
+  - vaultId (string)
   - userId (string)
   - addedAt (timestamp)
 
 GSI1:
-  PK: MEDIA#{mediaId}
+  PK: FILE#{fileId}
   SK: COLLECTION#{collectionId}
-  - Enables reverse lookup (which collections contain this media)
+  - Enables reverse lookup (which collections contain this file)
+```
+
+**Shares Table:**
+```
+PK: SHARE#{shareId}
+SK: METADATA
+Attributes:
+  - shareId (string)
+  - fileId (string)
+  - vaultId (string)
+  - userId (string)
+  - createdAt (timestamp)
+  - expiresAt (timestamp)
+  - isPasswordProtected (boolean)
+  - isRevoked (boolean)
+  - accessCount (number)
+  - lastAccessedAt (timestamp)
+
+Note: Share key is NOT stored on server - it's embedded in the share URL
+```
+
+**Account Recovery Table:**
+```
+PK: USER#{userId}
+SK: RECOVERY#{codeHash}
+Attributes:
+  - userId (string)
+  - codeHash (string) - SHA-256 hash of recovery code
+  - createdAt (timestamp)
+  - usedAt (timestamp) - null if unused
+  - isValid (boolean)
+
+Note: Recovery codes are hashed before storage. 10 codes generated per user.
 ```
 
 ### 5. S3 Bucket Structure
@@ -294,7 +435,7 @@ GSI1:
 
 **Object Key Structure:**
 ```
-users/{userId}/media/{mediaId}/{timestamp}-{random}
+vaults/{vaultId}/files/{fileId}/{timestamp}-{random}
 ```
 
 **Presigned URL Configuration:**
@@ -306,55 +447,72 @@ users/{userId}/media/{mediaId}/{timestamp}-{random}
 ### 6. Cognito Configuration
 
 **User Pool:**
-- Email/password authentication
-- MFA optional (recommended)
-- Password policy: minimum 12 characters, complexity requirements
-- Account recovery via email
+- Email/password authentication (account password only, not vault password)
+- MFA optional (recommended for additional security)
+- Password policy: minimum 12 characters, complexity requirements (uppercase, lowercase, numbers, special characters)
+- Account recovery via email or recovery codes
+- Custom authentication flow for recovery code validation
 
 **Identity Pool:**
 - Federated identities for OIDC support
 - Role-based access control
 - Scoped IAM policies per user
 
-**IAM Policy Template (per user):**
+**IAM Policy Approach:**
+- No per-user IAM policies required
+- All S3 access via scoped presigned URLs generated by Lambda functions
+- Presigned URLs are scoped to specific objects and operations (PUT or GET)
+- Lambda functions have IAM roles with permissions to generate presigned URLs and access DynamoDB
+- API Gateway validates user identity via SigV4 and passes user context to Lambda
+- Lambda enforces access control by:
+  - Verifying user owns the vault before generating presigned URLs
+  - Scoping presigned URLs to the specific file path (vaults/{vaultId}/files/{fileId}/...)
+  - Setting appropriate expiration times (15 minutes)
+  - Validating user permissions before any DynamoDB operations
+
+**Lambda Execution Role (example):**
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject"],
-      "Resource": "arn:aws:s3:::cortex-media-bucket/users/${cognito-identity.amazonaws.com:sub}/*"
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::cortex-files-bucket/vaults/*"
     },
     {
       "Effect": "Allow",
-      "Action": ["execute-api:Invoke"],
-      "Resource": "arn:aws:execute-api:region:account:api-id/*/POST|GET|PUT|DELETE/*"
+      "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
+      "Resource": [
+        "arn:aws:dynamodb:region:account:table/cortex-users",
+        "arn:aws:dynamodb:region:account:table/cortex-vaults",
+        "arn:aws:dynamodb:region:account:table/cortex-files",
+        "arn:aws:dynamodb:region:account:table/cortex-collections",
+        "arn:aws:dynamodb:region:account:table/cortex-shares"
+      ]
     }
   ]
 }
 ```
 
-**Note:** Users only have direct S3 access for uploading/downloading via presigned URLs (scoped to their own prefix). All DynamoDB operations are performed by Lambda functions on behalf of the user. The API Gateway validates the user's identity via SigV4 and passes the user context to Lambda, which enforces access control.
+**Note:** Users never have direct S3 or DynamoDB access. All access is mediated through Lambda functions that generate scoped presigned URLs for S3 operations and enforce user isolation for all data operations.
 
 ## Data Models
 
 ### Client-Side Data Models
 
-**Media Item (Plaintext - Client Only):**
+**File Item (Plaintext - Client Only):**
 ```typescript
-interface MediaItem {
+interface FileItem {
   id: string;
   filename: string;
   mimeType: string;
   sizeBytes: number;
-  width?: number;
-  height?: number;
-  duration?: number; // for videos
-  capturedAt?: Date;
   uploadedAt: Date;
+  modifiedAt?: Date;
   tags: string[];
   collections: string[];
+  customMetadata?: Record<string, string>; // extensible for file-type specific metadata
 }
 ```
 
@@ -371,31 +529,41 @@ interface Collection {
 }
 ```
 
-**Encryption Key Bundle (Client):**
+**Vault Keys (Client Only - Never Transmitted):**
 ```typescript
-interface KeyBundle {
-  masterKey: Uint8Array; // 256-bit AES key
+interface VaultKeys {
+  vaultMasterKey: Uint8Array; // 256-bit key derived from vault password using Argon2id
+  dataEncryptionKey: Uint8Array; // derived from master key via HKDF
+  metadataEncryptionKey: Uint8Array; // derived from master key via HKDF
+  shareKeyDerivationKey: Uint8Array; // derived from master key via HKDF for generating share keys
   version: number; // for key rotation
   createdAt: Date;
+  lastRotatedAt: Date;
 }
 
-interface EncryptedKeyBundle {
-  encryptedData: Uint8Array; // encrypted KeyBundle
-  salt: Uint8Array; // for password derivation
-  nonce: Uint8Array; // for AES-GCM
-  version: number;
+interface LocalKeyStorage {
+  encryptedKeys: Uint8Array; // VaultKeys encrypted with device-specific key
+  deviceId: string;
+  lastUsedAt: Date;
+}
+
+interface VaultRecoveryKey {
+  recoveryKey: string; // BIP39 mnemonic derived from vault master key
+  createdAt: Date;
+  // Never transmitted to server, displayed once to user
 }
 ```
 
 ### Server-Side Data Models (All Encrypted)
 
-**Stored Media Metadata:**
+**Stored File Metadata:**
 ```typescript
-interface StoredMediaMetadata {
+interface StoredFileMetadata {
+  vaultId: string;
   userId: string;
-  mediaId: string;
+  fileId: string;
   s3Key: string;
-  encryptedMetadata: Uint8Array; // encrypted MediaItem
+  encryptedMetadata: Uint8Array; // encrypted FileItem
   encryptedTags: Uint8Array[]; // each tag encrypted separately
   uploadedAt: number; // timestamp for sorting
   sizeBytes: number; // for storage tracking
@@ -405,6 +573,7 @@ interface StoredMediaMetadata {
 **Stored Collection:**
 ```typescript
 interface StoredCollection {
+  vaultId: string;
   userId: string;
   collectionId: string;
   encryptedMetadata: Uint8Array; // encrypted Collection
@@ -421,10 +590,10 @@ All encrypted data follows this structure:
 [nonce (12 bytes)][encrypted data][auth tag (16 bytes)]
 ```
 
-Using AES-256-GCM:
+Using ChaCha20-Poly1305:
 - Nonce: 96-bit random value (unique per encryption)
 - Auth tag: 128-bit authentication tag
-- Algorithm: AES-256-GCM
+- Algorithm: ChaCha20-Poly1305
 - Key size: 256 bits
 
 ### Tag Encryption Strategy
@@ -448,9 +617,9 @@ rectness Properties
 
 ### Property 1: Client-side encryption before transmission
 
-*For any* user data (media content, metadata, tags, or collection information), when the client prepares to send it to the server, the transmitted data must be encrypted and must not match the plaintext original.
+*For any* user data (file content, metadata, tags, or collection information), when the client prepares to send it to the server, the transmitted data must be encrypted using ChaCha20-Poly1305 and must not match the plaintext original.
 
-**Validates: Requirements 1.1, 2.1, 11.2, 12.1, 13.1**
+**Validates: Requirements 1.1, 2.1, 11.1, 12.1, 13.1**
 
 ### Property 2: Server storage preserves encryption
 
@@ -460,37 +629,37 @@ rectness Properties
 
 ### Property 3: Server responses contain only encrypted data
 
-*For any* API response containing user data (media lists, metadata, collections, tags), all sensitive fields in the response must be encrypted and must not contain plaintext user information.
+*For any* API response containing user data (file lists, metadata, collections, tags), all sensitive fields in the response must be encrypted and must not contain plaintext user information.
 
 **Validates: Requirements 2.3, 10.3, 12.4, 13.5**
 
-### Property 4: User data isolation
+### Property 4: Vault data isolation
 
-*For any* two distinct users A and B, user A must not be able to access, modify, or delete any resources (media, metadata, collections) belonging to user B, regardless of the API operation attempted.
+*For any* two distinct vaults A and B, a user with access to vault A must not be able to access, modify, or delete any resources (files, metadata, collections) belonging to vault B, regardless of the API operation attempted.
 
 **Validates: Requirements 2.4, 3.3, 4.3, 5.1**
 
 ### Property 5: Referential integrity between S3 and DynamoDB
 
-*For any* media item, if metadata exists in DynamoDB, then the corresponding encrypted object must exist in S3, and if an encrypted object exists in S3, then corresponding metadata must exist in DynamoDB.
+*For any* file, if metadata exists in DynamoDB, then the corresponding encrypted object must exist in S3, and if an encrypted object exists in S3, then corresponding metadata must exist in DynamoDB.
 
 **Validates: Requirements 2.5**
 
-### Property 6: Encryption keys never transmitted to server
+### Property 6: Vault keys never transmitted to server
 
-*For any* API request or response in the system, the plaintext master key, password-derived keys, or recovery keys must never appear in the request/response payload, headers, or logs.
+*For any* API request or response in the system, the vault master key, data encryption key, metadata encryption key, vault password, or vault recovery key must never appear in the request/response payload, headers, or logs.
 
-**Validates: Requirements 3.6, 9.1, 9.3, 15.5**
+**Validates: Requirements 3.6, 9.3, 14.6, 15.5, 16.4**
 
 ### Property 7: Upload and download round-trip preserves content
 
-*For any* media item, uploading the encrypted media and then downloading it must result in the same plaintext content after client-side decryption (encryption and decryption are inverse operations).
+*For any* file, uploading the encrypted file and then downloading it must result in the same plaintext content after client-side decryption (encryption and decryption are inverse operations).
 
 **Validates: Requirements 4.2**
 
 ### Property 8: Deletion maintains referential integrity
 
-*For any* media item deletion operation, either both the S3 object and DynamoDB metadata are successfully deleted, or both remain unchanged (atomic deletion or rollback on failure).
+*For any* file deletion operation, either both the S3 object and DynamoDB metadata are successfully deleted, or both remain unchanged (atomic deletion or rollback on failure).
 
 **Validates: Requirements 5.2, 5.3, 5.4**
 
@@ -502,76 +671,126 @@ rectness Properties
 
 ### Property 10: All server-stored data is encrypted
 
-*For any* data stored in S3 or DynamoDB (media files, metadata, tags, collections, key bundles), the stored representation must be encrypted and must not be readable without the user's encryption keys.
+*For any* data stored in S3 or DynamoDB (files, metadata, tags, collections), the stored representation must be encrypted and must not be readable without the vault's encryption keys.
 
-**Validates: Requirements 9.2, 9.5, 16.1, 16.2, 16.4**
+**Validates: Requirements 9.2, 9.5, 16.1, 16.2**
 
-### Property 11: Media list queries respect user boundaries
+### Property 11: File list queries respect vault boundaries
 
-*For any* user's media list query (with any pagination, filtering, or sorting parameters), the results must contain only media items belonging to that user and must include all of that user's media items that match the query criteria.
+*For any* vault's file list query (with any pagination, filtering, or sorting parameters), the results must contain only files belonging to that vault and must include all of that vault's files that match the query criteria.
 
 **Validates: Requirements 10.1, 10.4**
 
 ### Property 12: Pagination consistency
 
-*For any* paginated media list query, iterating through all pages must return each media item exactly once, with no duplicates and no omissions.
+*For any* paginated file list query, iterating through all pages must return each file exactly once, with no duplicates and no omissions.
 
 **Validates: Requirements 10.2**
 
 ### Property 13: Encrypted tag search functionality
 
-*For any* tag search query, the client must encrypt the search term before sending, and the server must return all media items with matching encrypted tags without accessing plaintext tag values.
+*For any* tag search query, the client must encrypt the search term before sending, and the server must return all files with matching encrypted tags without accessing plaintext tag values.
 
-**Validates: Requirements 11.4, 11.5**
+**Validates: Requirements 11.3, 11.4**
 
-### Property 14: Media-collection many-to-many relationships
+### Property 14: File-collection many-to-many relationships
 
-*For any* media item and any set of collections, the media item can be added to multiple collections simultaneously, and each collection correctly reports the media item as a member.
+*For any* file and any set of collections, the file can be added to multiple collections simultaneously, and each collection correctly reports the file as a member.
 
 **Validates: Requirements 12.3, 12.5**
 
-### Property 15: Collection deletion preserves media
+### Property 15: Collection deletion preserves files
 
-*For any* collection containing media items, deleting the collection must remove all media-collection associations and the collection metadata, but all media items must remain accessible and unchanged.
+*For any* collection containing files, deleting the collection must remove all file-collection associations and the collection metadata, but all files must remain accessible and unchanged.
 
 **Validates: Requirements 13.3, 13.4**
 
-### Property 16: Media removal from collection preserves media
+### Property 16: File removal from collection preserves file
 
-*For any* media item in a collection, removing the media from the collection must delete only the association, leaving both the media item and the collection intact and accessible.
+*For any* file in a collection, removing the file from the collection must delete only the association, leaving both the file and the collection intact and accessible.
 
 **Validates: Requirements 13.2**
 
-### Property 17: Key bundle round-trip with password
+### Property 17: Vault key derivation is deterministic
 
-*For any* master key and password, encrypting the master key to create a key bundle, storing it, retrieving it, and decrypting with the same password must return the original master key.
+*For any* vault password and vault salt, deriving the vault master key using Argon2id must produce the same key every time, enabling multi-device access with the same credentials.
 
-**Validates: Requirements 14.1, 14.5**
+**Validates: Requirements 14.1, 14.2, 14.5**
 
-### Property 18: Recovery key enables password reset
+### Property 18: Vault recovery key enables vault access
 
-*For any* user account with a recovery key, using the recovery key to authenticate must allow setting a new password, and the re-encrypted key bundle must decrypt with the new password to return the original master key.
+*For any* vault with a recovery key, using the recovery key must allow re-deriving the vault master key, enabling the user to set a new vault password while maintaining access to all encrypted data.
 
-**Validates: Requirements 15.3, 15.4**
+**Validates: Requirements 15.3**
 
 ### Property 19: Administrator cannot access plaintext data
 
-*For any* data stored in the system (S3, DynamoDB, logs), an administrator with full AWS console access but without the user's password or keys must not be able to decrypt or determine the content, subject matter, or organizational structure of user data.
+*For any* data stored in the system (S3, DynamoDB, logs), an administrator with full AWS console access but without the vault password or keys must not be able to decrypt or determine the content, subject matter, or organizational structure of user data.
 
 **Design Rationale:** This property is fundamental to the zero-knowledge architecture. All encryption happens client-side with keys that never leave the client. Even with full infrastructure access, administrators can only see:
 - Encrypted binary blobs in S3
 - Encrypted metadata in DynamoDB
-- User IDs and timestamps (non-sensitive)
+- User IDs, vault IDs, and timestamps (non-sensitive)
+- Vault salts (non-secret, useless without vault password)
 - System metrics and performance data
 
 Administrators cannot determine:
-- What media content depicts (photos of what, videos of what)
+- What file content contains
 - Original filenames or descriptions
+- File types or MIME types
 - Tag meanings or search terms
 - Collection names or organizational structure
-- Relationships between media items
+- Relationships between files
 
 **Validates: Requirements 16.1, 16.2, 16.3, 16.4, 16.5**
+
+### Property 20: Share keys enable file access without vault password
+
+*For any* shared file, a recipient with the share URL (containing the share key) must be able to decrypt and access the file without knowing the vault password or having access to the vault's encryption keys.
+
+**Validates: Requirements 17.1, 17.4**
+
+### Property 21: Account password change does not affect vault encryption
+
+*For any* user account, changing the account password must not require re-encryption of any vault data, and all previously encrypted files must remain accessible with the unchanged vault password.
+
+**Validates: Requirements 23.1**
+
+### Property 22: Vault password change requires data re-encryption
+
+*For any* vault, changing the vault password must result in deriving a new vault master key and re-encrypting all vault data with keys derived from the new master key.
+
+**Validates: Requirements 23.3, 23.4**
+
+### Property 23: Password strength validation
+
+*For any* password (account or vault), the system must reject passwords shorter than 12 characters or lacking uppercase letters, lowercase letters, numbers, and special characters.
+
+**Validates: Requirements 21.1, 21.2**
+
+### Property 24: Breached password detection
+
+*For any* password being created or changed, if the password appears in known breach databases, the system must reject it and require the user to choose a different password.
+
+**Validates: Requirements 21.3, 21.4**
+
+### Property 25: Account recovery code validation
+
+*For any* valid unused account recovery code, using it for account recovery must grant access to the account and invalidate that specific code, while leaving other codes valid.
+
+**Validates: Requirements 19.2, 19.3**
+
+### Property 26: Automatic key rotation preserves data access
+
+*For any* vault undergoing automatic key rotation (after 90 days), all previously encrypted data must remain accessible during and after the rotation process, with new data encrypted using the new keys.
+
+**Validates: Requirements 20.1, 20.2, 20.3, 20.4, 20.5**
+
+### Property 27: Vault salt uniqueness
+
+*For any* two distinct vaults, their vault salts must be different, ensuring that the same vault password produces different vault master keys for different vaults.
+
+**Validates: Requirements 22.4**
 
 ## Error Handling
 
@@ -591,6 +810,18 @@ Administrators cannot determine:
 - Token expiration: Automatic refresh using refresh token
 - Invalid credentials: Prompt user to re-authenticate
 - Network timeout: Retry authentication request
+- Account recovery: Validate recovery code and allow password reset
+
+**Password Validation Failures:**
+- Weak password: Display specific requirements not met (length, complexity)
+- Breached password: Reject with explanation and require different password
+- Password mismatch: Prompt user to re-enter confirmation
+- Vault password same as account password: Warn user and recommend different passwords
+
+**Key Rotation Failures:**
+- Re-encryption errors: Retry failed files, maintain old keys until completion
+- Network interruption during rotation: Resume from last successful file
+- Storage errors: Roll back to previous key version if critical failure occurs
 
 ### Server-Side Error Handling
 
@@ -641,6 +872,12 @@ Error codes:
 - `RATE_LIMIT_EXCEEDED`: Too many requests
 - `INTERNAL_ERROR`: Server-side error
 - `STORAGE_ERROR`: S3 or DynamoDB error
+- `SHARE_EXPIRED`: Share link has expired
+- `SHARE_REVOKED`: Share has been revoked by owner
+- `RECOVERY_CODE_INVALID`: Recovery code is invalid or already used
+- `PASSWORD_TOO_WEAK`: Password does not meet strength requirements
+- `PASSWORD_BREACHED`: Password found in breach database
+- `VAULT_SALT_NOT_FOUND`: Vault salt not found for key derivation
 
 ## Testing Strategy
 
@@ -668,6 +905,17 @@ Unit tests will verify specific functionality of individual components:
 - Test that presigned URL has correct expiration time
 - Test that deleting non-existent media returns 404
 - Test that pagination with page_size=10 returns at most 10 items
+- Test that password shorter than 12 characters is rejected
+- Test that password without special character is rejected
+- Test that breached password is rejected
+- Test that valid unused recovery code grants access
+- Test that used recovery code is rejected
+- Test that expired share returns 403
+- Test that revoked share returns 403
+- Test that HKDF derives different keys for different contexts
+- Test that vault salt is unique for each vault
+- Test that account password change does not affect vault keys
+- Test that vault password change triggers re-encryption
 
 ### Property-Based Testing
 
@@ -681,7 +929,7 @@ Property-based testing will verify universal properties across many randomly gen
 **Property Test Requirements:**
 - Each property test must run at least 100 iterations with randomly generated inputs
 - Each property test must be tagged with a comment referencing the design document property
-- Tag format: `# Feature: cortex-backup, Property {number}: {property_text}`
+- Tag format: `# Feature: cortex, Property {number}: {property_text}`
 - Each correctness property must be implemented by a single property-based test
 
 **Test Data Generators:**
@@ -725,7 +973,7 @@ Property-based testing will verify universal properties across many randomly gen
        master_key=binary(min_size=32, max_size=32))
 def test_client_encrypts_before_transmission(media_content, master_key):
     """
-    Feature: cortex-backup, Property 1: Client-side encryption before transmission
+    Feature: cortex, Property 1: Client-side encryption before transmission
     """
     encrypted = encrypt_media(media_content, master_key)
     assert encrypted != media_content
@@ -739,7 +987,7 @@ def test_client_encrypts_before_transmission(media_content, master_key):
        media_item=media_generator())
 def test_user_data_isolation(user_a, user_b, media_item):
     """
-    Feature: cortex-backup, Property 4: User data isolation
+    Feature: cortex, Property 4: User data isolation
     """
     assume(user_a.id != user_b.id)
     
@@ -757,7 +1005,7 @@ def test_user_data_isolation(user_a, user_b, media_item):
        master_key=binary(min_size=32, max_size=32))
 def test_upload_download_roundtrip(media_content, master_key):
     """
-    Feature: cortex-backup, Property 7: Upload and download round-trip preserves content
+    Feature: cortex, Property 7: Upload and download round-trip preserves content
     """
     # Encrypt and upload
     encrypted = encrypt_media(media_content, master_key)
@@ -776,7 +1024,7 @@ def test_upload_download_roundtrip(media_content, master_key):
        page_size=integers(min_value=1, max_value=100))
 def test_pagination_consistency(media_items, page_size):
     """
-    Feature: cortex-backup, Property 12: Pagination consistency
+    Feature: cortex, Property 12: Pagination consistency
     """
     # Upload all media items
     for item in media_items:
@@ -803,7 +1051,7 @@ def test_pagination_consistency(media_items, page_size):
        password=text(min_size=12, max_size=128))
 def test_key_bundle_roundtrip(master_key, password):
     """
-    Feature: cortex-backup, Property 17: Key bundle round-trip with password
+    Feature: cortex, Property 17: Key bundle round-trip with password
     """
     # Create encrypted key bundle
     salt = generate_salt()
@@ -827,10 +1075,19 @@ Integration tests verify end-to-end workflows:
 
 - Complete upload flow: authenticate → get presigned URL → upload to S3 → store metadata
 - Complete download flow: authenticate → list media → get download URL → download from S3
-- Multi-device flow: setup on device 1 → login on device 2 → access same media
+- Multi-device flow: setup on device 1 → login on device 2 with vault password → access same media
 - Collection management: create collection → add media → retrieve collection → delete collection
 - Tag search: upload with tags → search by tag → verify results
 - Error recovery: simulate S3 failure during upload → verify cleanup
+- Two-password flow: change account password → verify vault access unchanged → change vault password → verify re-encryption
+- Account recovery: use recovery code → reset account password → verify account access restored
+- Vault recovery: use recovery key → reset vault password → verify vault data accessible
+- File sharing: create share → access anonymously → verify file download
+- Password-protected sharing: create protected share → enter password → verify access
+- Share expiration: create time-limited share → wait for expiration → verify access denied
+- Share revocation: create share → revoke → verify access denied
+- Key rotation: trigger rotation → verify background re-encryption → verify data accessible with new keys
+- Password validation: attempt weak password → verify rejection → attempt breached password → verify rejection
 
 ### Security Testing
 
@@ -928,25 +1185,162 @@ structure InitiateUploadOutput {
 - Memory: 64 MB
 - Iterations: 3
 - Parallelism: 4
-- Salt: 16 bytes (random, stored with key bundle)
+- Salt: 16 bytes (random, generated using cryptographically secure RNG)
 - Output: 32 bytes (256-bit key)
 
 These parameters provide strong protection against brute-force attacks while remaining performant on client devices.
 
+**HKDF Configuration:**
+- Hash function: SHA-256
+- Input key material: Vault master key (256 bits)
+- Salt: None (optional, not used)
+- Info contexts for key derivation:
+  - "cortex-data-encryption-v1" → Data encryption key
+  - "cortex-metadata-encryption-v1" → Metadata encryption key
+  - "cortex-share-key-derivation-v1" → Share key derivation key
+- Output: 32 bytes per derived key (256 bits)
+
+### Password Validation
+
+**Strength Requirements:**
+- Minimum length: 12 characters
+- Must contain: uppercase letter, lowercase letter, number, special character
+- No maximum length restriction
+- Applied to both account passwords and vault passwords
+
+**Breach Detection:**
+- Integration with Have I Been Pwned API (k-anonymity model)
+- Client-side SHA-1 hash of password
+- Send first 5 characters of hash to API
+- Check full hash against returned list locally
+- No plaintext password transmitted
+- Reject any password found in breach database
+
+**Implementation:**
+```typescript
+async function validatePassword(password: string): Promise<ValidationResult> {
+  // Check strength requirements
+  if (password.length < 12) return { valid: false, reason: 'TOO_SHORT' };
+  if (!/[A-Z]/.test(password)) return { valid: false, reason: 'NO_UPPERCASE' };
+  if (!/[a-z]/.test(password)) return { valid: false, reason: 'NO_LOWERCASE' };
+  if (!/[0-9]/.test(password)) return { valid: false, reason: 'NO_NUMBER' };
+  if (!/[^A-Za-z0-9]/.test(password)) return { valid: false, reason: 'NO_SPECIAL' };
+  
+  // Check breach database
+  const sha1Hash = await sha1(password);
+  const prefix = sha1Hash.substring(0, 5);
+  const suffix = sha1Hash.substring(5);
+  
+  const response = await fetch(`https://api.pwnedpasswords.com/range/${prefix}`);
+  const hashes = await response.text();
+  
+  if (hashes.includes(suffix.toUpperCase())) {
+    return { valid: false, reason: 'BREACHED' };
+  }
+  
+  return { valid: true };
+}
+```
+
 ### Encryption Implementation Details
 
-**AES-256-GCM:**
+**ChaCha20-Poly1305:**
 - Library: Web Crypto API (browser), cryptography (Python)
 - Key size: 256 bits
 - Nonce size: 96 bits (12 bytes)
 - Tag size: 128 bits (16 bytes)
 - Each encryption operation uses a fresh random nonce
+- Fast, secure, and resistant to timing attacks
 
 **Tag Encryption (Deterministic):**
-- HMAC-SHA256 with master key
+- HMAC-SHA256 with metadata encryption key
 - Consistent output for same tag enables search
 - Tag normalized to lowercase before encryption
 - Output: 32 bytes (256 bits)
+
+### Account Recovery Implementation
+
+**Recovery Code Generation:**
+- 10 recovery codes generated per user account at signup
+- Each code: 16 characters, alphanumeric, randomly generated
+- Format: XXXX-XXXX-XXXX-XXXX (for readability)
+- Codes hashed with SHA-256 before storage on server
+- Displayed once to user with instructions to store securely offline
+
+**Recovery Code Usage:**
+- User enters recovery code during account recovery flow
+- Client sends SHA-256 hash of code to server for validation
+- Server checks hash against stored hashes
+- If valid and unused, server marks code as used and grants access
+- User prompted to set new account password
+- Used codes cannot be reused
+
+**Vault Recovery Key:**
+- Separate from account recovery codes
+- BIP39 mnemonic (12-24 words) derived from vault master key
+- Enables vault password reset without re-encrypting data
+- Never transmitted to or stored by server
+- Displayed once at vault creation with secure storage guidance
+
+### Key Rotation Implementation
+
+**Rotation Trigger:**
+- Automatic: 90 days since last rotation
+- Manual: User-initiated via settings
+- Client-side monitoring of key age
+
+**Rotation Process:**
+1. Generate new HKDF context parameters (increment version)
+2. Derive new data and metadata encryption keys from vault master key
+3. Create background re-encryption queue with all vault files
+4. Re-encrypt files in batches (configurable batch size)
+5. Upload re-encrypted files to S3 with new keys
+6. Update DynamoDB metadata with new key version
+7. Maintain old keys for reading during transition
+8. Delete old encrypted versions after successful re-encryption
+9. Update local key storage with new key version
+
+**Dual-Key Access Period:**
+- During rotation, client maintains both old and new keys
+- Old keys used for reading existing data
+- New keys used for encrypting new data
+- Transition completes when all data re-encrypted
+- Old keys purged after successful completion
+
+### File Sharing Implementation
+
+**Share Key Generation:**
+- Unique 256-bit share key per file
+- Derived from share key derivation key + file ID using HKDF
+- Share key encrypts file-specific metadata for recipient
+- Share key embedded in share URL (base64-encoded)
+
+**Share URL Format:**
+```
+https://cortex.example.com/share/{shareId}#{base64(shareKey)}
+```
+- Fragment (#) ensures share key never sent to server
+- Client extracts share key from URL fragment
+- Share ID used to fetch share metadata from server
+
+**Password-Protected Shares:**
+- User provides additional password for share
+- Password-derived key (Argon2id) encrypts the share key
+- Encrypted share key stored in URL instead of plaintext share key
+- Recipient must enter password to decrypt share key
+- Password never transmitted to server
+
+**Share Expiration:**
+- Server stores expiration timestamp
+- Server validates expiration on each access attempt
+- Expired shares return 403 error
+- Client displays expiration time to share creator
+
+**Share Revocation:**
+- Owner can revoke share at any time
+- Server marks share as revoked in database
+- Revoked shares return 403 error
+- Share key remains in URL but server blocks access
 
 ### S3 Bucket Policies
 

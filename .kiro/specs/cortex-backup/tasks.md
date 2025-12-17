@@ -1,276 +1,569 @@
 # Implementation Plan
 
-- [ ] 1. Set up AWS infrastructure and Smithy service definition
-  - Create Smithy model defining all API operations, data structures, and error types
-  - Define service contract with versioned endpoints (/v1/...)
-  - Configure API Gateway with SigV4 authentication
-  - Set up Cognito user pool and identity pool with OIDC support
-  - Configure IAM roles and policies for scoped user access
-  - _Requirements: 3.1, 3.2, 3.3, 3.4, 6.2, 6.3, 8.1, 8.2_
+- [ ] 1. Set up project structure and CDK infrastructure foundation
+  - Create directory structure: infrastructure/, lambda/, client/, tests/
+  - Initialize CDK project with TypeScript in infrastructure/
+  - Set up Python project structure for Lambda functions
+  - Configure package.json and requirements.txt with dependencies
+  - Create .gitignore for build artifacts and sensitive files
+  - _Requirements: 6.1, 6.2, 8.1_
 
-- [ ] 2. Implement DynamoDB schema and S3 bucket configuration
-  - Create Users table with partition key USER#{userId}
-  - Create Media table with GSI for tag-based queries
-  - Create Collections table and Media-Collection Association table
-  - Configure S3 bucket with server-side encryption, versioning, and CORS
+- [ ] 2. Define Smithy API model
+  - Create api/smithy/cortex-backup.smithy with service definition
+  - Define all API operations with versioned endpoints (/v1/...)
+  - Define input/output structures for all operations
+  - Define error types (AuthenticationError, AuthorizationError, etc.)
+  - Add validation constraints and documentation
+  - Configure Smithy build to generate OpenAPI 3.0 spec
+  - _Requirements: 6.3, 8.1, 8.2, 8.3, 8.4_
+
+- [ ] 3. Implement CDK stacks for AWS infrastructure
+- [ ] 3.1 Create storage stack (S3 bucket configuration)
+  - Define S3 bucket with server-side encryption (AES-256)
+  - Enable versioning for accidental deletion protection
+  - Configure CORS for direct client uploads
   - Set up multipart upload configuration (5MB minimum part size)
   - Enable S3 transfer acceleration
-  - _Requirements: 1.3, 2.5, 6.5, 7.5_
+  - Configure lifecycle policies for Glacier transition
+  - _Requirements: 1.3, 7.4, 7.5_
 
-- [ ] 3. Build client-side encryption engine
-- [ ] 3.1 Implement AES-256-GCM encryption and decryption
-  - Create encryption functions using Web Crypto API (browser) or cryptography library
+- [ ] 3.2 Create database stack (DynamoDB tables)
+  - Create Users table (PK: USER#{userId}, SK: PROFILE)
+  - Create Vaults table (PK: USER#{userId}, SK: VAULT#{vaultId})
+  - Create Files table with GSI for tag-based queries
+  - Create Collections table
+  - Create File-Collection Association table with reverse lookup GSI
+  - Create Shares table
+  - Create Account Recovery table
+  - Configure on-demand billing or provisioned capacity with auto-scaling
+  - _Requirements: 2.5, 6.5, 11.3, 12.2, 17.3, 19.1, 22.1, 22.2_
+
+- [ ] 3.3 Create authentication stack (Cognito configuration)
+  - Set up Cognito user pool with email/password authentication
+  - Configure password policy (12 chars min, complexity requirements)
+  - Set up custom authentication flow for recovery codes
+  - Configure identity pool for federated identities
+  - Set up IAM roles for authenticated users
+  - _Requirements: 3.1, 3.2, 19.2, 21.1, 21.2_
+
+- [ ] 3.4 Create API stack (API Gateway and Lambda)
+  - Define single Lambda function for all API routes
+  - Configure API Gateway with REST API
+  - Set up SigV4 authentication
+  - Configure Lambda execution IAM role with DynamoDB and S3 permissions
+  - Set up CloudWatch logging and X-Ray tracing
+  - Configure rate limiting and throttling
+  - _Requirements: 3.4, 6.1, 6.2, 6.4, 8.2_
+
+- [ ] 4. Implement Lambda shared utilities
+- [ ] 4.1 Create shared error handling module
+  - Define custom exception classes for all error types
+  - Implement error response formatter with structured JSON
+  - Add request ID tracking for debugging
+  - Sanitize error messages to prevent information leakage
+  - _Requirements: 3.5, 8.3_
+
+- [ ] 4.2 Create shared authentication utilities
+  - Implement function to extract user identity from API Gateway context
+  - Add JWT token validation helpers
+  - Create user authorization helpers
+  - _Requirements: 3.1, 3.2, 3.4_
+
+- [ ] 4.3 Create shared repository layer
+  - Implement DynamoDB repository base class
+  - Create S3 repository for presigned URL generation
+  - Add helper functions for DynamoDB queries
+  - Implement presigned URL generation with proper scoping
+  - _Requirements: 1.4, 1.5, 4.1, 7.1, 7.2_
+
+- [ ] 4.4 Create shared data models with Pydantic
+  - Define request/response models for all API operations
+  - Add validation rules for inputs
+  - Create models for DynamoDB items
+  - _Requirements: 8.1, 8.3_
+
+- [ ] 5. Build client-side encryption library
+- [ ] 5.1 Implement ChaCha20-Poly1305 encryption engine
+  - Create encryption functions using @noble/ciphers
   - Generate random 96-bit nonces for each operation
   - Handle authenticated encryption with 128-bit tags
+  - Implement decryption with tag verification
   - _Requirements: 1.1, 2.1, 9.1_
 
-- [ ]* 3.2 Write property test for encryption round-trip
+- [ ]* 5.2 Write property test for encryption round-trip
   - **Property 7: Upload and download round-trip preserves content**
   - **Validates: Requirements 4.2**
 
-- [ ] 3.3 Implement deterministic tag encryption using HMAC-SHA256
+- [ ] 5.3 Implement deterministic tag encryption using HMAC-SHA256
   - Create tag encryption function for searchable encrypted tags
   - Normalize tags to lowercase before encryption
+  - Use @noble/hashes for HMAC-SHA256
   - _Requirements: 11.2, 11.4_
 
-- [ ]* 3.4 Write property test for tag encryption consistency
+- [ ]* 5.4 Write property test for tag encryption consistency
   - **Property 13: Encrypted tag search functionality**
-  - **Validates: Requirements 11.4, 11.5**
+  - **Validates: Requirements 11.4, 11.5_
 
-- [ ] 4. Implement key management system
-- [ ] 4.1 Create master key generation and password-based key derivation
-  - Generate 256-bit random master keys
-  - Implement Argon2id key derivation (64MB memory, 3 iterations, 4 parallelism)
-  - Create encrypted key bundle structure
-  - _Requirements: 3.6, 9.1, 14.1, 14.2_
+- [ ] 6. Implement client-side key management system
+- [ ] 6.1 Create vault master key derivation with Argon2id
+  - Implement Argon2id key derivation using argon2-browser
+  - Configure parameters: 64MB memory, 3 iterations, 4 parallelism
+  - Derive 256-bit vault master key from vault password + vault salt
+  - _Requirements: 14.1, 14.2_
 
-- [ ] 4.2 Implement recovery key generation and validation
-  - Generate BIP39 mnemonic recovery keys
-  - Display recovery key to user with secure storage instructions
-  - Implement recovery key validation logic
-  - _Requirements: 15.1, 15.2_
+- [ ] 6.2 Implement HKDF for derived key generation
+  - Use @noble/hashes for HKDF with SHA-256
+  - Derive data encryption key (context: "cortex-data-encryption-v1")
+  - Derive metadata encryption key (context: "cortex-metadata-encryption-v1")
+  - Derive share key derivation key (context: "cortex-share-key-derivation-v1")
+  - _Requirements: 14.2_
 
-- [ ] 4.3 Build key bundle encryption and storage
-  - Encrypt master key with password-derived key
-  - Store encrypted key bundle in DynamoDB
-  - Implement key bundle retrieval and decryption
-  - _Requirements: 14.3, 14.4, 14.5_
+- [ ] 6.3 Implement vault recovery key generation and validation
+  - Generate BIP39 mnemonic from vault master key using bip39 library
+  - Display recovery key to user once with secure storage instructions
+  - Implement recovery key validation for vault password reset
+  - Re-derive vault master key from recovery key
+  - _Requirements: 15.1, 15.2, 15.3_
 
-- [ ]* 4.4 Write property test for key bundle round-trip
-  - **Property 17: Key bundle round-trip with password**
-  - **Validates: Requirements 14.1, 14.5**
+- [ ] 6.4 Build local key storage with device-specific encryption
+  - Encrypt derived keys with device-specific key
+  - Store encrypted keys in browser localStorage or secure storage
+  - Implement key retrieval and decryption on device
+  - Never transmit keys to server
+  - _Requirements: 14.3, 14.6_
 
-- [ ]* 4.5 Write property test for recovery key password reset
-  - **Property 18: Recovery key enables password reset**
-  - **Validates: Requirements 15.3, 15.4**
+- [ ] 6.5 Implement password validation with strength and breach checking
+  - Validate minimum 12 characters and complexity requirements
+  - Integrate with Have I Been Pwned API using k-anonymity model
+  - Client-side SHA-1 hash, send first 5 characters to API
+  - Check full hash against returned list locally
+  - Reject breached passwords
+  - Apply to both account and vault passwords
+  - _Requirements: 21.1, 21.2, 21.3, 21.4_
 
-- [ ]* 4.6 Write property test for key isolation
-  - **Property 6: Encryption keys never transmitted to server**
-  - **Validates: Requirements 3.6, 9.1, 9.3, 15.5**
+- [ ]* 6.6 Write property test for vault key derivation determinism
+  - **Property 17: Vault key derivation is deterministic**
+  - **Validates: Requirements 14.1, 14.2, 14.5**
 
-- [ ] 5. Implement authentication and authorization
-- [ ] 5.1 Create Cognito authentication flow
-  - Implement user registration and login
-  - Handle token refresh logic
-  - Configure MFA support (optional)
+- [ ]* 6.7 Write property test for vault recovery key
+  - **Property 18: Vault recovery key enables vault access**
+  - **Validates: Requirements 15.3**
+
+- [ ]* 6.8 Write property test for vault keys never transmitted
+  - **Property 6: Vault keys never transmitted to server**
+  - **Validates: Requirements 3.6, 9.3, 14.6, 15.5, 16.4**
+
+- [ ]* 6.9 Write property test for password strength validation
+  - **Property 23: Password strength validation**
+  - **Validates: Requirements 21.1, 21.2**
+
+- [ ]* 6.10 Write property test for breached password detection
+  - **Property 24: Breached password detection**
+  - **Validates: Requirements 21.3, 21.4**
+
+- [ ]* 6.11 Write property test for vault salt uniqueness
+  - **Property 27: Vault salt uniqueness**
+  - **Validates: Requirements 22.4**
+
+- [ ] 7. Implement Lambda API handler foundation
+- [ ] 7.1 Create main Lambda handler with APIGatewayRestResolver
+  - Set up handler.py with Lambda Powertools
+  - Configure Logger, Tracer, and Metrics
+  - Initialize APIGatewayRestResolver
+  - Add lambda_handler function with decorators
+  - _Requirements: 6.1, 6.2_
+
+- [ ] 7.2 Create route registration system
+  - Create routes/ directory for domain-specific route modules
+  - Implement route registration pattern
+  - Set up module structure for auth, vaults, media, collections, tags, shares, recovery
+  - _Requirements: 8.1, 8.2_
+
+- [ ] 8. Implement authentication routes and services
+- [ ] 8.1 Create authentication route handlers
+  - Implement POST /v1/auth/login route
+  - Implement POST /v1/auth/refresh route
+  - Implement POST /v1/auth/recover route
+  - Extract user identity from API Gateway context
+  - _Requirements: 3.1, 3.2, 19.2_
+
+- [ ] 8.2 Create authentication service layer
+  - Implement user registration logic
+  - Implement login validation
+  - Handle token refresh
+  - Implement custom authentication flow for recovery codes
   - _Requirements: 3.1, 3.2_
 
-- [ ] 5.2 Implement SigV4 request signing for API calls
-  - Sign all API requests with temporary credentials
-  - Handle credential expiration and refresh
-  - _Requirements: 3.4_
+- [ ] 8.3 Implement account recovery code system
+  - Generate 10 recovery codes at signup (16 chars, format: XXXX-XXXX-XXXX-XXXX)
+  - Hash codes with SHA-256 before storage in DynamoDB
+  - Store in Account Recovery table
+  - Validate recovery codes during account recovery
+  - Invalidate used codes (mark as used, set usedAt timestamp)
+  - _Requirements: 19.1, 19.2, 19.3, 19.5_
 
-- [ ]* 5.3 Write property test for user data isolation
-  - **Property 4: User data isolation**
-  - **Validates: Requirements 2.4, 3.3, 4.3, 5.1**
+- [ ]* 8.4 Write property test for account recovery code validation
+  - **Property 25: Account recovery code validation**
+  - **Validates: Requirements 19.2, 19.3**
 
-- [ ] 6. Build upload Lambda function
-- [ ] 6.1 Implement upload initialization handler
+- [ ] 9. Implement vault management routes and services
+- [ ] 9.1 Create vault route handlers
+  - Implement POST /v1/vaults route (create vault with salt)
+  - Implement GET /v1/vaults/{id}/salt route (retrieve salt for key derivation)
+  - _Requirements: 14.4, 22.1, 22.2, 22.3_
+
+- [ ] 9.2 Create vault service layer
+  - Generate unique vault salt using cryptographically secure RNG (16 bytes)
+  - Store vault salt in DynamoDB Vaults table
+  - Retrieve vault salt for key derivation on new devices
+  - Ensure vault salt uniqueness across all vaults
+  - _Requirements: 14.4, 22.1, 22.2, 22.3, 22.4, 22.5_
+
+- [ ]* 9.3 Write property test for vault salt uniqueness
+  - **Property 27: Vault salt uniqueness**
+  - **Validates: Requirements 22.4**
+
+- [ ] 10. Implement media upload routes and services
+- [ ] 10.1 Create media upload route handlers
+  - Implement POST /v1/media/upload/init route
+  - Implement POST /v1/media/upload/complete route
   - Extract user identity from API Gateway context
-  - Validate user permissions
-  - Generate presigned S3 PUT URLs scoped to user prefix
-  - Configure multipart upload for files >100MB
+  - _Requirements: 1.4, 1.5, 7.1, 7.2_
+
+- [ ] 10.2 Create media upload service layer
+  - Validate user permissions (user can only upload to own namespace)
+  - Generate presigned S3 PUT URLs scoped to user's S3 prefix
+  - Configure multipart upload for files >100MB (5MB min part size)
   - Return upload URL with 15-minute expiration
-  - _Requirements: 1.4, 1.5, 4.5, 7.1, 7.2, 7.4_
-
-- [ ] 6.2 Implement upload completion handler
-  - Receive encrypted metadata from client
   - Store encrypted metadata in DynamoDB with user isolation
-  - Link media to user account
+  - Link media to user account using userId from Cognito token
   - Handle encrypted tags storage
-  - _Requirements: 1.2, 2.1, 2.2, 2.4, 11.3_
+  - _Requirements: 1.2, 1.4, 1.5, 2.1, 2.2, 2.4, 4.5, 7.1, 7.2, 7.4, 11.3_
 
-- [ ] 6.3 Add error handling and cleanup logic
+- [ ] 10.3 Add upload error handling and cleanup logic
   - Handle S3 upload failures with DynamoDB cleanup
   - Handle DynamoDB failures with S3 cleanup
   - Implement idempotency for critical operations
   - _Requirements: 2.5_
 
-- [ ]* 6.4 Write property test for client-side encryption before transmission
+- [ ]* 10.4 Write property test for client-side encryption before transmission
   - **Property 1: Client-side encryption before transmission**
   - **Validates: Requirements 1.1, 2.1, 11.2, 12.1, 13.1**
 
-- [ ]* 6.5 Write property test for server storage preserves encryption
+- [ ]* 10.5 Write property test for server storage preserves encryption
   - **Property 2: Server storage preserves encryption**
   - **Validates: Requirements 1.2, 2.2, 11.3, 12.2**
 
-- [ ]* 6.6 Write property test for referential integrity
+- [ ]* 10.6 Write property test for referential integrity
   - **Property 5: Referential integrity between S3 and DynamoDB**
   - **Validates: Requirements 2.5**
 
-- [ ] 7. Build download and listing Lambda functions
-- [ ] 7.1 Implement media list query handler
+- [ ] 11. Implement media download and listing routes and services
+- [ ] 11.1 Create media listing route handlers
+  - Implement GET /v1/media/list route
+  - Implement GET /v1/media/{id} route
+  - Extract user identity and query parameters
+  - _Requirements: 2.3, 10.1, 10.2_
+
+- [ ] 11.2 Create media listing service layer
   - Query DynamoDB for user's encrypted metadata
-  - Implement pagination with consistent results
+  - Implement pagination with consistent results (use DynamoDB pagination tokens)
   - Support filtering and sorting by timestamp
-  - Enforce user boundary restrictions
+  - Enforce user boundary restrictions (filter by userId and vaultId)
+  - Return encrypted data without decryption
   - _Requirements: 2.3, 2.4, 10.1, 10.2, 10.4, 10.5_
 
-- [ ] 7.2 Implement download URL generation handler
-  - Verify user ownership of requested media
-  - Generate presigned S3 GET URLs with 15-minute expiration
+- [ ] 11.3 Create media download route handler
+  - Implement GET /v1/media/{id}/download route
+  - Extract user identity from context
+  - _Requirements: 4.1, 4.3_
+
+- [ ] 11.4 Create media download service layer
+  - Query DynamoDB to verify user owns requested media
+  - Generate presigned S3 GET URLs scoped to specific object
+  - Return time-limited download URL (15 minutes)
   - Return authorization errors for unauthorized access
   - _Requirements: 4.1, 4.3, 4.4_
 
-- [ ]* 7.3 Write property test for server responses contain only encrypted data
+- [ ]* 11.5 Write property test for server responses contain only encrypted data
   - **Property 3: Server responses contain only encrypted data**
   - **Validates: Requirements 2.3, 10.3, 12.4, 13.5**
 
-- [ ]* 7.4 Write property test for media list queries respect user boundaries
-  - **Property 11: Media list queries respect user boundaries**
+- [ ]* 11.6 Write property test for media list queries respect vault boundaries
+  - **Property 11: File list queries respect vault boundaries**
   - **Validates: Requirements 10.1, 10.4**
 
-- [ ]* 7.5 Write property test for pagination consistency
+- [ ]* 11.7 Write property test for pagination consistency
   - **Property 12: Pagination consistency**
   - **Validates: Requirements 10.2**
 
-- [ ] 8. Implement deletion Lambda function
-- [ ] 8.1 Create media deletion handler
+- [ ]* 11.8 Write property test for vault data isolation
+  - **Property 4: Vault data isolation**
+  - **Validates: Requirements 2.4, 3.3, 4.3, 5.1**
+
+- [ ] 12. Implement media deletion routes and services
+- [ ] 12.1 Create media deletion route handler
+  - Implement DELETE /v1/media/{id} route
+  - Extract user identity from context
+  - _Requirements: 5.1_
+
+- [ ] 12.2 Create media deletion service layer
   - Verify user ownership before deletion
   - Delete S3 object and DynamoDB metadata atomically
-  - Handle partial failures with rollback
+  - Handle partial failures with rollback (cleanup)
   - Return deletion confirmation
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ]* 8.2 Write property test for deletion maintains referential integrity
+- [ ]* 12.3 Write property test for deletion maintains referential integrity
   - **Property 8: Deletion maintains referential integrity**
   - **Validates: Requirements 5.2, 5.3, 5.4**
 
-- [ ] 9. Build collection management Lambda functions
-- [ ] 9.1 Implement collection CRUD operations
+- [ ] 13. Implement collection management routes and services
+- [ ] 13.1 Create collection CRUD route handlers
+  - Implement POST /v1/collections route (create)
+  - Implement GET /v1/collections route (list)
+  - Implement GET /v1/collections/{id} route (get details)
+  - Implement PUT /v1/collections/{id} route (update)
+  - Implement DELETE /v1/collections/{id} route (delete)
+  - _Requirements: 12.1, 12.2, 13.1, 13.3, 13.4, 13.5_
+
+- [ ] 13.2 Create collection service layer
   - Create collection with encrypted metadata
   - List user's collections with item counts
   - Update collection metadata
   - Delete collection while preserving media
+  - Enforce user isolation for all operations
   - _Requirements: 12.1, 12.2, 13.1, 13.3, 13.4, 13.5_
 
-- [ ] 9.2 Implement media-collection association handlers
-  - Add media to collections (many-to-many support)
-  - Remove media from collections (preserve media)
-  - Query collections by media ID
-  - Query media by collection ID
+- [ ] 13.3 Create media-collection association route handlers
+  - Implement POST /v1/collections/{id}/media route (add media)
+  - Implement DELETE /v1/collections/{id}/media/{mediaId} route (remove media)
   - _Requirements: 12.3, 12.5, 13.2_
 
-- [ ]* 9.3 Write property test for media-collection many-to-many relationships
-  - **Property 14: Media-collection many-to-many relationships**
+- [ ] 13.4 Create media-collection association service layer
+  - Add media to collections (many-to-many support)
+  - Remove media from collections (preserve media)
+  - Query collections by media ID (using GSI)
+  - Query media by collection ID
+  - Update collection item counts
+  - _Requirements: 12.3, 12.5, 13.2_
+
+- [ ]* 13.5 Write property test for file-collection many-to-many relationships
+  - **Property 14: File-collection many-to-many relationships**
   - **Validates: Requirements 12.3, 12.5**
 
-- [ ]* 9.4 Write property test for collection deletion preserves media
-  - **Property 15: Collection deletion preserves media**
+- [ ]* 13.6 Write property test for collection deletion preserves files
+  - **Property 15: Collection deletion preserves files**
   - **Validates: Requirements 13.3, 13.4**
 
-- [ ]* 9.5 Write property test for media removal from collection
-  - **Property 16: Media removal from collection preserves media**
+- [ ]* 13.7 Write property test for file removal from collection preserves file
+  - **Property 16: File removal from collection preserves file**
   - **Validates: Requirements 13.2**
 
-- [ ] 10. Implement tag search Lambda function
-- [ ] 10.1 Create encrypted tag search handler
+- [ ] 14. Implement tag search routes and services
+- [ ] 14.1 Create tag search route handler
+  - Implement GET /v1/tags/search route
+  - Extract encrypted search term from query parameters
+  - Extract user identity from context
+  - _Requirements: 11.4, 11.5_
+
+- [ ] 14.2 Create tag search service layer
   - Receive encrypted search term from client
   - Query DynamoDB GSI for matching encrypted tags
   - Return matching media items with encrypted metadata
-  - Enforce user isolation
+  - Enforce user isolation (filter by vaultId)
   - _Requirements: 11.4, 11.5_
 
-- [ ]* 10.2 Write property test for encrypted tag search
+- [ ]* 14.3 Write property test for encrypted tag search functionality
   - **Property 13: Encrypted tag search functionality**
   - **Validates: Requirements 11.4, 11.5**
 
-- [ ] 11. Build key bundle management Lambda function
-- [ ] 11.1 Implement key bundle storage and retrieval
-  - Store encrypted key bundle in DynamoDB Users table
-  - Retrieve encrypted key bundle for user
-  - Update key bundle during password reset
-  - Never access plaintext keys
-  - _Requirements: 14.3, 14.4, 15.4_
+- [ ] 15. Implement password change functionality
+- [ ] 15.1 Create account password change route handler (client-side)
+  - Implement account password change flow with Cognito
+  - Update Cognito credentials with new account password
+  - Verify vault encryption keys remain unchanged
+  - No re-encryption required
+  - _Requirements: 23.1, 23.2_
 
-- [ ] 12. Implement local image recognition in client
-- [ ] 12.1 Integrate on-device ML model
-  - Load TensorFlow Lite/Core ML/ONNX model
+- [ ] 15.2 Create vault password change functionality (client-side)
+  - Derive new vault master key from new vault password
+  - Trigger background re-encryption of all vault data
+  - Re-encrypt files in batches
+  - Update local key storage with new keys
+  - Maintain dual-key access during transition
+  - _Requirements: 23.3, 23.4, 23.5_
+
+- [ ]* 15.3 Write property test for account password change independence
+  - **Property 21: Account password change does not affect vault encryption**
+  - **Validates: Requirements 23.1**
+
+- [ ]* 15.4 Write property test for vault password change re-encryption
+  - **Property 22: Vault password change requires data re-encryption**
+  - **Validates: Requirements 23.3, 23.4**
+
+- [ ] 16. Implement file sharing system
+- [ ] 16.1 Build client-side share key generation and URL creation
+  - Generate unique share keys using HKDF from share key derivation key + file ID
+  - Create share URLs with share ID and base64-encoded share key in fragment
+  - Implement password-protected shares with double encryption
+  - Password-derived key encrypts share key before embedding in URL
+  - _Requirements: 17.1, 17.2, 18.3, 18.4_
+
+- [ ] 16.2 Create share route handlers
+  - Implement POST /v1/shares route (create share)
+  - Implement GET /v1/shares/{id} route (access share, anonymous)
+  - Implement DELETE /v1/shares/{id} route (revoke share)
+  - _Requirements: 17.3, 17.4, 17.5, 18.2, 18.5_
+
+- [ ] 16.3 Create share service layer
+  - Store share metadata (expiration, password protection flag, revocation status)
+  - Validate share access (check expiration and revocation)
+  - Allow anonymous access to shared files
+  - Generate presigned S3 URLs for shared file downloads
+  - Track access count and last accessed time
+  - Never store share keys (embedded in URLs)
+  - _Requirements: 17.3, 17.4, 17.5, 18.2, 18.5_
+
+- [ ]* 16.4 Write property test for share keys enable file access without vault password
+  - **Property 20: Share keys enable file access without vault password**
+  - **Validates: Requirements 17.1, 17.4**
+
+- [ ] 17. Implement automatic key rotation (client-side)
+- [ ] 17.1 Build key rotation trigger and monitoring
+  - Monitor key age (90 days since last rotation)
+  - Trigger automatic rotation
+  - Support manual rotation via user settings
+  - _Requirements: 20.1_
+
+- [ ] 17.2 Implement background re-encryption process
+  - Generate new derived keys with updated HKDF context (increment version)
+  - Create re-encryption queue for all vault files
+  - Re-encrypt files in batches (configurable batch size)
+  - Upload re-encrypted files to S3 with new keys
+  - Update DynamoDB metadata with new key version
+  - Maintain dual-key access during transition (old keys for reading, new keys for writing)
+  - Delete old encrypted versions after successful re-encryption
+  - Update local key storage with new key version
+  - _Requirements: 20.2, 20.3, 20.4, 20.5_
+
+- [ ]* 17.3 Write property test for key rotation preserves data access
+  - **Property 26: Automatic key rotation preserves data access**
+  - **Validates: Requirements 20.1, 20.2, 20.3, 20.4, 20.5**
+
+- [ ] 18. Implement optional local content analysis (client-side)
+- [ ] 18.1 Integrate on-device ML model
+  - Load TensorFlow Lite/Core ML/ONNX model (MobileNet or EfficientNet)
   - Run inference on media before encryption
   - Generate tags from recognition results
   - Ensure no network requests during recognition
-  - _Requirements: 11.1_
+  - Privacy-preserving (no data sent to external services)
+  - _Requirements: 11.5_
 
-- [ ] 12.2 Encrypt generated tags before transmission
+- [ ] 18.2 Encrypt generated tags before transmission
   - Apply deterministic tag encryption to all generated tags
   - Store encrypted tags with media metadata
-  - _Requirements: 11.2_
+  - _Requirements: 11.1, 11.2_
 
-- [ ] 13. Implement concurrent upload coordination in client
-- [ ] 13.1 Build upload queue and concurrency manager
+- [ ] 19. Implement concurrent upload coordination (client-side)
+- [ ] 19.1 Build upload queue and concurrency manager
   - Queue multiple media items for upload
   - Configure concurrent upload limit based on network conditions
-  - Handle upload failures with retry logic
+  - Handle upload failures with retry logic (exponential backoff)
   - Track upload progress for UI feedback
   - _Requirements: 7.3_
 
-- [ ] 14. Add comprehensive error handling
-- [ ] 14.1 Implement structured error responses
-  - Define error codes and messages
-  - Return appropriate HTTP status codes
-  - Include request IDs for debugging
+- [ ] 20. Enhance error handling across all components
+- [ ] 20.1 Enhance Lambda error handling
+  - Ensure all error codes are defined (AUTHENTICATION_REQUIRED, AUTHENTICATION_FAILED, etc.)
+  - Verify appropriate HTTP status codes for all error types
+  - Add request IDs to all error responses
   - Sanitize error messages to prevent information leakage
+  - Implement exponential backoff for DynamoDB throttling
   - _Requirements: 3.5, 4.4, 8.3_
 
-- [ ]* 14.2 Write property test for API error responses
+- [ ] 20.2 Add client-side error handling
+  - Handle encryption failures (key derivation, encryption operations)
+  - Implement network failure retry logic with exponential backoff
+  - Handle authentication failures (token expiration, invalid credentials)
+  - Handle password validation failures (weak password, breached password)
+  - Handle key rotation failures (re-encryption errors, network interruption)
+  - _Requirements: 3.5, 21.1, 21.2, 21.3, 21.4_
+
+- [ ]* 20.3 Write property test for API error responses are well-formed
   - **Property 9: API error responses are well-formed**
   - **Validates: Requirements 8.3**
 
-- [ ] 15. Implement monitoring and logging
-- [ ] 15.1 Configure CloudWatch metrics and alarms
-  - Set up Lambda, API Gateway, DynamoDB, and S3 metrics
-  - Create alarms for error rates and throttling
+- [ ] 21. Implement monitoring and logging
+- [ ] 21.1 Configure CloudWatch metrics and alarms
+  - Set up Lambda metrics (invocation count, duration, errors)
+  - Set up API Gateway metrics (request count, latency, 4xx/5xx errors)
+  - Set up DynamoDB metrics (consumed capacity, throttled requests)
+  - Set up S3 metrics (request count, bytes uploaded/downloaded)
+  - Create alarms: Lambda error rate >1%, API Gateway 5xx >0.5%, DynamoDB throttling, S3 4xx >5%
   - Enable X-Ray tracing for request analysis
   - _Requirements: 16.5_
 
-- [ ] 15.2 Implement log sanitization
+- [ ] 21.2 Implement log sanitization
   - Ensure no plaintext data in logs
   - Exclude encrypted payloads from logs
-  - Log only user IDs, timestamps, operation types, and error codes
+  - Log only user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
+  - Never log vault keys, passwords, recovery keys, share keys, or account recovery codes
   - Configure CloudWatch log retention
+  - Add log sanitization to all Lambda functions
   - _Requirements: 16.5_
 
-- [ ]* 15.3 Write property test for administrator cannot access plaintext data
+- [ ]* 21.3 Write property test for administrator cannot access plaintext data
   - **Property 19: Administrator cannot access plaintext data**
   - **Validates: Requirements 16.1, 16.2, 16.3, 16.4, 16.5**
 
-- [ ]* 15.4 Write property test for all server-stored data is encrypted
+- [ ]* 21.4 Write property test for all server-stored data is encrypted
   - **Property 10: All server-stored data is encrypted**
-  - **Validates: Requirements 9.2, 9.5, 16.1, 16.2, 16.4**
+  - **Validates: Requirements 9.2, 9.5, 16.1, 16.2**
 
-- [ ] 16. Set up infrastructure as code and deployment
-- [ ] 16.1 Create infrastructure definitions
-  - Define all AWS resources using CDK or Terraform
-  - Separate dev, staging, and production environments
-  - Configure environment-specific parameters
+- [ ] 22. Set up deployment pipeline
+- [ ] 22.1 Configure CDK deployment
+  - Define CDK app entry point (bin/app.ts)
+  - Configure environment-specific parameters (dev, staging, prod)
+  - Set up CDK context in cdk.json
+  - Define stack outputs for cross-stack references
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5_
 
-- [ ] 16.2 Build CI/CD pipeline
+- [ ] 22.2 Create deployment scripts
+  - Create build script for Lambda functions
+  - Create CDK synth and deploy scripts
+  - Add environment validation
+  - Document deployment process
+  - _Requirements: 8.4_
+
+- [ ] 22.3 Set up CI/CD pipeline (optional)
   - Automate testing on every commit
   - Deploy to dev environment automatically
   - Require manual approval for staging/production
   - Implement blue-green deployment strategy
   - _Requirements: 8.4_
 
-- [ ] 17. Final checkpoint - Ensure all tests pass
+- [ ] 23. Write integration tests
+  - Test complete upload flow (authenticate → get presigned URL → upload to S3 → store metadata)
+  - Test complete download flow (authenticate → list media → get download URL → download from S3)
+  - Test multi-device flow (setup on device 1 → login on device 2 → access same media)
+  - Test collection management (create → add media → retrieve → delete)
+  - Test tag search (upload with tags → search → verify results)
+  - Test error recovery (simulate S3 failure → verify cleanup)
+  - Test two-password flow (change account password → verify vault unchanged → change vault password → verify re-encryption)
+  - Test account recovery (use recovery code → reset password → verify access)
+  - Test vault recovery (use recovery key → reset vault password → verify data accessible)
+  - Test file sharing (create share → access anonymously → verify download)
+  - Test password-protected sharing (create protected share → enter password → verify access)
+  - Test share expiration (create time-limited share → wait → verify access denied)
+  - Test share revocation (create share → revoke → verify access denied)
+  - Test key rotation (trigger rotation → verify re-encryption → verify data accessible)
+  - Test password validation (attempt weak password → verify rejection → attempt breached password → verify rejection)
+  - _Requirements: All_
+
+- [ ] 24. Final checkpoint - Ensure all tests pass
+  - Run all unit tests and verify they pass
+  - Run all property-based tests and verify they pass
+  - Run all integration tests and verify they pass
+  - Fix any failing tests
   - Ensure all tests pass, ask the user if questions arise.
