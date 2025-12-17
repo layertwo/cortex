@@ -1,0 +1,17 @@
+# AWS Lambda Powertools for structured logging, tracing, and metrics
+aws-lambda-powertools[all]>=2.0.0,<3.0.0
+
+# Data validation and serialization
+pydantic>=2.0,<3.0
+
+# AWS SDK (provided by Lambda runtime, but included for local development)
+boto3>=1.28.0
+
+# Testing dependencies
+hypothesis>=6.0,<7.0
+pytest>=7.0,<8.0
+pytest-cov>=4.0,<5.0
+moto>=4.0,<5.0
+
+# Cryptography for testing encryption (client-side encryption uses JavaScript libraries)
+cryptography>=41.0,<42.0
