@@ -315,113 +315,20 @@ POST   /v1/recovery/validate       - Validate recovery code
 
 ### 4. DynamoDB Schema
 
-**Users Table:**
-```
-PK: USER#{userId}
-SK: PROFILE
-Attributes:
-  - userId (string)
-  - cognitoId (string)
-  - email (string)
-  - createdAt (timestamp)
-  - updatedAt (timestamp)
-```
+**Two-Table Design:**
 
-**Vaults Table:**
-```
-PK: USER#{userId}
-SK: VAULT#{vaultId}
-Attributes:
-  - vaultId (string)
-  - userId (string)
-  - vaultSalt (binary) - salt for Argon2id key derivation (non-secret)
-  - createdAt (timestamp)
-  - lastAccessedAt (timestamp)
-```
+**Main Data Table** (`cortex-{env}-data`) - Authenticated user data:
+- **Users:** `PK: USER#{userId}, SK: PROFILE`
+- **Vaults:** `PK: USER#{userId}, SK: VAULT#{vaultId}`
+- **Account Recovery:** `PK: USER#{userId}, SK: RECOVERY#{codeHash}`
+- **Files:** `PK: VAULT#{vaultId}, SK: FILE#{fileId}`
+  - GSI1: `PK: VAULT#{vaultId}#TAG#{encryptedTag}, SK: FILE#{fileId}` (tag search)
+- **Collections:** `PK: VAULT#{vaultId}, SK: COLLECTION#{collectionId}`
+- **File-Collection Associations:** `PK: COLLECTION#{collectionId}, SK: FILE#{fileId}`
+  - GSI1: `PK: FILE#{fileId}, SK: COLLECTION#{collectionId}` (reverse lookup)
 
-**Files Table:**
-```
-PK: VAULT#{vaultId}
-SK: FILE#{fileId}
-Attributes:
-  - fileId (string)
-  - vaultId (string)
-  - userId (string)
-  - s3Key (string) - path in S3
-  - encryptedMetadata (binary) - encrypted filename, size, MIME type, etc.
-  - encryptedTags (list<binary>) - list of encrypted tags
-  - uploadedAt (timestamp) - for sorting/filtering
-  - sizeBytes (number) - for storage calculations
-  
-GSI1:
-  PK: VAULT#{vaultId}#TAG#{encryptedTag}
-  SK: FILE#{fileId}
-  - Enables tag-based queries within a vault
-```
-
-**Collections Table:**
-```
-PK: VAULT#{vaultId}
-SK: COLLECTION#{collectionId}
-Attributes:
-  - collectionId (string)
-  - vaultId (string)
-  - userId (string)
-  - encryptedMetadata (binary) - encrypted name, description
-  - createdAt (timestamp)
-  - updatedAt (timestamp)
-  - itemCount (number)
-```
-
-**File-Collection Association Table:**
-```
-PK: COLLECTION#{collectionId}
-SK: FILE#{fileId}
-Attributes:
-  - collectionId (string)
-  - fileId (string)
-  - vaultId (string)
-  - userId (string)
-  - addedAt (timestamp)
-
-GSI1:
-  PK: FILE#{fileId}
-  SK: COLLECTION#{collectionId}
-  - Enables reverse lookup (which collections contain this file)
-```
-
-**Shares Table:**
-```
-PK: SHARE#{shareId}
-SK: METADATA
-Attributes:
-  - shareId (string)
-  - fileId (string)
-  - vaultId (string)
-  - userId (string)
-  - createdAt (timestamp)
-  - expiresAt (timestamp)
-  - isPasswordProtected (boolean)
-  - isRevoked (boolean)
-  - accessCount (number)
-  - lastAccessedAt (timestamp)
-
-Note: Share key is NOT stored on server - it's embedded in the share URL
-```
-
-**Account Recovery Table:**
-```
-PK: USER#{userId}
-SK: RECOVERY#{codeHash}
-Attributes:
-  - userId (string)
-  - codeHash (string) - SHA-256 hash of recovery code
-  - createdAt (timestamp)
-  - usedAt (timestamp) - null if unused
-  - isValid (boolean)
-
-Note: Recovery codes are hashed before storage. 10 codes generated per user.
-```
+**Shares Table** (`cortex-{env}-shares`) - Anonymous access, security isolated:
+- **Shares:** `PK: SHARE#{shareId}, SK: METADATA`
 
 ### 5. S3 Bucket Structure
 
@@ -484,10 +391,8 @@ vaults/{vaultId}/files/{fileId}/{timestamp}-{random}
       "Effect": "Allow",
       "Action": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem"],
       "Resource": [
-        "arn:aws:dynamodb:region:account:table/cortex-users",
-        "arn:aws:dynamodb:region:account:table/cortex-vaults",
-        "arn:aws:dynamodb:region:account:table/cortex-files",
-        "arn:aws:dynamodb:region:account:table/cortex-collections",
+        "arn:aws:dynamodb:region:account:table/cortex-data",
+        "arn:aws:dynamodb:region:account:table/cortex-data/index/GSI1",
         "arn:aws:dynamodb:region:account:table/cortex-shares"
       ]
     }

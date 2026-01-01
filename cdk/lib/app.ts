@@ -2,10 +2,8 @@
 import {App, Environment} from "aws-cdk-lib";
 
 import {STAGES} from "./config";
-import {ApiStack} from "./stacks/api-stack";
-import {AuthStack} from "./stacks/auth-stack";
-import {DatabaseStack} from "./stacks/database-stack";
-import {StorageStack} from "./stacks/storage-stack";
+import {AuthStack} from "./stacks/auth";
+import {ServiceStack} from "./stacks/service";
 
 const app = new App();
 
@@ -18,42 +16,22 @@ STAGES.forEach((stage) => {
     // Stack naming convention: cortex-{env}-{resource-type}
     const stackPrefix = `cortex-${stage.stageType.toLowerCase()}`;
 
-    // Storage Stack - S3 bucket for encrypted files
-    const storageStack = new StorageStack(app, `${stackPrefix}-storage`, {
-        env,
-        description: "Cortex storage infrastructure (S3)",
-        stackName: `${stackPrefix}-storage`,
-    });
-
-    // Database Stack - DynamoDB tables
-    const databaseStack = new DatabaseStack(app, `${stackPrefix}-database`, {
-        env,
-        description: "Cortex database infrastructure (DynamoDB)",
-        stackName: `${stackPrefix}-database`,
-    });
-
     // Auth Stack - Cognito user pool and identity pool
     const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
         env,
+        stage,
         description: "Cortex authentication infrastructure (Cognito)",
         stackName: `${stackPrefix}-auth`,
     });
 
-    // API Stack - Lambda function and API Gateway
-    new ApiStack(app, `${stackPrefix}-api`, {
+    // Service Stack - Storage, Database, and API
+    new ServiceStack(app, `${stackPrefix}-service`, {
         env,
-        description: "Cortex API infrastructure",
-        stackName: `${stackPrefix}-api`,
-        bucket: storageStack.bucket,
-        usersTable: databaseStack.usersTable,
-        vaultsTable: databaseStack.vaultsTable,
-        filesTable: databaseStack.filesTable,
-        collectionsTable: databaseStack.collectionsTable,
-        fileCollectionAssociationsTable: databaseStack.fileCollectionAssociationsTable,
-        sharesTable: databaseStack.sharesTable,
-        accountRecoveryTable: databaseStack.accountRecoveryTable,
+        stage,
         userPool: authStack.userPool,
         userPoolClient: authStack.userPoolClient,
+        description: "Cortex service infrastructure (Storage, Database, API)",
+        stackName: `${stackPrefix}-service`,
     });
 });
 

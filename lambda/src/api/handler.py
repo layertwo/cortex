@@ -1,38 +1,12 @@
-"""
-Main Lambda handler for Cortex Backup API.
+# Placeholder Lambda handler
+# Will be implemented in task 7
 
-This handler uses AWS Lambda Powertools APIGatewayRestResolver to route
-all API requests to appropriate domain-specific route handlers.
-"""
-
-from aws_lambda_powertools import Logger, Tracer, Metrics
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.utilities.typing import LambdaContext
-
-# Initialize Lambda Powertools
-logger = Logger()
-tracer = Tracer()
-metrics = Metrics()
-
-# Initialize API Gateway REST resolver
-app = APIGatewayRestResolver()
-
-# Route modules will be imported and registered in later tasks
-# from routes import auth, vaults, media, collections, tags, shares, recovery
-
-
-@logger.inject_lambda_context
-@tracer.capture_lambda_handler
-@metrics.log_metrics
-def lambda_handler(event: dict, context: LambdaContext) -> dict:
+def lambda_handler(event, context):
     """
-    Main Lambda handler function.
-    
-    Args:
-        event: API Gateway event
-        context: Lambda context
-        
-    Returns:
-        API Gateway response
+    Main Lambda handler for Cortex API
+    This will be implemented using AWS Lambda Powertools APIGatewayRestResolver
     """
-    return app.resolve(event, context)
+    return {
+        "statusCode": 200,
+        "body": "Cortex API - Handler not yet implemented"
+    }

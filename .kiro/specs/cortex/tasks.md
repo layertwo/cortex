@@ -17,8 +17,8 @@
   - Configure Smithy build to generate OpenAPI 3.0 spec
   - _Requirements: 6.3, 8.1, 8.2, 8.3, 8.4_
 
-- [ ] 3. Implement CDK stacks for AWS infrastructure
-- [ ] 3.1 Create storage stack (S3 bucket configuration)
+- [x] 3. Implement CDK stacks for AWS infrastructure
+- [x] 3.1 Create storage stack (S3 bucket configuration)
   - Define S3 bucket with server-side encryption (AES-256)
   - Enable versioning for accidental deletion protection
   - Configure CORS for direct client uploads
@@ -27,7 +27,7 @@
   - Configure lifecycle policies for Glacier transition
   - _Requirements: 1.3, 7.4, 7.5_
 
-- [ ] 3.2 Create database stack (DynamoDB tables)
+- [x] 3.2 Create database stack (DynamoDB tables)
   - Create Users table (PK: USER#{userId}, SK: PROFILE)
   - Create Vaults table (PK: USER#{userId}, SK: VAULT#{vaultId})
   - Create Files table with GSI for tag-based queries
@@ -38,7 +38,7 @@
   - Configure on-demand billing or provisioned capacity with auto-scaling
   - _Requirements: 2.5, 6.5, 11.3, 12.2, 17.3, 19.1, 22.1, 22.2_
 
-- [ ] 3.3 Create authentication stack (Cognito configuration)
+- [x] 3.3 Create authentication stack (Cognito configuration)
   - Set up Cognito user pool with email/password authentication
   - Configure password policy (12 chars min, complexity requirements)
   - Set up custom authentication flow for recovery codes
@@ -46,7 +46,7 @@
   - Set up IAM roles for authenticated users
   - _Requirements: 3.1, 3.2, 19.2, 21.1, 21.2_
 
-- [ ] 3.4 Create API stack (API Gateway and Lambda)
+- [x] 3.4 Create API stack (API Gateway and Lambda)
   - Define single Lambda function for all API routes
   - Configure API Gateway with REST API
   - Set up SigV4 authentication
