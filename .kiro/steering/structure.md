@@ -8,7 +8,7 @@ inclusion: always
 
 ```
 cortex/
-├── infrastructure/         # CDK stacks (TypeScript)
+├── cdk /                  # CDK stacks (TypeScript)
 │   ├── lib/               # Stack definitions
 │   │   ├── storage-stack.ts
 │   │   ├── database-stack.ts
@@ -60,7 +60,7 @@ cortex/
 ## File Naming & Location Rules
 
 **When creating files, use these exact paths:**
-- CDK stacks: `infrastructure/lib/{name}-stack.ts` (kebab-case)
+- CDK stacks: `cdk/lib/{name}-stack.ts` (kebab-case)
 - Lambda handlers: `lambda/{feature}/handler.py`
 - Shared utilities: `lambda/shared/{purpose}.py`
 - API models: `api/smithy/{service}.smithy`

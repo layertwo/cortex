@@ -1,8 +1,8 @@
 # Implementation Plan
 
 - [x] 1. Set up project structure and CDK infrastructure foundation
-  - Create directory structure: infrastructure/, lambda/, client/, tests/
-  - Initialize CDK project with TypeScript in infrastructure/
+  - Create directory structure: cdk/, lambda/, client/, tests/
+  - Initialize CDK project with TypeScript in cdk/
   - Set up Python project structure for Lambda functions
   - Configure package.json and requirements.txt with dependencies
   - Create .gitignore for build artifacts and sensitive files
