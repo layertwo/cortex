@@ -8,148 +8,146 @@ Requirements: 1.4, 1.5, 4.1, 7.1, 7.2
 """
 
 import os
+from datetime import datetime
+from typing import Any, Dict, Optional
+
 import boto3
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
 from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
-from shared.errors import StorageError, ResourceNotFoundError
+
+from shared.errors import StorageError
 
 logger = Logger(child=True)
 
 
 class DynamoDBRepository:
     """Base repository class for DynamoDB operations."""
-    
+
     def __init__(self, table_name: Optional[str] = None):
         """
         Initialize DynamoDB repository.
-        
+
         Args:
             table_name: DynamoDB table name (defaults to env variable)
         """
-        self.dynamodb = boto3.resource('dynamodb')
+        self.dynamodb = boto3.resource("dynamodb")
         self.table_name = table_name
         self.table = None
-        
+
         if table_name:
             self.table = self.dynamodb.Table(table_name)
-    
+
     def get_item(self, key: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Get item from DynamoDB by key.
-        
+
         Args:
             key: Primary key dictionary (PK and SK)
-            
+
         Returns:
             Item dictionary if found, None otherwise
-            
+
         Raises:
             StorageError: If DynamoDB operation fails
         """
         try:
             response = self.table.get_item(Key=key)
-            return response.get('Item')
-            
+            return response.get("Item")
+
         except ClientError as e:
-            logger.error("DynamoDB get_item failed", extra={
-                "error": str(e),
-                "table": self.table_name,
-                "key": key
-            })
+            logger.error(
+                "DynamoDB get_item failed",
+                extra={"error": str(e), "table": self.table_name, "key": key},
+            )
             raise StorageError(f"Failed to retrieve item from {self.table_name}")
-    
+
     def put_item(self, item: Dict[str, Any], condition_expression: Optional[str] = None) -> None:
         """
         Put item into DynamoDB.
-        
+
         Args:
             item: Item dictionary to store
             condition_expression: Optional condition for conditional write
-            
+
         Raises:
             StorageError: If DynamoDB operation fails
         """
         try:
-            kwargs = {'Item': item}
+            kwargs = {"Item": item}
             if condition_expression:
-                kwargs['ConditionExpression'] = condition_expression
-            
+                kwargs["ConditionExpression"] = condition_expression
+
             self.table.put_item(**kwargs)
-            
+
         except ClientError as e:
-            logger.error("DynamoDB put_item failed", extra={
-                "error": str(e),
-                "table": self.table_name
-            })
+            logger.error(
+                "DynamoDB put_item failed", extra={"error": str(e), "table": self.table_name}
+            )
             raise StorageError(f"Failed to store item in {self.table_name}")
-    
+
     def update_item(
         self,
         key: Dict[str, Any],
         update_expression: str,
         expression_attribute_values: Dict[str, Any],
-        expression_attribute_names: Optional[Dict[str, str]] = None
+        expression_attribute_names: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Update item in DynamoDB.
-        
+
         Args:
             key: Primary key dictionary
             update_expression: DynamoDB update expression
             expression_attribute_values: Values for update expression
             expression_attribute_names: Optional attribute name mappings
-            
+
         Returns:
             Updated item attributes
-            
+
         Raises:
             StorageError: If DynamoDB operation fails
         """
         try:
             kwargs = {
-                'Key': key,
-                'UpdateExpression': update_expression,
-                'ExpressionAttributeValues': expression_attribute_values,
-                'ReturnValues': 'ALL_NEW'
+                "Key": key,
+                "UpdateExpression": update_expression,
+                "ExpressionAttributeValues": expression_attribute_values,
+                "ReturnValues": "ALL_NEW",
             }
-            
+
             if expression_attribute_names:
-                kwargs['ExpressionAttributeNames'] = expression_attribute_names
-            
+                kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
             response = self.table.update_item(**kwargs)
-            return response.get('Attributes', {})
-            
+            return response.get("Attributes", {})
+
         except ClientError as e:
-            logger.error("DynamoDB update_item failed", extra={
-                "error": str(e),
-                "table": self.table_name,
-                "key": key
-            })
+            logger.error(
+                "DynamoDB update_item failed",
+                extra={"error": str(e), "table": self.table_name, "key": key},
+            )
             raise StorageError(f"Failed to update item in {self.table_name}")
-    
+
     def delete_item(self, key: Dict[str, Any]) -> None:
         """
         Delete item from DynamoDB.
-        
+
         Args:
             key: Primary key dictionary
-            
+
         Raises:
             StorageError: If DynamoDB operation fails
         """
         try:
             self.table.delete_item(Key=key)
-            
+
         except ClientError as e:
-            logger.error("DynamoDB delete_item failed", extra={
-                "error": str(e),
-                "table": self.table_name,
-                "key": key
-            })
+            logger.error(
+                "DynamoDB delete_item failed",
+                extra={"error": str(e), "table": self.table_name, "key": key},
+            )
             raise StorageError(f"Failed to delete item from {self.table_name}")
-    
+
     def query(
         self,
         key_condition_expression: str,
@@ -158,11 +156,11 @@ class DynamoDBRepository:
         index_name: Optional[str] = None,
         limit: Optional[int] = None,
         exclusive_start_key: Optional[Dict[str, Any]] = None,
-        scan_index_forward: bool = True
+        scan_index_forward: bool = True,
     ) -> Dict[str, Any]:
         """
         Query DynamoDB table or index.
-        
+
         Args:
             key_condition_expression: Key condition expression
             expression_attribute_values: Values for expression
@@ -171,221 +169,201 @@ class DynamoDBRepository:
             limit: Optional result limit
             exclusive_start_key: Optional pagination token
             scan_index_forward: Sort order (True=ascending, False=descending)
-            
+
         Returns:
             Query response with Items and optional LastEvaluatedKey
-            
+
         Raises:
             StorageError: If DynamoDB operation fails
         """
         try:
             kwargs = {
-                'KeyConditionExpression': key_condition_expression,
-                'ExpressionAttributeValues': expression_attribute_values,
-                'ScanIndexForward': scan_index_forward
+                "KeyConditionExpression": key_condition_expression,
+                "ExpressionAttributeValues": expression_attribute_values,
+                "ScanIndexForward": scan_index_forward,
             }
-            
+
             if expression_attribute_names:
-                kwargs['ExpressionAttributeNames'] = expression_attribute_names
-            
+                kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
             if index_name:
-                kwargs['IndexName'] = index_name
-            
+                kwargs["IndexName"] = index_name
+
             if limit:
-                kwargs['Limit'] = limit
-            
+                kwargs["Limit"] = limit
+
             if exclusive_start_key:
-                kwargs['ExclusiveStartKey'] = exclusive_start_key
-            
+                kwargs["ExclusiveStartKey"] = exclusive_start_key
+
             response = self.table.query(**kwargs)
-            
+
             return {
-                'Items': response.get('Items', []),
-                'LastEvaluatedKey': response.get('LastEvaluatedKey')
+                "Items": response.get("Items", []),
+                "LastEvaluatedKey": response.get("LastEvaluatedKey"),
             }
-            
+
         except ClientError as e:
-            logger.error("DynamoDB query failed", extra={
-                "error": str(e),
-                "table": self.table_name,
-                "index": index_name
-            })
+            logger.error(
+                "DynamoDB query failed",
+                extra={"error": str(e), "table": self.table_name, "index": index_name},
+            )
             raise StorageError(f"Failed to query {self.table_name}")
 
 
 class S3Repository:
     """Repository class for S3 operations and presigned URL generation."""
-    
+
     def __init__(self, bucket_name: Optional[str] = None):
         """
         Initialize S3 repository.
-        
+
         Args:
             bucket_name: S3 bucket name (defaults to env variable)
         """
-        self.s3_client = boto3.client('s3')
-        self.bucket_name = bucket_name or os.environ.get('FILES_BUCKET_NAME')
-        
+        self.s3_client = boto3.client("s3")
+        self.bucket_name = bucket_name or os.environ.get("FILES_BUCKET_NAME")
+
         if not self.bucket_name:
             raise ValueError("S3 bucket name not configured")
-    
+
     def generate_upload_url(
-        self,
-        object_key: str,
-        content_type: str,
-        expiration: int = 900  # 15 minutes
+        self, object_key: str, content_type: str, expiration: int = 900  # 15 minutes
     ) -> str:
         """
         Generate presigned URL for S3 upload.
-        
+
         The presigned URL is scoped to the specific object key and allows
         only PUT operations. This enables direct client-to-S3 uploads.
-        
+
         Args:
             object_key: S3 object key (path)
             content_type: MIME type of the file
             expiration: URL expiration in seconds (default 15 minutes)
-            
+
         Returns:
             Presigned upload URL
-            
+
         Raises:
             StorageError: If URL generation fails
         """
         try:
             url = self.s3_client.generate_presigned_url(
-                'put_object',
-                Params={
-                    'Bucket': self.bucket_name,
-                    'Key': object_key,
-                    'ContentType': content_type
-                },
-                ExpiresIn=expiration
+                "put_object",
+                Params={"Bucket": self.bucket_name, "Key": object_key, "ContentType": content_type},
+                ExpiresIn=expiration,
             )
-            
-            logger.debug("Generated upload URL", extra={
-                "object_key": object_key,
-                "expiration": expiration
-            })
-            
+
+            logger.debug(
+                "Generated upload URL", extra={"object_key": object_key, "expiration": expiration}
+            )
+
             return url
-            
+
         except ClientError as e:
-            logger.error("Failed to generate upload URL", extra={
-                "error": str(e),
-                "bucket": self.bucket_name,
-                "key": object_key
-            })
+            logger.error(
+                "Failed to generate upload URL",
+                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+            )
             raise StorageError("Failed to generate upload URL")
-    
-    def generate_download_url(
-        self,
-        object_key: str,
-        expiration: int = 900  # 15 minutes
-    ) -> str:
+
+    def generate_download_url(self, object_key: str, expiration: int = 900) -> str:  # 15 minutes
         """
         Generate presigned URL for S3 download.
-        
+
         The presigned URL is scoped to the specific object key and allows
         only GET operations. This enables direct client-to-S3 downloads.
-        
+
         Args:
             object_key: S3 object key (path)
             expiration: URL expiration in seconds (default 15 minutes)
-            
+
         Returns:
             Presigned download URL
-            
+
         Raises:
             StorageError: If URL generation fails
         """
         try:
             url = self.s3_client.generate_presigned_url(
-                'get_object',
-                Params={
-                    'Bucket': self.bucket_name,
-                    'Key': object_key
-                },
-                ExpiresIn=expiration
+                "get_object",
+                Params={"Bucket": self.bucket_name, "Key": object_key},
+                ExpiresIn=expiration,
             )
-            
-            logger.debug("Generated download URL", extra={
-                "object_key": object_key,
-                "expiration": expiration
-            })
-            
+
+            logger.debug(
+                "Generated download URL", extra={"object_key": object_key, "expiration": expiration}
+            )
+
             return url
-            
+
         except ClientError as e:
-            logger.error("Failed to generate download URL", extra={
-                "error": str(e),
-                "bucket": self.bucket_name,
-                "key": object_key
-            })
+            logger.error(
+                "Failed to generate download URL",
+                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+            )
             raise StorageError("Failed to generate download URL")
-    
+
     def generate_multipart_upload_url(
         self,
         object_key: str,
         content_type: str,
         part_number: int,
         upload_id: str,
-        expiration: int = 900
+        expiration: int = 900,
     ) -> str:
         """
         Generate presigned URL for multipart upload part.
-        
+
         Args:
             object_key: S3 object key
             content_type: MIME type
             part_number: Part number (1-10000)
             upload_id: Multipart upload ID
             expiration: URL expiration in seconds
-            
+
         Returns:
             Presigned URL for uploading the part
-            
+
         Raises:
             StorageError: If URL generation fails
         """
         try:
             url = self.s3_client.generate_presigned_url(
-                'upload_part',
+                "upload_part",
                 Params={
-                    'Bucket': self.bucket_name,
-                    'Key': object_key,
-                    'PartNumber': part_number,
-                    'UploadId': upload_id
+                    "Bucket": self.bucket_name,
+                    "Key": object_key,
+                    "PartNumber": part_number,
+                    "UploadId": upload_id,
                 },
-                ExpiresIn=expiration
+                ExpiresIn=expiration,
             )
-            
+
             return url
-            
+
         except ClientError as e:
-            logger.error("Failed to generate multipart upload URL", extra={
-                "error": str(e),
-                "bucket": self.bucket_name,
-                "key": object_key,
-                "part_number": part_number
-            })
+            logger.error(
+                "Failed to generate multipart upload URL",
+                extra={
+                    "error": str(e),
+                    "bucket": self.bucket_name,
+                    "key": object_key,
+                    "part_number": part_number,
+                },
+            )
             raise StorageError("Failed to generate multipart upload URL")
-    
-    def initiate_multipart_upload(
-        self,
-        object_key: str,
-        content_type: str
-    ) -> str:
+
+    def initiate_multipart_upload(self, object_key: str, content_type: str) -> str:
         """
         Initiate multipart upload.
-        
+
         Args:
             object_key: S3 object key
             content_type: MIME type
-            
+
         Returns:
             Upload ID for the multipart upload
-            
+
         Raises:
             StorageError: If initiation fails
         """
@@ -394,153 +372,139 @@ class S3Repository:
                 Bucket=self.bucket_name,
                 Key=object_key,
                 ContentType=content_type,
-                ServerSideEncryption='AES256'
+                ServerSideEncryption="AES256",
             )
-            
-            upload_id = response['UploadId']
-            
-            logger.info("Initiated multipart upload", extra={
-                "object_key": object_key,
-                "upload_id": upload_id
-            })
-            
+
+            upload_id = response["UploadId"]
+
+            logger.info(
+                "Initiated multipart upload",
+                extra={"object_key": object_key, "upload_id": upload_id},
+            )
+
             return upload_id
-            
+
         except ClientError as e:
-            logger.error("Failed to initiate multipart upload", extra={
-                "error": str(e),
-                "bucket": self.bucket_name,
-                "key": object_key
-            })
+            logger.error(
+                "Failed to initiate multipart upload",
+                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+            )
             raise StorageError("Failed to initiate multipart upload")
-    
+
     def delete_object(self, object_key: str) -> None:
         """
         Delete object from S3.
-        
+
         Args:
             object_key: S3 object key to delete
-            
+
         Raises:
             StorageError: If deletion fails
         """
         try:
-            self.s3_client.delete_object(
-                Bucket=self.bucket_name,
-                Key=object_key
-            )
-            
-            logger.info("Deleted S3 object", extra={
-                "object_key": object_key
-            })
-            
+            self.s3_client.delete_object(Bucket=self.bucket_name, Key=object_key)
+
+            logger.info("Deleted S3 object", extra={"object_key": object_key})
+
         except ClientError as e:
-            logger.error("Failed to delete S3 object", extra={
-                "error": str(e),
-                "bucket": self.bucket_name,
-                "key": object_key
-            })
+            logger.error(
+                "Failed to delete S3 object",
+                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+            )
             raise StorageError("Failed to delete object from S3")
-    
+
     def object_exists(self, object_key: str) -> bool:
         """
         Check if object exists in S3.
-        
+
         Args:
             object_key: S3 object key
-            
+
         Returns:
             True if object exists, False otherwise
         """
         try:
-            self.s3_client.head_object(
-                Bucket=self.bucket_name,
-                Key=object_key
-            )
+            self.s3_client.head_object(Bucket=self.bucket_name, Key=object_key)
             return True
-            
+
         except ClientError as e:
-            if e.response['Error']['Code'] == '404':
+            if e.response["Error"]["Code"] == "404":
                 return False
-            
-            logger.error("Failed to check object existence", extra={
-                "error": str(e),
-                "bucket": self.bucket_name,
-                "key": object_key
-            })
+
+            logger.error(
+                "Failed to check object existence",
+                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+            )
             raise StorageError("Failed to check object existence")
 
 
 def build_s3_key(vault_id: str, file_id: str) -> str:
     """
     Build S3 object key for a file.
-    
+
     Format: vaults/{vaultId}/files/{fileId}/{timestamp}-{random}
-    
+
     Args:
         vault_id: Vault ID
         file_id: File ID
-        
+
     Returns:
         S3 object key
     """
     import uuid
-    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     random_suffix = str(uuid.uuid4())[:8]
-    
+
     return f"vaults/{vault_id}/files/{file_id}/{timestamp}-{random_suffix}"
 
 
 def parse_pagination_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     Parse pagination token from client.
-    
+
     Args:
         token: Base64-encoded pagination token
-        
+
     Returns:
         Decoded DynamoDB LastEvaluatedKey or None
     """
     if not token:
         return None
-    
+
     try:
         import base64
         import json
-        
+
         decoded = base64.b64decode(token)
         return json.loads(decoded)
-        
+
     except Exception as e:
-        logger.warning("Failed to parse pagination token", extra={
-            "error": str(e)
-        })
+        logger.warning("Failed to parse pagination token", extra={"error": str(e)})
         return None
 
 
 def encode_pagination_token(last_evaluated_key: Optional[Dict[str, Any]]) -> Optional[str]:
     """
     Encode DynamoDB LastEvaluatedKey as pagination token.
-    
+
     Args:
         last_evaluated_key: DynamoDB LastEvaluatedKey
-        
+
     Returns:
         Base64-encoded pagination token or None
     """
     if not last_evaluated_key:
         return None
-    
+
     try:
         import base64
         import json
-        
+
         json_str = json.dumps(last_evaluated_key)
-        encoded = base64.b64encode(json_str.encode('utf-8'))
-        return encoded.decode('utf-8')
-        
+        encoded = base64.b64encode(json_str.encode("utf-8"))
+        return encoded.decode("utf-8")
+
     except Exception as e:
-        logger.error("Failed to encode pagination token", extra={
-            "error": str(e)
-        })
+        logger.error("Failed to encode pagination token", extra={"error": str(e)})
         return None

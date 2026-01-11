@@ -76,3 +76,6 @@ Thumbs.db
 # AWS
 .aws-sam/
 samconfig.toml
+
+coverage.*
+.coverage*
