@@ -1,4 +1,4 @@
-moto>=4.0,<5.0
+-r requirements.txt
 pytest==9.0.2
 pytest-cov==7.0.0
 pytest-xdist==3.8.0
@@ -7,5 +7,5 @@ isort==7.0.0
 flake8==7.3.0
 Flake8-pyproject==1.2.4
 mypy==1.19.1
-types-boto3==1.42.11
+types-boto3==1.42.25
 hypothesis>=6.0.0

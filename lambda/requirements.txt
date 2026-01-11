@@ -1,10 +1,4 @@
-aws-lambda-powertools==3.23.0
-pydantic==2.12.5
-boto3==1.42.11
+aws-lambda-powertools==3.24.0
+boto3==1.42.25
 cryptography==46.0.3
-
-# Testing dependencies
-hypothesis>=6.0,<7.0
-pytest>=7.0,<8.0
-pytest-cov>=4.0,<5.0
-moto>=4.0,<5.0
+pydantic==2.12.5
