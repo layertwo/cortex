@@ -1,4 +1,4 @@
-aws-lambda-powertools==3.23.0
+aws-lambda-powertools==3.24.0
 pydantic==2.12.5
 boto3==1.42.11
 cryptography==46.0.3
