@@ -1,0 +1,40 @@
+name: cdk-build
+
+on:
+  push:
+    paths: ['cdk/**', '.github/workflows/cdk-build.yml']
+    branches: [ "mainline" ]
+  pull_request:
+    paths: ['cdk/**', '.github/workflows/cdk-build.yml']
+    branches: [ "mainline" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      # Node.js/CDK Setup
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: cdk/package-lock.json
+
+      - name: Install CDK dependencies
+        working-directory: cdk
+        run: npm ci
+
+      - name: Build CDK application
+        working-directory: cdk
+        run: npm run build
+
+      - name: CDK Synthesize
+        working-directory: cdk
+        run: npx cdk synth
