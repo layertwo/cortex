@@ -6,6 +6,7 @@
     'mergeConfidence:all-badges',
     ':disableRateLimiting',
     ':semanticCommits',
-    'github>layertwo/cortex//.github/renovate/package-rules.json5',
+    'github>layertwo/renovate-config//packages/aws',
+    'github>layertwo/renovate-config//packages/noisy-npm'
   ]
 }
