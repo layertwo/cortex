@@ -1,12 +1,22 @@
-# Cortex Backup System - Design Document
+# Cortex Productivity Suite - Design Document
 
 ## Overview
 
-Cortex is a zero-knowledge cloud file storage and backup system built on AWS serverless infrastructure. The system implements end-to-end encryption where all sensitive data (file content, metadata, tags, collections, and organizational structure) is encrypted client-side before transmission. The server operates exclusively on encrypted data, ensuring that neither service administrators nor the infrastructure provider can access user content.
+Cortex is a zero-knowledge cloud-based productivity suite built on AWS serverless infrastructure. The system implements end-to-end encryption where all sensitive data (media files, notes, tasks, events, metadata, tags, collections, and organizational structure) is encrypted client-side before transmission. The server operates exclusively on encrypted data, ensuring that neither service administrators nor the infrastructure provider can access user content.
+
+The productivity suite includes:
+- **Media Storage**: Secure backup and storage for photos, videos, and files
+- **Notes**: Rich text documents with optional attachments
+- **Tasks**: To-do items with due dates, priorities, and reminders
+- **Events**: Calendar entries with start/end times, locations, and recurrence
+- **Collections**: User-defined groupings for organizing items
+- **Tags**: Searchable labels for categorization
+- **Push Notifications**: Encrypted reminders for tasks and events
+- **Real-Time Sync**: Cross-device synchronization via WebSocket
 
 The architecture implements a two-password model: an **account password** for authentication with AWS Cognito, and a separate **vault password** for encrypting/decrypting the vault's master key and all data. This separation allows users to change their account password without re-encrypting all vault data, and provides a more flexible security model.
 
-The architecture follows AWS best practices using Lambda for compute, API Gateway for API management, DynamoDB for metadata storage, S3 for object storage, and Cognito for authentication. The Smithy model defines the service contract, enabling type-safe API definitions and automatic SDK generation.
+The architecture follows AWS best practices using Lambda for compute, API Gateway for API management, DynamoDB for metadata storage, S3 for object storage, Cognito for authentication, SNS for push notifications, and EventBridge for scheduled tasks. The Smithy model defines the service contract, enabling type-safe API definitions and automatic SDK generation.
 
 ### Key Design Principles
 
@@ -45,9 +55,10 @@ Vault Password + Vault Salt → [Argon2id] → Vault Master Key (256-bit)
                                                     ↓
                                                  [HKDF]
                                                     ↓
-                        ┌───────────────────────────┼───────────────────────────┐
-                        ↓                           ↓                           ↓
-              Data Encryption Key      Metadata Encryption Key    Share Key Derivation Key
+        ┌───────────────────────────┼───────────────────────────┬──────────────────────────┐
+        ↓                           ↓                           ↓                          ↓
+  Data Encryption Key    Metadata Encryption Key    Share Key Derivation Key    Notes/Tasks/Events/
+  (media content)        (common metadata)          (file sharing)              Notification Keys
 ```
 
 This separation provides:
@@ -62,12 +73,12 @@ This separation provides:
 ┌─────────────────────────────────────────────────────────────┐
 │                      Client Application                      │
 │  ┌────────────────┐  ┌──────────────┐  ┌─────────────────┐ │
-│  │ Encryption     │  │ Image        │  │ Key Management  │ │
-│  │ Engine         │  │ Recognition  │  │                 │ │
+│  │ Encryption     │  │ Content      │  │ Key Management  │ │
+│  │ Engine         │  │ Analysis     │  │                 │ │
 │  └────────────────┘  └──────────────┘  └─────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              │ HTTPS (SigV4)
+                              │ HTTPS (SigV4) / WebSocket
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                      AWS Cognito (OIDC)                      │
@@ -78,7 +89,7 @@ This separation provides:
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                      AWS API Gateway                         │
-│                    (Smithy Model Defined)                    │
+│              (REST + WebSocket, Smithy Defined)              │
 └─────────────────────────────────────────────────────────────┘
                               │
                 ┌─────────────┼─────────────┐
@@ -86,16 +97,15 @@ This separation provides:
                 ▼             ▼             ▼
         ┌──────────┐  ┌──────────┐  ┌──────────┐
         │ Lambda   │  │ Lambda   │  │ Lambda   │
-        │ Upload   │  │ Metadata │  │ Download │
+        │ Items    │  │ Notif.   │  │ Sync     │
         └──────────┘  └──────────┘  └──────────┘
                 │             │             │
-                ▼             ▼             │
-        ┌──────────────────────────┐       │
-        │      DynamoDB            │       │
-        │  (Encrypted Metadata)    │       │
-        └──────────────────────────┘       │
-                                            │
-                ┌───────────────────────────┘
+                ▼             ▼             ▼
+        ┌──────────────────────────────────────┐
+        │           DynamoDB                   │
+        │  Items | Notifications | Collections │
+        │  Connections | Vaults | Users        │
+        └──────────────────────────────────────┘
                 │
                 ▼
         ┌──────────────────────────┐
@@ -103,26 +113,46 @@ This separation provides:
         │  (Encrypted Media Files) │
         │  (Server-Side Encryption)│
         └──────────────────────────┘
+                
+        ┌──────────────────────────┐
+        │      AWS SNS (Push)      │
+        │   Notification Delivery  │
+        └──────────────────────────┘
+                ▲
+                │
+        ┌──────────────────────────┐
+        │   EventBridge (Cron)     │
+        │   Every 5 minutes        │
+        └──────────────────────────┘
 ```
 
 ### Component Interaction Flow
 
-**Upload Flow:**
-1. Client encrypts media and metadata locally
-2. Client requests upload URL from API Gateway (authenticated via SigV4)
-3. Lambda generates presigned S3 URL with scoped permissions
-4. Client uploads encrypted media directly to S3
+**Item Creation Flow (Generic):**
+1. Client encrypts item content and metadata locally using appropriate encryption key
+2. Client requests API endpoint (authenticated via SigV4)
+3. For media items: Lambda generates presigned S3 URL, client uploads directly to S3
+4. For other items: Content stored inline in DynamoDB as encrypted blob
 5. Client sends encrypted metadata to Lambda
-6. Lambda stores encrypted metadata in DynamoDB
+6. Lambda stores encrypted metadata in Items table
 
-**Download Flow:**
-1. Client requests media list from API Gateway
-2. Lambda queries DynamoDB for user's encrypted metadata
+**Item Retrieval Flow:**
+1. Client requests item list from API Gateway
+2. Lambda queries DynamoDB Items table for user's encrypted metadata
 3. Client decrypts metadata locally
-4. Client requests download URL for specific media
-5. Lambda generates presigned S3 URL
-6. Client downloads encrypted media directly from S3
-7. Client decrypts media locally
+4. For media items: Client requests download URL, Lambda generates presigned S3 URL
+5. Client downloads and decrypts content locally
+
+**Notification Flow:**
+1. Client creates task/event with reminder time
+2. Client encrypts notification payload and exact time
+3. Client generates time bucket (15-min window, plaintext)
+4. Client sends notification schedule to Lambda
+5. Lambda stores in Notification Schedules table
+6. EventBridge triggers Lambda every 5 minutes
+7. Lambda queries schedules with timeBucket <= now + 15min
+8. Lambda sends push notifications via SNS with encrypted payloads
+9. Client receives notification, decrypts payload, displays to user
 
 **Multi-Device Flow:**
 1. New device: User enters account password (authenticates with Cognito)
@@ -174,9 +204,14 @@ This separation provides:
 - **Two-Password Architecture**: Separate account password (for AWS Cognito authentication) and vault password (for data encryption)
 - **Vault Master Key Derivation**: Argon2id(vault_password, vault_salt) → 256-bit vault master key
 - **Derived Key Generation**: HKDF used to derive multiple keys from vault master key:
-  - Data encryption key (for file content encryption)
+  - Data encryption key (for media file content encryption)
   - Metadata encryption key (for metadata, tags, collections encryption)
   - Share key derivation key (for generating file share keys)
+  - Notes encryption key (for note content encryption)
+  - Tasks encryption key (for task content encryption)
+  - Events encryption key (for event content encryption)
+  - Notification encryption key (for notification payload encryption)
+  - Date bucket key (for deterministic date bucket encryption via HMAC)
 - **Local Key Storage**: Derived keys encrypted with device-specific key and stored locally only (never transmitted to server)
 - **Vault Recovery Key**: Generated from vault master key, displayed once to user with secure offline storage guidance
 - **Recovery Key Validation**: Enables vault password reset without re-encrypting data
@@ -220,7 +255,7 @@ This separation provides:
 
 **Endpoints (defined in Smithy model):**
 
-**API Versioning Strategy:** The API uses URI versioning (e.g., `/v1/media/list`) to support backward-compatible evolution. The current version is v1. Breaking changes will result in a new version (v2), while non-breaking changes can be added to existing versions.
+**API Versioning Strategy:** The API uses URI versioning (e.g., `/v1/items`) to support backward-compatible evolution. The current version is v1. Breaking changes will result in a new version (v2), while non-breaking changes can be added to existing versions.
 
 ```
 POST   /v1/auth/login              - Initiate authentication with account password
@@ -230,61 +265,74 @@ POST   /v1/auth/recover            - Initiate account recovery with recovery cod
 POST   /v1/vaults                  - Create new vault with vault salt
 GET    /v1/vaults/{id}/salt        - Retrieve vault salt for key derivation
 
-POST   /v1/media/upload/init       - Initialize upload, get presigned URL
-POST   /v1/media/upload/complete   - Mark upload complete, store metadata
-GET    /v1/media/list              - List user's media (paginated)
-GET    /v1/media/{id}              - Get media metadata
-GET    /v1/media/{id}/download     - Get presigned download URL
-DELETE /v1/media/{id}              - Delete media item
+POST   /v1/items                   - Create any item type (MEDIA, NOTE, TASK, EVENT)
+GET    /v1/items                   - List items (filter by type, tags, date buckets)
+GET    /v1/items/{id}              - Get item metadata
+PUT    /v1/items/{id}              - Update item
+DELETE /v1/items/{id}              - Delete item
+POST   /v1/items/search            - Search across types or specific type
+GET    /v1/items/{id}/download     - Get presigned download URL (for media items)
+POST   /v1/items/upload/init       - Initialize upload, get presigned URL (for media items)
+POST   /v1/items/upload/complete   - Mark upload complete, store metadata (for media items)
 
 POST   /v1/collections             - Create collection
 GET    /v1/collections             - List collections
 GET    /v1/collections/{id}        - Get collection details
 PUT    /v1/collections/{id}        - Update collection
 DELETE /v1/collections/{id}        - Delete collection
-POST   /v1/collections/{id}/media  - Add media to collection
-DELETE /v1/collections/{id}/media/{mediaId} - Remove media from collection
+POST   /v1/collections/{id}/items  - Add item to collection
+DELETE /v1/collections/{id}/items/{itemId} - Remove item from collection
 
 GET    /v1/tags/search             - Search by encrypted tag
 
-POST   /v1/shares                  - Create file share with metadata
-GET    /v1/shares/{id}             - Access shared file (anonymous)
+POST   /v1/shares                  - Create item share with metadata
+GET    /v1/shares/{id}             - Access shared item (anonymous)
 DELETE /v1/shares/{id}             - Revoke share
+
+POST   /v1/notifications/schedules           - Create notification schedule
+GET    /v1/notifications/schedules           - List pending schedules
+GET    /v1/notifications/schedules/{id}      - Get schedule details
+PUT    /v1/notifications/schedules/{id}      - Update schedule
+DELETE /v1/notifications/schedules/{id}      - Cancel notification
+POST   /v1/notifications/devices             - Register device token (encrypted)
+DELETE /v1/notifications/devices/{deviceId} - Unregister device
 
 POST   /v1/recovery/codes          - Generate account recovery codes
 POST   /v1/recovery/validate       - Validate recovery code
+
+WebSocket /v1/sync                  - Real-time sync connection
+  - onConnect: Authenticate and register connection
+  - onDisconnect: Clean up connection state
+  - onMessage: Handle ping/pong for keep-alive
+  - Server sends: Item update notifications (metadata only)
 ```
 
 ### 3. Lambda Functions
 
 **Implementation Language:** All Lambda functions are implemented in Python 3.11+ for consistency, performance, and rich library ecosystem support.
 
-**Upload Handler:**
+**Item Handler (Generic CRUD):**
 - Extracts user identity from API Gateway authorizer context
-- Validates user permissions (user can only upload to their own namespace)
-- Generates presigned S3 PUT URL scoped to user's S3 prefix
-- For files exceeding 100MB, configures multipart upload with minimum 5MB part size
-- Stores encrypted metadata in DynamoDB with user isolation
-- Links media to user account using userId from Cognito token
+- Validates user permissions (user can only access their own namespace)
+- Handles all item types (MEDIA, NOTE, TASK, EVENT) with unified logic
+- For media items: Generates presigned S3 URLs for upload/download
+- For other items: Stores encrypted content inline in DynamoDB
+- Stores encrypted metadata in Items table with user isolation
+- Supports filtering by itemType and encrypted date buckets
+- Links items to user account using userId from Cognito token
 
-**Metadata Handler:**
-- Extracts user identity from API Gateway authorizer context
-- Queries DynamoDB for user's encrypted metadata (enforces userId filter)
-- Supports pagination and filtering
-- Returns encrypted data without decryption
-- Manages collections and media-collection associations
-- Ensures all operations are scoped to the authenticated user
-
-**Download Handler:**
-- Extracts user identity from API Gateway authorizer context
-- Queries DynamoDB to verify user owns requested media
-- Generates presigned S3 GET URL scoped to the specific object
-- Returns time-limited download URL (15 minutes)
-- Rejects requests if user doesn't own the media
+**Notification Processing Handler:**
+- Triggered by EventBridge every 5 minutes
+- Queries Notification Schedules table for due notifications (timeBucket <= now + 15min)
+- Sends push notifications via AWS SNS with encrypted payloads
+- Marks schedules as SENT after successful delivery
+- Handles retry logic for failed notifications
+- No access to plaintext notification content
+- Supports multiple device tokens per user for multi-device notifications
 
 **Collection Handler:**
 - CRUD operations for collections
-- Manages media-collection associations
+- Manages item-collection associations (supports all item types)
 - Supports multi-collection membership
 
 **Vault Salt Handler:**
@@ -302,33 +350,76 @@ POST   /v1/recovery/validate       - Validate recovery code
 
 **Tag Search Handler:**
 - Searches encrypted tags using exact match
-- Returns matching media items
+- Returns matching items (any type)
 - No plaintext tag access
 
 **Share Handler:**
 - Creates share records with metadata (expiration, password protection flag)
 - Validates share access (checks expiration and revocation status)
-- Enables anonymous access to shared files
+- Enables anonymous access to shared items
 - Increments access counter on each retrieval
 - Never stores share keys (embedded in URLs)
-- Generates presigned S3 URLs for shared file downloads
+- Generates presigned S3 URLs for shared media downloads
+
+**Sync Handler (WebSocket):**
+- Manages WebSocket connections for real-time sync
+- Sends vault update notifications to connected devices when items are modified
+- Includes only metadata (item ID, item type, version number, timestamp) in sync messages
+- Never includes encrypted content in sync notifications
+- Enables cross-device real-time updates
+- Connected devices fetch full encrypted data via REST API after receiving notification
+- Uses last-write-wins conflict resolution based on version numbers
+- Maintains connection state in DynamoDB for connection management
 
 ### 4. DynamoDB Schema
 
-**Two-Table Design:**
+**Three-Table Design:**
 
-**Main Data Table** (`cortex-{env}-data`) - Authenticated user data:
-- **Users:** `PK: USER#{userId}, SK: PROFILE`
-- **Vaults:** `PK: USER#{userId}, SK: VAULT#{vaultId}`
-- **Account Recovery:** `PK: USER#{userId}, SK: RECOVERY#{codeHash}`
-- **Files:** `PK: VAULT#{vaultId}, SK: FILE#{fileId}`
-  - GSI1: `PK: VAULT#{vaultId}#TAG#{encryptedTag}, SK: FILE#{fileId}` (tag search)
+**Items Table** (`cortex-{env}-items`) - Unified storage for all item types:
+- **Items:** `PK: VAULT#{vaultId}, SK: ITEM#{itemType}#{itemId}`
+  - Attributes:
+    - itemId (UUID)
+    - itemType (enum: MEDIA, NOTE, TASK, EVENT)
+    - encryptedContent (binary) - type-specific JSON
+    - encryptedMetadata (binary) - common metadata
+    - encryptedTags (list<binary>)
+    - encryptedDateBucket (binary, optional) - for tasks/events
+    - timeBucket (string, optional) - plaintext 15-min bucket for queries
+    - createdAt, updatedAt (number)
+    - version (number) - for conflict resolution
+    - sizeBytes (number, optional) - for media items
+    - s3Key (string, optional) - for media items with large content
+  - GSI1 (Type-based queries): `PK: VAULT#{vaultId}#TYPE#{itemType}, SK: ITEM#{itemId}`
+  - GSI2 (Date-based queries): `PK: VAULT#{vaultId}#TYPE#{itemType}#DATE#{timeBucket}, SK: ITEM#{itemId}`
+  - GSI3 (Tag search): `PK: VAULT#{vaultId}#TAG#{encryptedTag}, SK: ITEM#{itemId}`
+
+**Collections Table** (`cortex-{env}-collections`) - Collection metadata:
 - **Collections:** `PK: VAULT#{vaultId}, SK: COLLECTION#{collectionId}`
-- **File-Collection Associations:** `PK: COLLECTION#{collectionId}, SK: FILE#{fileId}`
-  - GSI1: `PK: FILE#{fileId}, SK: COLLECTION#{collectionId}` (reverse lookup)
+- **Item-Collection Associations:** `PK: COLLECTION#{collectionId}, SK: ITEM#{itemId}`
+  - GSI1 (reverse lookup): `PK: ITEM#{itemId}, SK: COLLECTION#{collectionId}`
 
-**Shares Table** (`cortex-{env}-shares`) - Anonymous access, security isolated:
-- **Shares:** `PK: SHARE#{shareId}, SK: METADATA`
+**Notification Schedules Table** (`cortex-{env}-notification-schedules`) - Push notification scheduling:
+- **Schedules:** `PK: VAULT#{vaultId}, SK: SCHEDULE#{timeBucket}#{scheduleId}`
+  - Attributes:
+    - scheduleId (UUID)
+    - itemId (reference to task/event)
+    - encryptedPayload (binary) - notification title, body, etc.
+    - encryptedExactTime (binary) - exact notification time
+    - timeBucket (string) - plaintext 15-min bucket (e.g., "2026-01-15T14:00")
+    - encryptedDeviceTokens (list<binary>) - for push notifications
+    - status (enum: PENDING, SENT, CANCELLED)
+    - createdAt (number)
+    - sentAt (number, optional)
+  - GSI1 (Global notification processing): `PK: STATUS#{status}, SK: TIMEBUCKET#{timeBucket}`
+
+**Additional Tables:**
+- **Users Table** (`cortex-{env}-users`): `PK: USER#{userId}, SK: PROFILE`
+- **Vaults Table** (`cortex-{env}-vaults`): `PK: USER#{userId}, SK: VAULT#{vaultId}`
+- **Account Recovery Table** (`cortex-{env}-recovery`): `PK: USER#{userId}, SK: RECOVERY#{codeHash}`
+- **Shares Table** (`cortex-{env}-shares`) - Anonymous access, security isolated: `PK: SHARE#{shareId}, SK: METADATA`
+- **WebSocket Connections Table** (`cortex-{env}-connections`) - Real-time sync: `PK: CONNECTION#{connectionId}, SK: METADATA`
+  - Attributes: connectionId, userId, vaultId, connectedAt, lastPingAt
+  - GSI1: `PK: VAULT#{vaultId}, SK: CONNECTION#{connectionId}` (for broadcasting to all vault connections)
 
 ### 5. S3 Bucket Structure
 
@@ -406,18 +497,87 @@ vaults/{vaultId}/files/{fileId}/{timestamp}-{random}
 
 ### Client-Side Data Models
 
-**File Item (Plaintext - Client Only):**
+**Base Item (Plaintext - Client Only):**
 ```typescript
-interface FileItem {
+enum ItemType {
+  MEDIA = 'MEDIA',
+  NOTE = 'NOTE',
+  TASK = 'TASK',
+  EVENT = 'EVENT'
+}
+
+interface BaseItem {
   id: string;
+  itemType: ItemType;
+  createdAt: Date;
+  updatedAt: Date;
+  tags: string[];
+  collections: string[];
+}
+
+interface MediaItem extends BaseItem {
+  itemType: ItemType.MEDIA;
   filename: string;
   mimeType: string;
   sizeBytes: number;
-  uploadedAt: Date;
-  modifiedAt?: Date;
-  tags: string[];
-  collections: string[];
-  customMetadata?: Record<string, string>; // extensible for file-type specific metadata
+  s3Key: string;
+}
+
+interface NoteItem extends BaseItem {
+  itemType: ItemType.NOTE;
+  title: string;
+  body: string; // HTML or Markdown
+  attachments?: string[]; // S3 keys for attachments
+}
+
+interface TaskItem extends BaseItem {
+  itemType: ItemType.TASK;
+  title: string;
+  description?: string;
+  dueDate?: Date;
+  priority: 'low' | 'medium' | 'high';
+  isComplete: boolean;
+  recurrence?: RecurrenceRule;
+  reminderTime?: Date;
+}
+
+interface EventItem extends BaseItem {
+  itemType: ItemType.EVENT;
+  title: string;
+  description?: string;
+  startTime: Date;
+  endTime: Date;
+  location?: string;
+  recurrence?: RecurrenceRule;
+  reminderTime?: Date;
+  attendees?: string[];
+}
+
+interface RecurrenceRule {
+  frequency: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  interval: number;
+  until?: Date;
+  count?: number;
+}
+```
+
+**Notification Models (Plaintext - Client Only):**
+```typescript
+interface NotificationSchedule {
+  id: string;
+  itemId: string;
+  exactTime: Date;
+  payload: NotificationPayload;
+  deviceTokens: string[];
+  status: 'PENDING' | 'SENT' | 'CANCELLED';
+}
+
+interface NotificationPayload {
+  title: string;
+  body: string;
+  itemType: ItemType;
+  itemId: string;
+  actionUrl?: string;
 }
 ```
 
@@ -430,7 +590,7 @@ interface Collection {
   createdAt: Date;
   updatedAt: Date;
   itemCount: number;
-  coverMediaId?: string;
+  coverItemId?: string;
 }
 ```
 
@@ -438,9 +598,19 @@ interface Collection {
 ```typescript
 interface VaultKeys {
   vaultMasterKey: Uint8Array; // 256-bit key derived from vault password using Argon2id
+  
+  // Existing keys
   dataEncryptionKey: Uint8Array; // derived from master key via HKDF
   metadataEncryptionKey: Uint8Array; // derived from master key via HKDF
-  shareKeyDerivationKey: Uint8Array; // derived from master key via HKDF for generating share keys
+  shareKeyDerivationKey: Uint8Array; // derived from master key via HKDF
+  
+  // NEW keys for productivity features
+  notesEncryptionKey: Uint8Array; // derived from master key via HKDF
+  tasksEncryptionKey: Uint8Array; // derived from master key via HKDF
+  eventsEncryptionKey: Uint8Array; // derived from master key via HKDF
+  notificationEncryptionKey: Uint8Array; // derived from master key via HKDF
+  dateBucketKey: Uint8Array; // derived from master key via HKDF (for HMAC)
+  
   version: number; // for key rotation
   createdAt: Date;
   lastRotatedAt: Date;
@@ -461,17 +631,39 @@ interface VaultRecoveryKey {
 
 ### Server-Side Data Models (All Encrypted)
 
-**Stored File Metadata:**
+**Stored Item:**
 ```typescript
-interface StoredFileMetadata {
+interface StoredItem {
   vaultId: string;
   userId: string;
-  fileId: string;
-  s3Key: string;
-  encryptedMetadata: Uint8Array; // encrypted FileItem
-  encryptedTags: Uint8Array[]; // each tag encrypted separately
-  uploadedAt: number; // timestamp for sorting
-  sizeBytes: number; // for storage tracking
+  itemId: string;
+  itemType: 'MEDIA' | 'NOTE' | 'TASK' | 'EVENT';
+  encryptedContent: Uint8Array; // Type-specific content as encrypted JSON
+  encryptedMetadata: Uint8Array; // Common metadata
+  encryptedTags: Uint8Array[];
+  encryptedDateBucket?: Uint8Array; // For tasks/events
+  timeBucket?: string; // Plaintext 15-min bucket for queries
+  createdAt: number;
+  updatedAt: number;
+  version: number;
+  sizeBytes?: number; // For media
+  s3Key?: string; // For media
+}
+```
+
+**Stored Notification Schedule:**
+```typescript
+interface StoredNotificationSchedule {
+  vaultId: string;
+  scheduleId: string;
+  itemId: string;
+  encryptedPayload: Uint8Array;
+  encryptedExactTime: Uint8Array;
+  timeBucket: string; // Plaintext for server queries
+  encryptedDeviceTokens: Uint8Array[];
+  status: 'PENDING' | 'SENT' | 'CANCELLED';
+  createdAt: number;
+  sentAt?: number;
 }
 ```
 
@@ -514,6 +706,42 @@ function encryptTagForSearch(tag: string, masterKey: Uint8Array): Uint8Array {
   return hmacSHA256(masterKey, utf8Encode(tag.toLowerCase()));
 }
 ```
+
+### Date Bucket Encryption Strategy
+
+For privacy-preserving date queries on tasks and events:
+- Exact times are encrypted with ChaCha20-Poly1305 (stored as binary)
+- Time buckets (15-minute windows) are stored in plaintext for server queries
+- Encrypted date buckets use deterministic HMAC for client-side filtering
+
+```typescript
+// Round date to 15-minute bucket
+function roundToTimeBucket(date: Date): string {
+  const minutes = date.getMinutes();
+  const roundedMinutes = Math.floor(minutes / 15) * 15;
+  const bucketDate = new Date(date);
+  bucketDate.setMinutes(roundedMinutes, 0, 0);
+  return bucketDate.toISOString().substring(0, 16); // "2026-01-15T14:00"
+}
+
+// Encrypt exact time (stored as binary)
+function encryptExactTime(date: Date, key: Uint8Array): Uint8Array {
+  const timestamp = date.toISOString();
+  return encryptChaCha20Poly1305(utf8Encode(timestamp), key);
+}
+
+// Create deterministic encrypted date bucket for queries
+function encryptDateBucket(date: Date, key: Uint8Array): Uint8Array {
+  const bucket = roundToTimeBucket(date);
+  return hmacSHA256(key, utf8Encode(bucket)); // Deterministic
+}
+```
+
+**Privacy Trade-off:**
+- Server knows notifications/tasks exist in 15-minute windows
+- Server doesn't know exact times
+- Server doesn't know content
+- Acceptable for practical notification delivery and date-based queries
 
 ## Cor
 rectness Properties
@@ -697,6 +925,34 @@ Administrators cannot determine:
 
 **Validates: Requirements 22.4**
 
+### Property 28: Generic item CRUD operations
+
+*For any* item type (MEDIA, NOTE, TASK, EVENT), creating, reading, updating, and deleting items must work consistently regardless of type, with all sensitive data encrypted client-side before transmission.
+
+**Validates: Requirement 24**
+
+### Property 29: Date bucket privacy
+
+*For any* task or event with a date, the server must only have access to the 15-minute time bucket, not the exact time, while the client can decrypt and access the exact time.
+
+**Validates: Requirement 25**
+
+### Property 30: Notification content privacy
+
+*For any* notification, the server must send push notifications with encrypted payloads, and only the client can decrypt and display the notification content.
+
+**Design Rationale:** Notifications are scheduled with encrypted payloads that include the notification title, body, and action URL. The server stores the encrypted payload and exact time (also encrypted), along with a plaintext time bucket for query efficiency. When EventBridge triggers the notification handler every 5 minutes, it queries for schedules with timeBucket <= now + 15min. The handler sends the encrypted payload via AWS SNS to registered device tokens. The client receives the notification, decrypts the payload locally, and displays it to the user. The server never has access to notification content, maintaining zero-knowledge architecture even for time-sensitive reminders.
+
+**Validates: Requirement 26**
+
+### Property 31: Cross-device sync consistency
+
+*For any* item modified on one device, all other connected devices must eventually receive the update and converge to the same state after decryption.
+
+**Design Rationale:** Real-time sync is implemented using WebSocket connections managed by API Gateway and Lambda. When a user modifies an item (create, update, delete), the API handler broadcasts a sync notification to all WebSocket connections for that vault. The notification contains only metadata: item ID, item type, version number, and timestamp. Connected devices receive the notification and fetch the full encrypted item data via REST API. Conflicts are resolved using last-write-wins based on version numbers stored in DynamoDB. Each item has a version field that increments on every update. When a conflict is detected (two devices modified the same item), the client compares version numbers and accepts the higher version. This ensures eventual consistency across all devices while maintaining zero-knowledge architecture (sync notifications never contain encrypted content).
+
+**Validates: Requirement 27**
+
 ## Error Handling
 
 ### Client-Side Error Handling
@@ -870,6 +1126,17 @@ Property-based testing will verify universal properties across many randomly gen
 - Special characters, Unicode
 - Very long passwords
 
+*Notification Generator:*
+- Random notification titles and bodies
+- Various action URLs
+- Different item types (TASK, EVENT)
+- Random reminder times
+
+*Device Generator:*
+- Multiple devices per user
+- Random device IDs and connection states
+- Various device types (mobile, desktop, tablet)
+
 **Property Test Examples:**
 
 *Property 1 Test (Client-side encryption):*
@@ -974,6 +1241,62 @@ def test_key_bundle_roundtrip(master_key, password):
     assert decrypted_master_key == master_key
 ```
 
+*Property 30 Test (Notification privacy):*
+```python
+@given(notification_payload=notification_generator(),
+       notification_key=binary(min_size=32, max_size=32))
+def test_notification_content_privacy(notification_payload, notification_key):
+    """
+    Feature: cortex, Property 30: Notification content privacy
+    """
+    # Client encrypts notification payload
+    encrypted_payload = encrypt_notification(notification_payload, notification_key)
+    
+    # Server stores and sends encrypted payload
+    schedule_id = create_notification_schedule(encrypted_payload)
+    sent_payload = send_notification(schedule_id)
+    
+    # Verify server never sees plaintext
+    assert sent_payload == encrypted_payload
+    assert sent_payload != notification_payload
+    
+    # Client decrypts on receipt
+    decrypted = decrypt_notification(sent_payload, notification_key)
+    assert decrypted == notification_payload
+```
+
+*Property 31 Test (Sync consistency):*
+```python
+@given(item=item_generator(),
+       device_count=integers(min_value=2, max_value=5))
+def test_cross_device_sync_consistency(item, device_count):
+    """
+    Feature: cortex, Property 31: Cross-device sync consistency
+    """
+    # Create item on device 1
+    devices = [create_device() for _ in range(device_count)]
+    create_item(devices[0], item)
+    
+    # All devices should eventually see the item
+    for device in devices[1:]:
+        sync_notification = receive_sync_notification(device)
+        assert sync_notification.item_id == item.id
+        
+        # Fetch and decrypt full item
+        fetched_item = fetch_item(device, item.id)
+        decrypted_item = decrypt_item(fetched_item, device.keys)
+        assert decrypted_item == item
+    
+    # Test conflict resolution
+    item_v2 = update_item(devices[0], item, version=2)
+    item_v3 = update_item(devices[1], item, version=3)
+    
+    # Last write wins (version 3)
+    for device in devices:
+        final_item = fetch_item(device, item.id)
+        assert final_item.version == 3
+```
+
 ### Integration Testing
 
 Integration tests verify end-to-end workflows:
@@ -993,6 +1316,9 @@ Integration tests verify end-to-end workflows:
 - Share revocation: create share → revoke → verify access denied
 - Key rotation: trigger rotation → verify background re-encryption → verify data accessible with new keys
 - Password validation: attempt weak password → verify rejection → attempt breached password → verify rejection
+- Push notifications: create task with reminder → wait for time bucket → verify notification sent → verify client decrypts payload
+- Real-time sync: modify item on device 1 → verify device 2 receives sync notification → verify device 2 fetches and decrypts update
+- Conflict resolution: modify same item on two devices → verify last-write-wins based on version number
 
 ### Security Testing
 
@@ -1100,9 +1426,14 @@ These parameters provide strong protection against brute-force attacks while rem
 - Input key material: Vault master key (256 bits)
 - Salt: None (optional, not used)
 - Info contexts for key derivation:
-  - "cortex-data-encryption-v1" → Data encryption key
-  - "cortex-metadata-encryption-v1" → Metadata encryption key
-  - "cortex-share-key-derivation-v1" → Share key derivation key
+  - "cortex-data-encryption-v1" → Data encryption key (media content)
+  - "cortex-metadata-encryption-v1" → Metadata encryption key (common metadata)
+  - "cortex-share-key-derivation-v1" → Share key derivation key (file sharing)
+  - "cortex-notes-encryption-v1" → Notes encryption key (note content)
+  - "cortex-tasks-encryption-v1" → Tasks encryption key (task content)
+  - "cortex-events-encryption-v1" → Events encryption key (event content)
+  - "cortex-notification-encryption-v1" → Notification encryption key (notification payloads)
+  - "cortex-date-bucket-v1" → Date bucket key (deterministic date bucket HMAC)
 - Output: 32 bytes per derived key (256 bits)
 
 ### Password Validation
@@ -1246,6 +1577,81 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 - Server marks share as revoked in database
 - Revoked shares return 403 error
 - Share key remains in URL but server blocks access
+
+### Push Notification Implementation
+
+**Notification Scheduling:**
+- Client creates task/event with reminder time
+- Client encrypts notification payload (title, body, action URL) using notification encryption key
+- Client encrypts exact reminder time using notification encryption key
+- Client generates plaintext time bucket (15-minute window) for server queries
+- Client sends encrypted payload, encrypted exact time, time bucket, and encrypted device tokens to server
+- Server stores in Notification Schedules table
+
+**Notification Delivery:**
+- EventBridge triggers Lambda function every 5 minutes
+- Lambda queries Notification Schedules table: `status = PENDING AND timeBucket <= now + 15min`
+- For each matching schedule, Lambda sends push notification via AWS SNS
+- SNS payload contains encrypted notification data
+- Lambda marks schedule as SENT with sentAt timestamp
+- Client receives push notification, decrypts payload, displays to user
+
+**Device Token Management:**
+- Client registers device token (encrypted with metadata encryption key) via API
+- Multiple device tokens per user supported (phone, tablet, desktop)
+- Device tokens stored encrypted in Notification Schedules table
+- Client can unregister device tokens when no longer needed
+
+**Privacy Guarantees:**
+- Server never sees plaintext notification content
+- Server only knows notifications exist in 15-minute windows
+- Exact reminder times remain encrypted
+- Device tokens stored encrypted
+
+### Real-Time Sync Implementation
+
+**WebSocket Connection Management:**
+- Client establishes WebSocket connection via API Gateway WebSocket API
+- Connection authenticated using SigV4 or JWT token
+- Lambda stores connection metadata in WebSocket Connections table
+- Connection includes: connectionId, userId, vaultId, connectedAt, lastPingAt
+- Client sends periodic ping messages to keep connection alive
+- Server responds with pong messages
+
+**Sync Notification Broadcasting:**
+- When item is modified (create, update, delete), API handler identifies affected vault
+- Handler queries WebSocket Connections table for all connections to that vault
+- Handler sends sync notification to each connection via API Gateway Management API
+- Sync notification format:
+```json
+{
+  "type": "ITEM_UPDATED",
+  "itemId": "uuid",
+  "itemType": "NOTE",
+  "version": 5,
+  "timestamp": "2026-01-15T14:30:00Z"
+}
+```
+- Notification contains NO encrypted content, only metadata for fetching
+
+**Client Sync Handling:**
+- Client receives sync notification via WebSocket
+- Client compares version number with local cache
+- If remote version > local version, client fetches full encrypted item via REST API
+- Client decrypts item and updates local cache
+- Client displays update to user
+
+**Conflict Resolution:**
+- Last-write-wins based on version numbers
+- Each item has version field that increments on every update
+- When conflict detected, client accepts higher version number
+- Client can optionally show conflict warning to user
+- Version numbers are monotonically increasing integers
+
+**Connection Cleanup:**
+- When client disconnects, Lambda removes connection from WebSocket Connections table
+- Stale connections (no ping for 10 minutes) automatically cleaned up
+- Connection state is ephemeral, no persistent data stored
 
 ### S3 Bucket Policies
 

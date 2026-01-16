@@ -9,12 +9,14 @@
   - _Requirements: 6.1, 6.2, 8.1_
 
 - [ ] 2. Define Smithy API model
+  - Create api/smithy/ directory structure
   - Create api/smithy/cortex-backup.smithy with service definition
-  - Define all API operations with versioned endpoints (/v1/...)
+  - Define operations for auth, vaults, media, collections, tags, shares, recovery
   - Define input/output structures for all operations
   - Define error types (AuthenticationError, AuthorizationError, etc.)
   - Add validation constraints and documentation
   - Configure Smithy build to generate OpenAPI 3.0 spec
+  - Note: Generic item operations (MEDIA, NOTE, TASK, EVENT) will be added in later tasks
   - _Requirements: 6.3, 8.1, 8.2, 8.3, 8.4_
 
 - [x] 3. Implement CDK stacks for AWS infrastructure
@@ -28,14 +30,11 @@
   - _Requirements: 1.3, 7.4, 7.5_
 
 - [x] 3.2 Create database stack (DynamoDB tables)
-  - Create Users table (PK: USER#{userId}, SK: PROFILE)
-  - Create Vaults table (PK: USER#{userId}, SK: VAULT#{vaultId})
-  - Create Files table with GSI for tag-based queries
-  - Create Collections table
-  - Create File-Collection Association table with reverse lookup GSI
-  - Create Shares table
-  - Create Account Recovery table
-  - Configure on-demand billing or provisioned capacity with auto-scaling
+  - Create single-table design with Data table (PK/SK with GSI1)
+  - Create Shares table (separate for anonymous access security isolation)
+  - Note: Items, Collections, Vaults, Recovery codes all use Data table
+  - Note: Notification Schedules and WebSocket Connections tables will be added in later tasks
+  - Configure on-demand billing with point-in-time recovery
   - _Requirements: 2.5, 6.5, 11.3, 12.2, 17.3, 19.1, 22.1, 22.2_
 
 - [x] 3.3 Create authentication stack (Cognito configuration)
@@ -48,10 +47,10 @@
 
 - [x] 3.4 Create API stack (API Gateway and Lambda)
   - Define single Lambda function for all API routes
-  - Configure API Gateway with REST API
-  - Set up SigV4 authentication
+  - Configure API Gateway with REST API and proxy integration
+  - Set up Cognito authorizer for authentication
   - Configure Lambda execution IAM role with DynamoDB and S3 permissions
-  - Set up CloudWatch logging and X-Ray tracing
+  - Set up CloudWatch logging (data trace disabled for encrypted payloads)
   - Configure rate limiting and throttling
   - _Requirements: 3.4, 6.1, 6.2, 6.4, 8.2_
 
@@ -116,7 +115,12 @@
   - Derive data encryption key (context: "cortex-data-encryption-v1")
   - Derive metadata encryption key (context: "cortex-metadata-encryption-v1")
   - Derive share key derivation key (context: "cortex-share-key-derivation-v1")
-  - _Requirements: 14.2_
+  - Derive notes encryption key (context: "cortex-notes-encryption-v1")
+  - Derive tasks encryption key (context: "cortex-tasks-encryption-v1")
+  - Derive events encryption key (context: "cortex-events-encryption-v1")
+  - Derive notification encryption key (context: "cortex-notification-encryption-v1")
+  - Derive date bucket encryption key (context: "cortex-date-bucket-encryption-v1")
+  - _Requirements: 14.2, 24.3, 25.1, 26.1_
 
 - [ ] 6.3 Implement vault recovery key generation and validation
   - Generate BIP39 mnemonic from vault master key using bip39 library
@@ -174,9 +178,9 @@
   - _Requirements: 6.1, 6.2_
 
 - [ ] 7.2 Create route registration system
-  - Create routes/ directory for domain-specific route modules
-  - Implement route registration pattern
-  - Set up module structure for auth, vaults, media, collections, tags, shares, recovery
+  - Create routes/ directory structure (auth/, vaults/, media/, collections/, tags/, shares/, recovery/)
+  - Implement route registration pattern for each domain
+  - Set up module structure with register_routes() functions
   - _Requirements: 8.1, 8.2_
 
 - [ ] 8. Implement authentication routes and services
@@ -223,73 +227,90 @@
   - **Property 27: Vault salt uniqueness**
   - **Validates: Requirements 22.4**
 
-- [ ] 10. Implement media upload routes and services
-- [ ] 10.1 Create media upload route handlers
-  - Implement POST /v1/media/upload/init route
-  - Implement POST /v1/media/upload/complete route
+- [ ] 10. Implement item upload routes and services (generic for all item types)
+- [ ] 10.1 Update Smithy model for generic item operations
+  - Add item type enum (MEDIA, NOTE, TASK, EVENT) to Smithy model
+  - Define generic /v1/items endpoints for all item types
+  - Update input/output structures to support all item types
+  - _Requirements: 24.1, 24.2_
+
+- [ ] 10.2 Create item upload route handlers
+  - Implement POST /v1/items/upload/init route (for MEDIA items with S3 storage)
+  - Implement POST /v1/items route (for NOTE, TASK, EVENT items with inline encrypted content)
+  - Implement POST /v1/items/upload/complete route (for MEDIA items)
   - Extract user identity from API Gateway context
-  - _Requirements: 1.4, 1.5, 7.1, 7.2_
+  - Support item type parameter (MEDIA, NOTE, TASK, EVENT)
+  - _Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2_
 
-- [ ] 10.2 Create media upload service layer
+- [ ] 10.3 Create item upload service layer
   - Validate user permissions (user can only upload to own namespace)
-  - Generate presigned S3 PUT URLs scoped to user's S3 prefix
-  - Configure multipart upload for files >100MB (5MB min part size)
-  - Return upload URL with 15-minute expiration
+  - For MEDIA items: Generate presigned S3 PUT URLs scoped to user's S3 prefix
+  - For MEDIA items: Configure multipart upload for files >100MB (5MB min part size)
+  - For NOTE/TASK/EVENT items: Store encrypted content directly in DynamoDB
+  - Return upload URL with 15-minute expiration (MEDIA only)
   - Store encrypted metadata in DynamoDB with user isolation
-  - Link media to user account using userId from Cognito token
+  - Link items to user account using userId from Cognito token
   - Handle encrypted tags storage
-  - _Requirements: 1.2, 1.4, 1.5, 2.1, 2.2, 2.4, 4.5, 7.1, 7.2, 7.4, 11.3_
+  - Store item type in DynamoDB
+  - _Requirements: 1.2, 1.4, 1.5, 2.1, 2.2, 2.4, 4.5, 7.1, 7.2, 7.4, 11.3, 24.1, 24.2, 24.3_
 
-- [ ] 10.3 Add upload error handling and cleanup logic
-  - Handle S3 upload failures with DynamoDB cleanup
-  - Handle DynamoDB failures with S3 cleanup
+- [ ] 10.4 Add upload error handling and cleanup logic
+  - Handle S3 upload failures with DynamoDB cleanup (MEDIA items)
+  - Handle DynamoDB failures with S3 cleanup (MEDIA items)
   - Implement idempotency for critical operations
   - _Requirements: 2.5_
 
-- [ ]* 10.4 Write property test for client-side encryption before transmission
+- [ ]* 10.5 Write property test for client-side encryption before transmission
   - **Property 1: Client-side encryption before transmission**
-  - **Validates: Requirements 1.1, 2.1, 11.2, 12.1, 13.1**
+  - **Validates: Requirements 1.1, 2.1, 11.2, 12.1, 13.1, 24.3**
 
-- [ ]* 10.5 Write property test for server storage preserves encryption
+- [ ]* 10.6 Write property test for server storage preserves encryption
   - **Property 2: Server storage preserves encryption**
-  - **Validates: Requirements 1.2, 2.2, 11.3, 12.2**
+  - **Validates: Requirements 1.2, 2.2, 11.3, 12.2, 24.3**
 
-- [ ]* 10.6 Write property test for referential integrity
+- [ ]* 10.7 Write property test for referential integrity
   - **Property 5: Referential integrity between S3 and DynamoDB**
   - **Validates: Requirements 2.5**
 
-- [ ] 11. Implement media download and listing routes and services
-- [ ] 11.1 Create media listing route handlers
-  - Implement GET /v1/media/list route
-  - Implement GET /v1/media/{id} route
-  - Extract user identity and query parameters
-  - _Requirements: 2.3, 10.1, 10.2_
+- [ ]* 10.8 Write property test for generic item API supports all types
+  - **Property 28: Generic item API supports all types**
+  - **Validates: Requirements 24.1, 24.2**
 
-- [ ] 11.2 Create media listing service layer
+- [ ] 11. Implement item download and listing routes and services
+- [ ] 11.1 Create item listing route handlers
+  - Implement GET /v1/items route (list all items with optional type filter)
+  - Implement GET /v1/items/{id} route (get specific item)
+  - Extract user identity and query parameters
+  - Support filtering by item type (MEDIA, NOTE, TASK, EVENT)
+  - _Requirements: 2.3, 10.1, 10.2, 24.1, 24.2_
+
+- [ ] 11.2 Create item listing service layer
   - Query DynamoDB for user's encrypted metadata
   - Implement pagination with consistent results (use DynamoDB pagination tokens)
-  - Support filtering and sorting by timestamp
+  - Support filtering by item type and sorting by timestamp
   - Enforce user boundary restrictions (filter by userId and vaultId)
   - Return encrypted data without decryption
-  - _Requirements: 2.3, 2.4, 10.1, 10.2, 10.4, 10.5_
+  - _Requirements: 2.3, 2.4, 10.1, 10.2, 10.4, 10.5, 24.1, 24.2_
 
-- [ ] 11.3 Create media download route handler
-  - Implement GET /v1/media/{id}/download route
+- [ ] 11.3 Create item download route handler
+  - Implement GET /v1/items/{id}/download route (for MEDIA items)
   - Extract user identity from context
-  - _Requirements: 4.1, 4.3_
+  - Return error for non-MEDIA items
+  - _Requirements: 4.1, 4.3, 24.2_
 
-- [ ] 11.4 Create media download service layer
-  - Query DynamoDB to verify user owns requested media
+- [ ] 11.4 Create item download service layer
+  - Query DynamoDB to verify user owns requested item
+  - Verify item type is MEDIA
   - Generate presigned S3 GET URLs scoped to specific object
   - Return time-limited download URL (15 minutes)
   - Return authorization errors for unauthorized access
-  - _Requirements: 4.1, 4.3, 4.4_
+  - _Requirements: 4.1, 4.3, 4.4, 24.2_
 
 - [ ]* 11.5 Write property test for server responses contain only encrypted data
   - **Property 3: Server responses contain only encrypted data**
-  - **Validates: Requirements 2.3, 10.3, 12.4, 13.5**
+  - **Validates: Requirements 2.3, 10.3, 12.4, 13.5, 24.3**
 
-- [ ]* 11.6 Write property test for media list queries respect vault boundaries
+- [ ]* 11.6 Write property test for item list queries respect vault boundaries
   - **Property 11: File list queries respect vault boundaries**
   - **Validates: Requirements 10.1, 10.4**
 
@@ -301,18 +322,20 @@
   - **Property 4: Vault data isolation**
   - **Validates: Requirements 2.4, 3.3, 4.3, 5.1**
 
-- [ ] 12. Implement media deletion routes and services
-- [ ] 12.1 Create media deletion route handler
-  - Implement DELETE /v1/media/{id} route
+- [ ] 12. Implement item deletion routes and services
+- [ ] 12.1 Create item deletion route handler
+  - Implement DELETE /v1/items/{id} route
   - Extract user identity from context
-  - _Requirements: 5.1_
+  - Support all item types (MEDIA, NOTE, TASK, EVENT)
+  - _Requirements: 5.1, 24.2_
 
-- [ ] 12.2 Create media deletion service layer
+- [ ] 12.2 Create item deletion service layer
   - Verify user ownership before deletion
-  - Delete S3 object and DynamoDB metadata atomically
+  - For MEDIA items: Delete S3 object and DynamoDB metadata atomically
+  - For NOTE/TASK/EVENT items: Delete DynamoDB record only
   - Handle partial failures with rollback (cleanup)
   - Return deletion confirmation
-  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 24.2_
 
 - [ ]* 12.3 Write property test for deletion maintains referential integrity
   - **Property 8: Deletion maintains referential integrity**
@@ -331,32 +354,33 @@
   - Create collection with encrypted metadata
   - List user's collections with item counts
   - Update collection metadata
-  - Delete collection while preserving media
+  - Delete collection while preserving items
   - Enforce user isolation for all operations
   - _Requirements: 12.1, 12.2, 13.1, 13.3, 13.4, 13.5_
 
-- [ ] 13.3 Create media-collection association route handlers
-  - Implement POST /v1/collections/{id}/media route (add media)
-  - Implement DELETE /v1/collections/{id}/media/{mediaId} route (remove media)
+- [ ] 13.3 Create item-collection association route handlers
+  - Implement POST /v1/collections/{id}/items route (add items)
+  - Implement DELETE /v1/collections/{id}/items/{itemId} route (remove items)
+  - Support all item types (MEDIA, NOTE, TASK, EVENT)
   - _Requirements: 12.3, 12.5, 13.2_
 
-- [ ] 13.4 Create media-collection association service layer
-  - Add media to collections (many-to-many support)
-  - Remove media from collections (preserve media)
-  - Query collections by media ID (using GSI)
-  - Query media by collection ID
+- [ ] 13.4 Create item-collection association service layer
+  - Add items to collections (many-to-many support)
+  - Remove items from collections (preserve items)
+  - Query collections by item ID (using GSI)
+  - Query items by collection ID
   - Update collection item counts
   - _Requirements: 12.3, 12.5, 13.2_
 
-- [ ]* 13.5 Write property test for file-collection many-to-many relationships
+- [ ]* 13.5 Write property test for item-collection many-to-many relationships
   - **Property 14: File-collection many-to-many relationships**
   - **Validates: Requirements 12.3, 12.5**
 
-- [ ]* 13.6 Write property test for collection deletion preserves files
+- [ ]* 13.6 Write property test for collection deletion preserves items
   - **Property 15: Collection deletion preserves files**
   - **Validates: Requirements 13.3, 13.4**
 
-- [ ]* 13.7 Write property test for file removal from collection preserves file
+- [ ]* 13.7 Write property test for item removal from collection preserves item
   - **Property 16: File removal from collection preserves file**
   - **Validates: Requirements 13.2**
 
@@ -370,7 +394,7 @@
 - [ ] 14.2 Create tag search service layer
   - Receive encrypted search term from client
   - Query DynamoDB GSI for matching encrypted tags
-  - Return matching media items with encrypted metadata
+  - Return matching items with encrypted metadata
   - Enforce user isolation (filter by vaultId)
   - _Requirements: 11.4, 11.5_
 
@@ -546,8 +570,8 @@
 - [ ] 23. Write integration tests
   - Test complete upload flow (authenticate → get presigned URL → upload to S3 → store metadata)
   - Test complete download flow (authenticate → list media → get download URL → download from S3)
-  - Test multi-device flow (setup on device 1 → login on device 2 → access same media)
-  - Test collection management (create → add media → retrieve → delete)
+  - Test multi-device flow (setup on device 1 → login on device 2 → access same items)
+  - Test collection management (create → add items → retrieve → delete)
   - Test tag search (upload with tags → search → verify results)
   - Test error recovery (simulate S3 failure → verify cleanup)
   - Test two-password flow (change account password → verify vault unchanged → change vault password → verify re-encryption)
@@ -559,11 +583,174 @@
   - Test share revocation (create share → revoke → verify access denied)
   - Test key rotation (trigger rotation → verify re-encryption → verify data accessible)
   - Test password validation (attempt weak password → verify rejection → attempt breached password → verify rejection)
+  - Test notification scheduling (create TASK/EVENT with notification → verify encrypted schedule stored → verify notification delivery)
+  - Test date bucket privacy (create multiple notifications → verify server only knows 15-min buckets → verify exact times encrypted)
+  - Test real-time sync (update item on device 1 → verify device 2 receives update via WebSocket)
   - _Requirements: All_
 
-- [ ] 24. Final checkpoint - Ensure all tests pass
+- [ ] 24. Implement date bucket encryption (client-side)
+- [ ] 24.1 Update Smithy model for date-based queries
+  - Add timeBucket field to item structures for tasks/events
+  - Add date bucket query parameters to list/search operations
+  - _Requirements: 25.1, 25.2, 25.3_
+
+- [ ] 24.2 Create date bucket encryption functions
+  - Implement function to round notification time to 15-minute bucket
+  - Derive date bucket encryption key using HKDF (context: "cortex-date-bucket-encryption-v1")
+  - Encrypt exact notification time with ChaCha20-Poly1305
+  - Create encrypted notification payload (item ID, notification type, encrypted exact time)
+  - _Requirements: 25.1, 25.3_
+
+- [ ] 24.3 Create date bucket decryption functions
+  - Decrypt notification payloads received from server
+  - Extract exact notification time from encrypted payload
+  - Validate notification time matches expected bucket
+  - _Requirements: 25.3_
+
+- [ ]* 24.4 Write property test for date bucket privacy
+  - **Property 29: Date bucket encryption preserves privacy**
+  - **Validates: Requirements 25.1, 25.2, 25.3**
+
+- [ ] 25. Implement notification scheduling system
+- [ ] 25.1 Update CDK to add Notification Schedules table and EventBridge
+  - Create Notification Schedules DynamoDB table (PK: VAULT#{vaultId}, SK: SCHEDULE#{timeBucket}#{scheduleId})
+  - Add GSI for global notification processing (PK: STATUS#{status}, SK: TIMEBUCKET#{timeBucket})
+  - Configure EventBridge rule to trigger Lambda every 5 minutes
+  - Add SNS topic for push notifications
+  - Grant Lambda permissions for SNS publish
+  - _Requirements: 26.1, 26.2, 26.3, 26.4_
+
+- [ ] 25.2 Create notification scheduling route handlers (server-side)
+  - Implement POST /v1/notifications/schedule route (store encrypted notification)
+  - Implement DELETE /v1/notifications/schedule/{id} route (cancel notification)
+  - Implement GET /v1/notifications/poll route (poll for due notifications in current bucket)
+  - Extract user identity from API Gateway context
+  - _Requirements: 26.1, 26.2, 26.3_
+
+- [ ] 25.3 Create notification scheduling service layer (server-side)
+  - Store encrypted notification payload in Notification Schedules table
+  - Index by date bucket (PK: VAULT#{vaultId}, SK: SCHEDULE#{timeBucket}#{scheduleId})
+  - Query notifications by date bucket for polling
+  - Delete notification schedules after delivery
+  - Never decrypt notification payloads
+  - _Requirements: 26.1, 26.2, 26.3_
+
+- [ ] 25.4 Create notification processing Lambda handler
+  - Triggered by EventBridge every 5 minutes
+  - Query schedules with timeBucket <= now + 15min
+  - Send push notifications via SNS with encrypted payloads
+  - Mark schedules as SENT after delivery
+  - Handle retry logic for failed notifications
+  - _Requirements: 26.3, 26.4_
+
+- [ ] 25.5 Create notification polling system (client-side)
+  - Poll server every 15 minutes for current date bucket
+  - Decrypt notification payloads locally
+  - Check if exact notification time has passed
+  - Display local notifications for due items
+  - Mark notifications as delivered
+  - _Requirements: 26.3, 26.4_
+
+- [ ] 25.6 Integrate SNS for push notifications (optional)
+  - Configure SNS topics for notification delivery
+  - Subscribe client devices to SNS topics
+  - Send encrypted notification payloads via SNS
+  - Client decrypts and displays notifications
+  - _Requirements: 26.4_
+
+- [ ]* 25.7 Write property test for notification encryption
+  - **Property 30: Notification metadata is encrypted**
+  - **Validates: Requirements 26.1, 26.2**
+
+- [ ]* 25.8 Write property test for server cannot determine exact notification times
+  - **Property 31: Server cannot determine exact notification times**
+  - **Validates: Requirements 25.2, 26.2**
+
+- [ ] 26. Implement real-time sync (optional)
+- [ ] 26.1 Update CDK to add WebSocket API and Connections table
+  - Create WebSocket API Gateway
+  - Create WebSocket Connections DynamoDB table (PK: CONNECTION#{connectionId}, SK: METADATA)
+  - Add GSI for vault-based queries (PK: VAULT#{vaultId}, SK: CONNECTION#{connectionId})
+  - Grant Lambda permissions for API Gateway Management API
+  - _Requirements: 27.1, 27.2_
+
+- [ ] 26.2 Create WebSocket API for real-time sync
+  - Implement connection management (connect, disconnect)
+  - Store connection IDs in DynamoDB
+  - Associate connections with user IDs and vault IDs
+  - Handle ping/pong for keep-alive
+  - _Requirements: 27.1, 27.2_
+
+- [ ] 26.3 Create sync notification system
+  - Trigger sync notifications on item create/update/delete
+  - Send encrypted item metadata to connected clients
+  - Broadcast to all user's connected devices
+  - Never send unencrypted data over WebSocket
+  - _Requirements: 27.1, 27.2, 27.3_
+
+- [ ] 26.4 Create client-side sync handler
+  - Establish WebSocket connection on app startup
+  - Listen for sync notifications
+  - Decrypt received item metadata
+  - Update local cache with new data
+  - Trigger UI refresh
+  - _Requirements: 27.1, 27.2, 27.3_
+
+- [ ]* 26.5 Write property test for real-time sync preserves encryption
+  - **Property 32: Real-time sync preserves encryption**
+  - **Validates: Requirements 27.2, 27.3**
+
+- [ ] 27. Final checkpoint - Ensure all tests pass
   - Run all unit tests and verify they pass
   - Run all property-based tests and verify they pass
   - Run all integration tests and verify they pass
   - Fix any failing tests
   - Ensure all tests pass, ask the user if questions arise.
+
+---
+
+## Implementation Status Summary
+
+**Completed:**
+- ✅ Project structure and CDK infrastructure (task 1)
+- ✅ CDK stacks for AWS infrastructure (tasks 3.x)
+- ✅ Shared Lambda utilities (auth, errors, models, repository) (task 4.x)
+
+**In Progress:**
+- 🔄 Client-side encryption library (task 5.x) - Placeholder created, implementation pending
+- 🔄 Lambda API handler (task 7.x) - Placeholder created, route implementation pending
+
+**Not Started:**
+- ⏳ Smithy API model (task 2) - **NEXT PRIORITY**
+- ⏳ Client-side key management (task 6.x)
+- ⏳ Authentication routes (task 8.x)
+- ⏳ Vault management routes (task 9.x)
+- ⏳ Item upload/download/deletion routes (tasks 10.x, 11.x, 12.x)
+- ⏳ Collection management routes (task 13.x)
+- ⏳ Tag search routes (task 14.x)
+- ⏳ Password change functionality (task 15.x)
+- ⏳ File sharing system (task 16.x)
+- ⏳ Automatic key rotation (task 17.x)
+- ⏳ Local content analysis (task 18.x)
+- ⏳ Concurrent upload coordination (task 19.x)
+- ⏳ Enhanced error handling (task 20.x)
+- ⏳ Monitoring and logging (task 21.x)
+- ⏳ Deployment pipeline (task 22.x)
+- ⏳ Integration tests (task 23)
+- ⏳ Date bucket encryption (task 24.x)
+- ⏳ Notification scheduling (task 25.x)
+- ⏳ Real-time sync (task 26.x)
+
+**Next Steps:**
+1. **Create Smithy API model** (task 2) - Define service contract and generate OpenAPI spec
+2. Implement Lambda API handler with APIGatewayRestResolver (task 7.x)
+3. Build client-side encryption library (task 5.x)
+4. Implement client-side key management (task 6.x)
+5. Implement authentication routes and services (task 8.x)
+6. Continue with vault management and media operations (tasks 9.x, 10.x)
+
+**Notes:**
+- The Smithy API model does not exist yet and needs to be created from scratch (task 2).
+- The CDK infrastructure uses a single-table design for the Data table, which will store Users, Vaults, Items, Collections, and Recovery codes.
+- Notification Schedules and WebSocket Connections tables will be added in later tasks (25.1, 26.1).
+- All property-based tests are marked as optional tasks and will be implemented alongside their corresponding features.
