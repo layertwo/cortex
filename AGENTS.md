@@ -514,3 +514,41 @@ api.root.addProxy({
 - Use moto for mocking AWS services in tests
 - Aim for >80% code coverage
 - Test error paths and edge cases
+
+## Kiro Specs
+
+Specs are a structured way of building and documenting features with Kiro. They formalize the design and implementation process, allowing iteration on requirements and design before implementation.
+
+**What are Specs?**
+- Structured feature development workflow with distinct phases
+- Formalization of design and implementation process
+- Enable incremental development of complex features with control and feedback
+- Allow iteration with the agent on requirements, design, and implementation tasks
+
+**File References in Specs**
+- Specs support file references via `#[[file:<relative_file_name>]]` syntax
+- Include references to OpenAPI specs, GraphQL schemas, or design documents
+- Referenced files influence implementation in a low-friction way
+- Example: `#[[file:api/openapi.yaml]]` or `#[[file:docs/design.md]]`
+
+**When to Use Specs**
+- Complex features requiring design iteration before implementation
+- Features spanning multiple files or components
+- When you need to document requirements and design decisions
+- API changes or new endpoint development
+- Encryption algorithm changes or security feature additions
+- Major refactoring efforts
+
+**Spec Workflow**
+1. Define requirements and acceptance criteria
+2. Iterate on design with Kiro
+3. Break down into implementation tasks
+4. Let Kiro work through implementation incrementally
+5. Review and provide feedback at each stage
+
+**Best Practices for This Project**
+- Use specs for new API endpoints (reference Smithy models)
+- Use specs for encryption changes (reference security requirements)
+- Use specs for new Lambda routes (reference API Gateway integration)
+- Include references to relevant DynamoDB schema patterns
+- Reference property-based testing requirements in implementation tasks
