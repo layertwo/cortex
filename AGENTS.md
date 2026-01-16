@@ -1,14 +1,98 @@
----
-inclusion: always
----
+# Cortex: Zero-Knowledge Media Backup System
 
-# Project Structure & Organization
+Cortex is a privacy-first photo and video backup solution where all encryption happens client-side. The backend never has access to unencrypted user data, metadata, or encryption keys.
+
+## Critical Architecture Constraints
+
+**Zero-Knowledge Enforcement:**
+- Backend MUST NEVER receive or process unencrypted user data
+- All encryption/decryption operations happen exclusively on client devices
+- Metadata (filenames, dates, locations), tags, and collections are encrypted before transmission
+- Server only stores encrypted blobs and cannot decrypt them
+
+**Data Flow Pattern:**
+- Client encrypts data → Client uploads directly to S3 via presigned URL → Server stores encrypted metadata in DynamoDB
+- Client requests presigned URL → Client downloads from S3 → Client decrypts locally
+- Lambda functions only handle presigned URL generation and encrypted metadata operations
+
+**Two-Password Security Model:**
+- **Account Password**: Used for AWS Cognito authentication, can be changed without re-encrypting vault data
+- **Vault Password**: Used exclusively for deriving vault encryption keys, never transmitted to server
+- Separation allows flexible credential management without expensive re-encryption
+- Vault password + server-stored vault salt → Argon2id → Vault master key (256-bit)
+- HKDF derives multiple keys from vault master key: data encryption key, metadata encryption key, share key derivation key
+
+**Key Management:**
+- Vault master key derived from vault password using Argon2id (64MB memory, 3 iterations, 4 parallelism)
+- Vault salt stored on server (non-secret, enables multi-device key derivation)
+- Keys never transmitted to or stored on backend
+- Multi-device support via vault password + vault salt (derive same keys on any device)
+- Vault recovery key (BIP39 mnemonic) enables vault password reset without re-encryption
+- Account recovery codes (10 per user) enable account password reset
+- Automatic key rotation every 90 days with background re-encryption
+
+## Core Stack
+
+**Infrastructure as Code**: AWS CDK with TypeScript
+- Use CDK constructs for all AWS resource definitions
+- Follow CDK best practices: use L2/L3 constructs over L1 when available
+- Define stack outputs for cross-stack references
+- Use CDK context for environment-specific configuration
+
+**Backend**: AWS Lambda with Python 3.11+
+- Use AWS Lambda Powertools for Python (structured logging, tracing, metrics)
+- Single Lambda function using `APIGatewayRestResolver` for all API routes
+- Route handlers organized by domain in separate modules
+- Business logic in service layer, data access in repository layer
+- Set appropriate timeout and memory configurations
+- Use environment variables for configuration, never hardcode values
+
+**API Layer**: AWS API Gateway (REST) + Smithy Model
+- Define all APIs using Smithy model specifications
+- Use RESTful conventions with proper HTTP verbs
+- Implement API versioning from the start (URI versioning: `/v1/...`)
+- Generate API documentation from Smithy models (OpenAPI 3.0, client SDKs)
+- Current version: v1
+
+**Storage**: AWS S3 + DynamoDB
+- S3: Enable server-side encryption (AES-256), versioning, and lifecycle policies
+- S3: Configure multipart upload (5MB min part size), transfer acceleration
+- DynamoDB: Multiple tables with specific access patterns (Users, Vaults, Files, Collections, Shares, Recovery)
+- DynamoDB: Use composite keys (PK/SK) and GSIs for query optimization
+- Implement proper partition key design to avoid hot partitions
+
+**Security**: AWS Cognito + SigV4
+- Cognito handles account password authentication only (not vault password)
+- Custom authentication flow for account recovery codes
+- SigV4 request signing for all API calls
+- Lambda generates scoped presigned URLs (no per-user IAM policies needed)
+- Never store unencrypted sensitive data
+
+**Client-Side Encryption**: ChaCha20-Poly1305
+- Library: @noble/ciphers (browser), cryptography (Python for testing)
+- Key size: 256 bits
+- Nonce size: 96 bits (12 bytes, random per operation)
+- Tag size: 128 bits (16 bytes, authenticated encryption)
+
+**Key Derivation**: Argon2id + HKDF
+- Argon2id: 64MB memory, 3 iterations, 4 parallelism
+- Input: vault password + vault salt (16 bytes)
+- Output: 256-bit vault master key
+- HKDF derives multiple keys from vault master key:
+  - Data encryption key (context: "cortex-data-encryption-v1")
+  - Metadata encryption key (context: "cortex-metadata-encryption-v1")
+  - Share key derivation key (context: "cortex-share-key-derivation-v1")
+
+**Tag Encryption**: Deterministic HMAC-SHA256
+- Enables server-side exact match without revealing plaintext
+- Consistent output for same tag (searchability)
+- Tags normalized to lowercase before encryption
 
 ## Directory Structure
 
 ```
 cortex/
-├── cdk /                  # CDK stacks (TypeScript)
+├── cdk/                   # CDK stacks (TypeScript)
 │   ├── lib/               # Stack definitions
 │   │   ├── storage-stack.ts
 │   │   ├── database-stack.ts
@@ -159,31 +243,6 @@ Examples:
 - `cortex-prod-api-gateway`
 
 Environments: `dev`, `staging`, `prod`
-
-## Architecture Constraints
-
-**CRITICAL - Zero-Knowledge Rules:**
-- Lambda functions NEVER receive unencrypted user data
-- All encryption/decryption happens client-side only
-- Use presigned S3 URLs for direct client-to-S3 transfers (bypass Lambda for data)
-- Store metadata encrypted in DynamoDB
-- Vault password and vault keys NEVER transmitted to server
-- Vault recovery keys NEVER transmitted to or stored by server
-- Share keys embedded in URL fragments (never sent to server)
-
-**Serverless-only:**
-- No EC2, ECS, or containers
-- Lambda for compute (Python 3.11+)
-- S3 and DynamoDB for storage
-- API Gateway for HTTP
-- Cognito for authentication
-
-**Security boundaries:**
-- Cognito handles account password authentication only
-- Lambda generates scoped presigned URLs (no per-user IAM policies)
-- S3 bucket policies enforce encryption at rest (AES-256)
-- API Gateway validates SigV4 signatures before Lambda invocation
-- Lambda enforces user isolation for all data operations
 
 ## DynamoDB Schema Patterns
 
@@ -342,3 +401,116 @@ api.root.addProxy({
   anyMethod: true,
 });
 ```
+
+## Code Style & Conventions
+
+**TypeScript (CDK)**
+- Use strict TypeScript configuration
+- Follow AWS CDK naming conventions (PascalCase for constructs)
+- Use interfaces for construct props
+- Add JSDoc comments for public APIs
+
+**Python (Lambda)**
+- Follow PEP 8 style guide
+- Use type hints for all function signatures
+- Use Pydantic models for request/response validation
+- Implement proper exception handling with custom error types
+
+**AWS Lambda Powertools Usage**
+- Single Lambda function handles all API routes using `APIGatewayRestResolver`
+- Always use `@logger.inject_lambda_context` decorator on lambda_handler
+- Use `@tracer.capture_method` for X-Ray tracing on route handlers and service methods
+- Use `@metrics.log_metrics` for CloudWatch custom metrics
+- Validate inputs with Pydantic models
+- Organize routes by domain in separate modules
+
+## Security Requirements
+
+- Never log sensitive data (keys, passwords, PII, encrypted payloads)
+- Log only: user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
+- Never log: vault password, vault keys, vault recovery keys, share keys, account recovery codes
+- Use AWS Secrets Manager or Parameter Store for secrets
+- Implement least-privilege IAM policies for Lambda execution roles
+- No per-user IAM policies (use scoped presigned URLs instead)
+- Enable CloudTrail logging for audit trails
+- Use VPC endpoints for private AWS service access when needed
+- Validate all inputs at API Gateway and Lambda layers
+- Sanitize error messages to prevent information leakage
+
+**Password Security:**
+- Minimum 12 characters
+- Require: uppercase, lowercase, numbers, special characters
+- Breach detection via Have I Been Pwned API (k-anonymity model)
+- Client-side SHA-1 hash, send first 5 characters to API
+- Check full hash against returned list locally
+- Reject any password found in breach database
+
+**Recovery Security:**
+- Account recovery codes: 10 per user, 16 characters, format: XXXX-XXXX-XXXX-XXXX
+- Codes hashed with SHA-256 before server storage
+- One-time use (invalidated after successful recovery)
+- Vault recovery key: BIP39 mnemonic (12-24 words), never stored on server
+- Display recovery keys once with secure offline storage guidance
+
+## API Endpoints
+
+**Authentication & Vaults:**
+- `POST /v1/auth/login` - Authenticate with account password
+- `POST /v1/auth/refresh` - Refresh credentials
+- `POST /v1/auth/recover` - Account recovery with recovery code
+- `POST /v1/vaults` - Create vault with vault salt
+- `GET /v1/vaults/{id}/salt` - Retrieve vault salt for key derivation
+
+**Media Operations:**
+- `POST /v1/media/upload/init` - Initialize upload, get presigned URL
+- `POST /v1/media/upload/complete` - Mark upload complete, store metadata
+- `GET /v1/media/list` - List user's media (paginated)
+- `GET /v1/media/{id}` - Get media metadata
+- `GET /v1/media/{id}/download` - Get presigned download URL
+- `DELETE /v1/media/{id}` - Delete media item
+
+**Collections:**
+- `POST /v1/collections` - Create collection
+- `GET /v1/collections` - List collections
+- `GET /v1/collections/{id}` - Get collection details
+- `PUT /v1/collections/{id}` - Update collection
+- `DELETE /v1/collections/{id}` - Delete collection
+- `POST /v1/collections/{id}/media` - Add media to collection
+- `DELETE /v1/collections/{id}/media/{mediaId}` - Remove media from collection
+
+**Tags & Sharing:**
+- `GET /v1/tags/search` - Search by encrypted tag
+- `POST /v1/shares` - Create file share
+- `GET /v1/shares/{id}` - Access shared file (anonymous)
+- `DELETE /v1/shares/{id}` - Revoke share
+
+**Recovery:**
+- `POST /v1/recovery/codes` - Generate account recovery codes
+- `POST /v1/recovery/validate` - Validate recovery code
+
+## Testing Requirements
+
+**Property-Based Testing**
+- Use Hypothesis (Python) for server-side property tests
+- Use fast-check (TypeScript/JavaScript) for client-side property tests
+- Minimum 100 iterations per property test
+- Each property test must reference design document property in comment
+- Tag format: `# Feature: cortex-backup, Property {number}: {property_text}`
+- Test data generators for: media content, metadata, users, tags, collections, passwords
+- Property tests verify universal correctness across many random inputs
+
+**Property Test Examples:**
+- Encryption round-trip preserves content
+- User data isolation (vault boundaries)
+- Pagination consistency (no duplicates, no omissions)
+- Deletion maintains referential integrity
+- Key derivation is deterministic
+- Encrypted tag search functionality
+- Password strength validation
+- Breached password detection
+
+**Unit & Integration Tests:**
+- Write unit tests for all Lambda functions
+- Use moto for mocking AWS services in tests
+- Aim for >80% code coverage
+- Test error paths and edge cases
