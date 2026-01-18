@@ -8,36 +8,30 @@
   - Create .gitignore for build artifacts and sensitive files
   - _Requirements: 6.1, 6.2, 8.1_
 
-- [ ] 2. Define Smithy API model
-  - Create api/smithy/ directory structure
-  - Create api/smithy/cortex-backup.smithy with service definition
-  - Define operations for auth, vaults, media, collections, tags, shares, recovery
+- [x] 2. Define Smithy API model
+  - Create smithy/models/ directory structure
+  - Create smithy/models/main.smithy with service definition
+  - Define operations for auth, vaults, items, collections, tags, shares, recovery
   - Define input/output structures for all operations
   - Define error types (AuthenticationError, AuthorizationError, etc.)
   - Add validation constraints and documentation
   - Configure Smithy build to generate OpenAPI 3.0 spec
-  - Note: Generic item operations (MEDIA, NOTE, TASK, EVENT) will be added in later tasks
+  - Modular structure with separate files for each domain (auth/, vault/, item/, collection/, tag/, share/, recovery/)
   - _Requirements: 6.3, 8.1, 8.2, 8.3, 8.4_
 
 - [x] 3. Implement CDK stacks for AWS infrastructure
-- [x] 3.1 Create storage stack (S3 bucket configuration)
+- [x] 3.1 Create storage and database stacks (S3 and DynamoDB)
   - Define S3 bucket with server-side encryption (AES-256)
   - Enable versioning for accidental deletion protection
   - Configure CORS for direct client uploads
   - Set up multipart upload configuration (5MB minimum part size)
   - Enable S3 transfer acceleration
   - Configure lifecycle policies for Glacier transition
-  - _Requirements: 1.3, 7.4, 7.5_
-
-- [x] 3.2 Create database stack (DynamoDB tables)
-  - Create single-table design with Data table (PK/SK with GSI1)
-  - Create Shares table (separate for anonymous access security isolation)
-  - Note: Items, Collections, Vaults, Recovery codes all use Data table
-  - Note: Notification Schedules and WebSocket Connections tables will be added in later tasks
+  - Create DynamoDB tables for Items, Collections, Vaults, Recovery codes, Shares
   - Configure on-demand billing with point-in-time recovery
-  - _Requirements: 2.5, 6.5, 11.3, 12.2, 17.3, 19.1, 22.1, 22.2_
+  - _Requirements: 1.3, 2.5, 6.5, 7.4, 7.5, 11.3, 12.2, 17.3, 19.1, 22.1, 22.2_
 
-- [x] 3.3 Create authentication stack (Cognito configuration)
+- [x] 3.2 Create authentication stack (Cognito configuration)
   - Set up Cognito user pool with email/password authentication
   - Configure password policy (12 chars min, complexity requirements)
   - Set up custom authentication flow for recovery codes
@@ -45,7 +39,7 @@
   - Set up IAM roles for authenticated users
   - _Requirements: 3.1, 3.2, 19.2, 21.1, 21.2_
 
-- [x] 3.4 Create API stack (API Gateway and Lambda)
+- [x] 3.3 Create API stack (API Gateway and Lambda)
   - Define single Lambda function for all API routes
   - Configure API Gateway with REST API and proxy integration
   - Set up Cognito authorizer for authentication
@@ -83,34 +77,43 @@
 
 - [ ] 5. Build client-side encryption library
 - [ ] 5.1 Implement ChaCha20-Poly1305 encryption engine
-  - Create encryption functions using @noble/ciphers
+  - Create client/src/encryption.ts with encryption functions using @noble/ciphers
   - Generate random 96-bit nonces for each operation
   - Handle authenticated encryption with 128-bit tags
   - Implement decryption with tag verification
+  - Export functions: encrypt(), decrypt(), generateNonce()
   - _Requirements: 1.1, 2.1, 9.1_
 
 - [ ]* 5.2 Write property test for encryption round-trip
+  - Create tests/property/test_encryption.ts
+  - Use fast-check for property-based testing
   - **Property 7: Upload and download round-trip preserves content**
   - **Validates: Requirements 4.2**
 
 - [ ] 5.3 Implement deterministic tag encryption using HMAC-SHA256
+  - Add tag encryption functions to client/src/encryption.ts
   - Create tag encryption function for searchable encrypted tags
   - Normalize tags to lowercase before encryption
   - Use @noble/hashes for HMAC-SHA256
+  - Export function: encryptTagForSearch()
   - _Requirements: 11.2, 11.4_
 
 - [ ]* 5.4 Write property test for tag encryption consistency
+  - Add to tests/property/test_encryption.ts
   - **Property 13: Encrypted tag search functionality**
-  - **Validates: Requirements 11.4, 11.5_
+  - **Validates: Requirements 11.4, 11.5**
 
 - [ ] 6. Implement client-side key management system
 - [ ] 6.1 Create vault master key derivation with Argon2id
+  - Create client/src/key-management.ts
   - Implement Argon2id key derivation using argon2-browser
   - Configure parameters: 64MB memory, 3 iterations, 4 parallelism
   - Derive 256-bit vault master key from vault password + vault salt
+  - Export function: deriveVaultMasterKey(password, salt)
   - _Requirements: 14.1, 14.2_
 
 - [ ] 6.2 Implement HKDF for derived key generation
+  - Add HKDF functions to client/src/key-management.ts
   - Use @noble/hashes for HKDF with SHA-256
   - Derive data encryption key (context: "cortex-data-encryption-v1")
   - Derive metadata encryption key (context: "cortex-metadata-encryption-v1")
@@ -120,67 +123,82 @@
   - Derive events encryption key (context: "cortex-events-encryption-v1")
   - Derive notification encryption key (context: "cortex-notification-encryption-v1")
   - Derive date bucket encryption key (context: "cortex-date-bucket-encryption-v1")
+  - Export function: deriveKeys(vaultMasterKey)
   - _Requirements: 14.2, 24.3, 25.1, 26.1_
 
 - [ ] 6.3 Implement vault recovery key generation and validation
+  - Add recovery key functions to client/src/key-management.ts
   - Generate BIP39 mnemonic from vault master key using bip39 library
   - Display recovery key to user once with secure storage instructions
   - Implement recovery key validation for vault password reset
   - Re-derive vault master key from recovery key
+  - Export functions: generateRecoveryKey(), validateRecoveryKey()
   - _Requirements: 15.1, 15.2, 15.3_
 
 - [ ] 6.4 Build local key storage with device-specific encryption
+  - Create client/src/key-storage.ts
   - Encrypt derived keys with device-specific key
   - Store encrypted keys in browser localStorage or secure storage
   - Implement key retrieval and decryption on device
   - Never transmit keys to server
+  - Export functions: storeKeys(), retrieveKeys(), clearKeys()
   - _Requirements: 14.3, 14.6_
 
 - [ ] 6.5 Implement password validation with strength and breach checking
+  - Create client/src/password-validation.ts
   - Validate minimum 12 characters and complexity requirements
   - Integrate with Have I Been Pwned API using k-anonymity model
   - Client-side SHA-1 hash, send first 5 characters to API
   - Check full hash against returned list locally
   - Reject breached passwords
   - Apply to both account and vault passwords
+  - Export function: validatePassword(password)
   - _Requirements: 21.1, 21.2, 21.3, 21.4_
 
 - [ ]* 6.6 Write property test for vault key derivation determinism
+  - Create tests/property/test_key_management.ts
   - **Property 17: Vault key derivation is deterministic**
   - **Validates: Requirements 14.1, 14.2, 14.5**
 
 - [ ]* 6.7 Write property test for vault recovery key
+  - Add to tests/property/test_key_management.ts
   - **Property 18: Vault recovery key enables vault access**
   - **Validates: Requirements 15.3**
 
 - [ ]* 6.8 Write property test for vault keys never transmitted
+  - Add to tests/property/test_key_management.ts
   - **Property 6: Vault keys never transmitted to server**
   - **Validates: Requirements 3.6, 9.3, 14.6, 15.5, 16.4**
 
 - [ ]* 6.9 Write property test for password strength validation
+  - Create tests/property/test_password_validation.ts
   - **Property 23: Password strength validation**
   - **Validates: Requirements 21.1, 21.2**
 
 - [ ]* 6.10 Write property test for breached password detection
+  - Add to tests/property/test_password_validation.ts
   - **Property 24: Breached password detection**
   - **Validates: Requirements 21.3, 21.4**
 
 - [ ]* 6.11 Write property test for vault salt uniqueness
+  - Create tests/property/test_vault_salt.py (server-side test)
   - **Property 27: Vault salt uniqueness**
   - **Validates: Requirements 22.4**
 
 - [ ] 7. Implement Lambda API handler foundation
 - [ ] 7.1 Create main Lambda handler with APIGatewayRestResolver
-  - Set up handler.py with Lambda Powertools
+  - Update lambda/src/api/handler.py with Lambda Powertools
   - Configure Logger, Tracer, and Metrics
   - Initialize APIGatewayRestResolver
-  - Add lambda_handler function with decorators
+  - Add lambda_handler function with decorators (@logger.inject_lambda_context, @tracer.capture_lambda_handler, @metrics.log_metrics)
+  - Set up error handling with format_error_response
   - _Requirements: 6.1, 6.2_
 
 - [ ] 7.2 Create route registration system
-  - Create routes/ directory structure (auth/, vaults/, media/, collections/, tags/, shares/, recovery/)
-  - Implement route registration pattern for each domain
-  - Set up module structure with register_routes() functions
+  - Create lambda/src/api/routes/ directory structure
+  - Create route modules: auth.py, vaults.py, items.py, collections.py, tags.py, shares.py, recovery.py
+  - Implement register_routes() function in each module
+  - Import and register all routes in handler.py
   - _Requirements: 8.1, 8.2_
 
 - [ ] 8. Implement authentication routes and services
@@ -228,13 +246,7 @@
   - **Validates: Requirements 22.4**
 
 - [ ] 10. Implement item upload routes and services (generic for all item types)
-- [ ] 10.1 Update Smithy model for generic item operations
-  - Add item type enum (MEDIA, NOTE, TASK, EVENT) to Smithy model
-  - Define generic /v1/items endpoints for all item types
-  - Update input/output structures to support all item types
-  - _Requirements: 24.1, 24.2_
-
-- [ ] 10.2 Create item upload route handlers
+- [ ] 10.1 Create item upload route handlers
   - Implement POST /v1/items/upload/init route (for MEDIA items with S3 storage)
   - Implement POST /v1/items route (for NOTE, TASK, EVENT items with inline encrypted content)
   - Implement POST /v1/items/upload/complete route (for MEDIA items)
@@ -242,7 +254,7 @@
   - Support item type parameter (MEDIA, NOTE, TASK, EVENT)
   - _Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2_
 
-- [ ] 10.3 Create item upload service layer
+- [ ] 10.2 Create item upload service layer
   - Validate user permissions (user can only upload to own namespace)
   - For MEDIA items: Generate presigned S3 PUT URLs scoped to user's S3 prefix
   - For MEDIA items: Configure multipart upload for files >100MB (5MB min part size)
@@ -254,25 +266,25 @@
   - Store item type in DynamoDB
   - _Requirements: 1.2, 1.4, 1.5, 2.1, 2.2, 2.4, 4.5, 7.1, 7.2, 7.4, 11.3, 24.1, 24.2, 24.3_
 
-- [ ] 10.4 Add upload error handling and cleanup logic
+- [ ] 10.3 Add upload error handling and cleanup logic
   - Handle S3 upload failures with DynamoDB cleanup (MEDIA items)
   - Handle DynamoDB failures with S3 cleanup (MEDIA items)
   - Implement idempotency for critical operations
   - _Requirements: 2.5_
 
-- [ ]* 10.5 Write property test for client-side encryption before transmission
+- [ ]* 10.4 Write property test for client-side encryption before transmission
   - **Property 1: Client-side encryption before transmission**
   - **Validates: Requirements 1.1, 2.1, 11.2, 12.1, 13.1, 24.3**
 
-- [ ]* 10.6 Write property test for server storage preserves encryption
+- [ ]* 10.5 Write property test for server storage preserves encryption
   - **Property 2: Server storage preserves encryption**
   - **Validates: Requirements 1.2, 2.2, 11.3, 12.2, 24.3**
 
-- [ ]* 10.7 Write property test for referential integrity
+- [ ]* 10.6 Write property test for referential integrity
   - **Property 5: Referential integrity between S3 and DynamoDB**
   - **Validates: Requirements 2.5**
 
-- [ ]* 10.8 Write property test for generic item API supports all types
+- [ ]* 10.7 Write property test for generic item API supports all types
   - **Property 28: Generic item API supports all types**
   - **Validates: Requirements 24.1, 24.2**
 
@@ -706,51 +718,3 @@
   - Run all integration tests and verify they pass
   - Fix any failing tests
   - Ensure all tests pass, ask the user if questions arise.
-
----
-
-## Implementation Status Summary
-
-**Completed:**
-- ✅ Project structure and CDK infrastructure (task 1)
-- ✅ CDK stacks for AWS infrastructure (tasks 3.x)
-- ✅ Shared Lambda utilities (auth, errors, models, repository) (task 4.x)
-
-**In Progress:**
-- 🔄 Client-side encryption library (task 5.x) - Placeholder created, implementation pending
-- 🔄 Lambda API handler (task 7.x) - Placeholder created, route implementation pending
-
-**Not Started:**
-- ⏳ Smithy API model (task 2) - **NEXT PRIORITY**
-- ⏳ Client-side key management (task 6.x)
-- ⏳ Authentication routes (task 8.x)
-- ⏳ Vault management routes (task 9.x)
-- ⏳ Item upload/download/deletion routes (tasks 10.x, 11.x, 12.x)
-- ⏳ Collection management routes (task 13.x)
-- ⏳ Tag search routes (task 14.x)
-- ⏳ Password change functionality (task 15.x)
-- ⏳ File sharing system (task 16.x)
-- ⏳ Automatic key rotation (task 17.x)
-- ⏳ Local content analysis (task 18.x)
-- ⏳ Concurrent upload coordination (task 19.x)
-- ⏳ Enhanced error handling (task 20.x)
-- ⏳ Monitoring and logging (task 21.x)
-- ⏳ Deployment pipeline (task 22.x)
-- ⏳ Integration tests (task 23)
-- ⏳ Date bucket encryption (task 24.x)
-- ⏳ Notification scheduling (task 25.x)
-- ⏳ Real-time sync (task 26.x)
-
-**Next Steps:**
-1. **Create Smithy API model** (task 2) - Define service contract and generate OpenAPI spec
-2. Implement Lambda API handler with APIGatewayRestResolver (task 7.x)
-3. Build client-side encryption library (task 5.x)
-4. Implement client-side key management (task 6.x)
-5. Implement authentication routes and services (task 8.x)
-6. Continue with vault management and media operations (tasks 9.x, 10.x)
-
-**Notes:**
-- The Smithy API model does not exist yet and needs to be created from scratch (task 2).
-- The CDK infrastructure uses a single-table design for the Data table, which will store Users, Vaults, Items, Collections, and Recovery codes.
-- Notification Schedules and WebSocket Connections tables will be added in later tasks (25.1, 26.1).
-- All property-based tests are marked as optional tasks and will be implemented alongside their corresponding features.
