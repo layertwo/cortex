@@ -101,21 +101,32 @@ cortex/
 │   ├── bin/app.ts         # CDK entry point
 │   ├── cdk.json
 │   └── package.json
-├── api/smithy/            # Smithy API models
-│   └── cortex-backup.smithy
+├── smithy/                # Smithy API models (modular structure)
+│   ├── models/
+│   │   ├── main.smithy
+│   │   ├── common.smithy
+│   │   ├── errors.smithy
+│   │   ├── auth/
+│   │   ├── vault/
+│   │   ├── item/
+│   │   ├── collection/
+│   │   ├── tag/
+│   │   ├── share/
+│   │   └── recovery/
+│   └── smithy-build.json
 ├── lambda/                # Python Lambda handlers
 │   ├── api/              # Main API handler using Lambda Powertools
 │   │   ├── handler.py    # Entry point with APIGatewayRestResolver
 │   │   ├── routes/       # Route handlers organized by domain
 │   │   │   ├── auth.py       # Authentication routes
 │   │   │   ├── vaults.py     # Vault management routes
-│   │   │   ├── media.py      # Media upload/download/list routes
+│   │   │   ├── items.py      # Item CRUD routes (all types: MEDIA, NOTE, TASK, EVENT)
 │   │   │   ├── collections.py # Collection CRUD routes
 │   │   │   ├── tags.py       # Tag search routes
-│   │   │   ├── shares.py     # File sharing routes
+│   │   │   ├── shares.py     # Item sharing routes
 │   │   │   └── recovery.py   # Account recovery routes
 │   │   └── services/     # Business logic layer
-│   │       ├── media_service.py
+│   │       ├── item_service.py
 │   │       ├── collection_service.py
 │   │       ├── vault_service.py
 │   │       └── share_service.py
@@ -147,7 +158,7 @@ cortex/
 - CDK stacks: `cdk/lib/{name}-stack.ts` (kebab-case)
 - Lambda handlers: `lambda/{feature}/handler.py`
 - Shared utilities: `lambda/shared/{purpose}.py`
-- API models: `api/smithy/{service}.smithy`
+- API models: `smithy/models/{domain}/{resource}.smithy`
 - Tests: `tests/{unit|integration}/test_{module}.py`
 
 **Naming conventions:**
@@ -160,8 +171,8 @@ cortex/
 **Lambda structure (handler → routes → services → repository):**
 - Single Lambda function using AWS Lambda Powertools `APIGatewayRestResolver`
 - `handler.py` - Entry point with resolver setup and route registration
-- `routes/` - Route handlers organized by domain (auth, vaults, media, collections, tags, shares, recovery)
-- `services/` - Business logic layer (media_service, collection_service, vault_service, share_service)
+- `routes/` - Route handlers organized by domain (auth, vaults, items, collections, tags, shares, recovery)
+- `services/` - Business logic layer (item_service, collection_service, vault_service, share_service)
 - `shared/repository.py` - Data access layer for DynamoDB and S3
 - Keep route handlers thin - delegate to service layer
 - Shared code in `lambda/shared/`
@@ -326,39 +337,41 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
     return app.resolve(event, context)
 ```
 
-**Python Lambda (route module example - routes/media.py):**
+**Python Lambda (route module example - routes/items.py):**
 ```python
 from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from services.media_service import MediaService
-from shared.models import UploadRequest, UploadResponse
+from services.item_service import ItemService
+from shared.models import CreateItemRequest, CreateItemResponse, ItemType
 from shared.auth import get_user_from_context
 
 logger = Logger(child=True)
 tracer = Tracer()
 
 def register_routes(app: APIGatewayRestResolver):
-    @app.post("/v1/media/upload/init")
+    @app.post("/v1/items")
     @tracer.capture_method
-    def init_upload():
+    def create_item():
         user_id = get_user_from_context(app.current_event)
         body = app.current_event.json_body
-        request = UploadRequest(**body)
+        request = CreateItemRequest(**body)
         
-        service = MediaService()
-        response = service.initiate_upload(user_id, request)
+        service = ItemService()
+        response = service.create_item(user_id, request)
         
         return response.dict()
     
-    @app.get("/v1/media/list")
+    @app.get("/v1/items")
     @tracer.capture_method
-    def list_media():
+    def list_items():
         user_id = get_user_from_context(app.current_event)
-        page_size = app.current_event.query_string_parameters.get("page_size", 50)
-        next_token = app.current_event.query_string_parameters.get("next_token")
+        params = app.current_event.query_string_parameters or {}
+        item_type = params.get("itemType")  # Optional filter
+        page_size = int(params.get("pageSize", 50))
+        next_token = params.get("nextToken")
         
-        service = MediaService()
-        response = service.list_media(user_id, page_size, next_token)
+        service = ItemService()
+        response = service.list_items(user_id, item_type, page_size, next_token)
         
         return response.dict()
 ```
@@ -461,13 +474,15 @@ api.root.addProxy({
 - `POST /v1/vaults` - Create vault with vault salt
 - `GET /v1/vaults/{id}/salt` - Retrieve vault salt for key derivation
 
-**Media Operations:**
-- `POST /v1/media/upload/init` - Initialize upload, get presigned URL
-- `POST /v1/media/upload/complete` - Mark upload complete, store metadata
-- `GET /v1/media/list` - List user's media (paginated)
-- `GET /v1/media/{id}` - Get media metadata
-- `GET /v1/media/{id}/download` - Get presigned download URL
-- `DELETE /v1/media/{id}` - Delete media item
+**Item Operations (Generic for all types: MEDIA, NOTE, TASK, EVENT):**
+- `POST /v1/items` - Create item (NOTE, TASK, EVENT with inline content)
+- `POST /v1/items/upload/init` - Initialize upload for MEDIA items, get presigned URL
+- `POST /v1/items/upload/complete` - Mark MEDIA upload complete, store metadata
+- `GET /v1/items` - List items (filter by type, tags, date buckets)
+- `GET /v1/items/{id}` - Get item metadata
+- `PUT /v1/items/{id}` - Update item
+- `DELETE /v1/items/{id}` - Delete item
+- `GET /v1/items/{id}/download` - Get presigned download URL (for MEDIA items)
 
 **Collections:**
 - `POST /v1/collections` - Create collection
@@ -475,13 +490,13 @@ api.root.addProxy({
 - `GET /v1/collections/{id}` - Get collection details
 - `PUT /v1/collections/{id}` - Update collection
 - `DELETE /v1/collections/{id}` - Delete collection
-- `POST /v1/collections/{id}/media` - Add media to collection
-- `DELETE /v1/collections/{id}/media/{mediaId}` - Remove media from collection
+- `POST /v1/collections/{id}/items` - Add item to collection
+- `DELETE /v1/collections/{id}/items/{itemId}` - Remove item from collection
 
 **Tags & Sharing:**
 - `GET /v1/tags/search` - Search by encrypted tag
-- `POST /v1/shares` - Create file share
-- `GET /v1/shares/{id}` - Access shared file (anonymous)
+- `POST /v1/shares` - Create item share
+- `GET /v1/shares/{id}` - Access shared item (anonymous)
 - `DELETE /v1/shares/{id}` - Revoke share
 
 **Recovery:**
