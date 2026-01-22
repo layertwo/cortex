@@ -22,7 +22,7 @@ The architecture follows AWS best practices using Lambda for compute, API Gatewa
 
 1. **True Zero-Knowledge Architecture**: Server never has access to plaintext data, encryption keys, or encrypted key bundles
 2. **Two-Password Model**: Separate account password (authentication) and vault password (data encryption)
-3. **Client-Side Encryption**: All encryption/decryption happens on the client device using ChaCha20-Poly1305
+3. **Client-Side Encryption**: All encryption/decryption happens in the React frontend using ChaCha20-Poly1305
 4. **Direct S3 Access**: Presigned URLs enable fast uploads/downloads bypassing Lambda
 5. **Serverless Scalability**: Auto-scaling infrastructure with pay-per-use pricing
 6. **Multi-Device Support**: Vault password + server-stored salt enables key derivation on any device
@@ -71,11 +71,16 @@ This separation provides:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Client Application                      │
+│                    React Frontend (Browser)                  │
 │  ┌────────────────┐  ┌──────────────┐  ┌─────────────────┐ │
 │  │ Encryption     │  │ Content      │  │ Key Management  │ │
-│  │ Engine         │  │ Analysis     │  │                 │ │
+│  │ Engine         │  │ Analysis     │  │ (Argon2id/HKDF) │ │
+│  │ (ChaCha20)     │  │ (Optional)   │  │                 │ │
 │  └────────────────┘  └──────────────┘  └─────────────────┘ │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │              React Components & UI                     │ │
+│  │  (Upload, Download, Collections, Tags, Notifications)  │ │
+│  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
                               │ HTTPS (SigV4) / WebSocket
@@ -129,62 +134,62 @@ This separation provides:
 ### Component Interaction Flow
 
 **Item Creation Flow (Generic):**
-1. Client encrypts item content and metadata locally using appropriate encryption key
-2. Client requests API endpoint (authenticated via SigV4)
-3. For media items: Lambda generates presigned S3 URL, client uploads directly to S3
+1. React frontend encrypts item content and metadata locally using appropriate encryption key
+2. React frontend requests API endpoint (authenticated via SigV4)
+3. For media items: Lambda generates presigned S3 URL, React frontend uploads directly to S3
 4. For other items: Content stored inline in DynamoDB as encrypted blob
-5. Client sends encrypted metadata to Lambda
+5. React frontend sends encrypted metadata to Lambda
 6. Lambda stores encrypted metadata in Items table
 
 **Item Retrieval Flow:**
-1. Client requests item list from API Gateway
+1. React frontend requests item list from API Gateway
 2. Lambda queries DynamoDB Items table for user's encrypted metadata
-3. Client decrypts metadata locally
-4. For media items: Client requests download URL, Lambda generates presigned S3 URL
-5. Client downloads and decrypts content locally
+3. React frontend decrypts metadata locally in browser
+4. For media items: React frontend requests download URL, Lambda generates presigned S3 URL
+5. React frontend downloads and decrypts content locally in browser
 
 **Notification Flow:**
-1. Client creates task/event with reminder time
-2. Client encrypts notification payload and exact time
-3. Client generates time bucket (15-min window, plaintext)
-4. Client sends notification schedule to Lambda
+1. React frontend creates task/event with reminder time
+2. React frontend encrypts notification payload and exact time
+3. React frontend generates time bucket (15-min window, plaintext)
+4. React frontend sends notification schedule to Lambda
 5. Lambda stores in Notification Schedules table
 6. EventBridge triggers Lambda every 5 minutes
 7. Lambda queries schedules with timeBucket <= now + 15min
 8. Lambda sends push notifications via SNS with encrypted payloads
-9. Client receives notification, decrypts payload, displays to user
+9. React frontend receives notification, decrypts payload, displays to user
 
 **Multi-Device Flow:**
 1. New device: User enters account password (authenticates with Cognito)
-2. User enters vault password
-3. Client retrieves vault salt from DynamoDB
-4. Client derives vault master key from vault password + salt using Argon2id
-5. Client derives data encryption key and metadata encryption key from vault master key using HKDF
-6. Client stores derived keys encrypted locally on device
-7. Client can now decrypt all user's files and metadata
+2. User enters vault password in React frontend
+3. React frontend retrieves vault salt from DynamoDB
+4. React frontend derives vault master key from vault password + salt using Argon2id
+5. React frontend derives data encryption key and metadata encryption key from vault master key using HKDF
+6. React frontend stores derived keys encrypted locally in browser storage
+7. React frontend can now decrypt all user's files and metadata
 
 **Vault Recovery Key Flow:**
-1. Initial setup: Client generates vault recovery key derived from vault master key
-2. Client displays recovery key to user once with instructions to store securely offline
+1. Initial setup: React frontend generates vault recovery key derived from vault master key
+2. React frontend displays recovery key to user once with instructions to store securely offline
 3. User confirms they have saved the recovery key before proceeding
 4. Vault password forgotten: User initiates recovery process
-5. User enters vault recovery key
-6. Client uses recovery key to re-derive the vault master key
+5. User enters vault recovery key in React frontend
+6. React frontend uses recovery key to re-derive the vault master key
 7. Upon successful validation, user sets new vault password
-8. Client continues using the same vault master key (no re-encryption needed)
+8. React frontend continues using the same vault master key (no re-encryption needed)
 9. Server never receives or stores the vault recovery key
 
 ## Components and Interfaces
 
-### 1. Client Application
+### 1. React Frontend
 
 **Responsibilities:**
-- Generate and manage vault encryption keys locally
+- Generate and manage vault encryption keys locally in browser
 - Encrypt/decrypt all user data before transmission/after receipt
 - Perform optional local content analysis for tagging
 - Derive vault master key from vault password + vault salt using Argon2id
 - Derive data and metadata encryption keys from vault master key using HKDF
-- Store derived keys encrypted locally on device only
+- Store derived keys encrypted locally in browser storage only
 - Coordinate concurrent uploads for improved throughput (configurable based on network conditions)
 - Never transmit vault keys or vault password to server
 - Manage account password separately from vault password
@@ -212,7 +217,7 @@ This separation provides:
   - Events encryption key (for event content encryption)
   - Notification encryption key (for notification payload encryption)
   - Date bucket key (for deterministic date bucket encryption via HMAC)
-- **Local Key Storage**: Derived keys encrypted with device-specific key and stored locally only (never transmitted to server)
+- **Local Key Storage**: Derived keys encrypted with browser-specific key and stored in browser storage only (never transmitted to server)
 - **Vault Recovery Key**: Generated from vault master key, displayed once to user with secure offline storage guidance
 - **Recovery Key Validation**: Enables vault password reset without re-encrypting data
 - **Account Password Management**: Handled separately via AWS Cognito, can be changed without affecting vault encryption
@@ -220,12 +225,12 @@ This separation provides:
 - **Key Rotation**: Automatic vault key rotation every 90 days with background re-encryption
 
 **Content Analysis (Optional):**
-- Local ML model for image/video analysis (e.g., TensorFlow Lite for mobile, Core ML for iOS, ONNX Runtime for desktop)
+- Local ML model for image/video analysis (e.g., TensorFlow.js for browser)
 - Offline tag generation (no network requests during analysis)
 - Privacy-preserving (no data sent to external services or cloud APIs)
-- Model runs entirely on-device before encryption
+- Model runs entirely in browser before encryption
 - Generated tags are encrypted before any transmission
-- Recommended models: MobileNet, EfficientNet (optimized for on-device inference)
+- Recommended models: MobileNet, EfficientNet (optimized for browser inference)
 - Supports any file type, but analysis is optional and file-type specific
 
 **Sharing Module:**
@@ -750,7 +755,7 @@ rectness Properties
 
 ### Property 1: Client-side encryption before transmission
 
-*For any* user data (file content, metadata, tags, or collection information), when the client prepares to send it to the server, the transmitted data must be encrypted using ChaCha20-Poly1305 and must not match the plaintext original.
+*For any* user data (file content, metadata, tags, or collection information), when the React frontend prepares to send it to the server, the transmitted data must be encrypted using ChaCha20-Poly1305 and must not match the plaintext original.
 
 **Validates: Requirements 1.1, 2.1, 11.1, 12.1, 13.1**
 
@@ -822,7 +827,7 @@ rectness Properties
 
 ### Property 13: Encrypted tag search functionality
 
-*For any* tag search query, the client must encrypt the search term before sending, and the server must return all files with matching encrypted tags without accessing plaintext tag values.
+*For any* tag search query, the React frontend must encrypt the search term before sending, and the server must return all files with matching encrypted tags without accessing plaintext tag values.
 
 **Validates: Requirements 11.3, 11.4**
 
@@ -860,7 +865,7 @@ rectness Properties
 
 *For any* data stored in the system (S3, DynamoDB, logs), an administrator with full AWS console access but without the vault password or keys must not be able to decrypt or determine the content, subject matter, or organizational structure of user data.
 
-**Design Rationale:** This property is fundamental to the zero-knowledge architecture. All encryption happens client-side with keys that never leave the client. Even with full infrastructure access, administrators can only see:
+**Design Rationale:** This property is fundamental to the zero-knowledge architecture. All encryption happens in the React frontend with keys that never leave the browser. Even with full infrastructure access, administrators can only see:
 - Encrypted binary blobs in S3
 - Encrypted metadata in DynamoDB
 - User IDs, vault IDs, and timestamps (non-sensitive)
@@ -929,33 +934,139 @@ Administrators cannot determine:
 
 *For any* item type (MEDIA, NOTE, TASK, EVENT), creating, reading, updating, and deleting items must work consistently regardless of type, with all sensitive data encrypted client-side before transmission.
 
-**Validates: Requirement 24**
+**Validates: Requirements 24.1, 24.2, 24.3, 24.4, 24.5**
 
 ### Property 29: Date bucket privacy
 
-*For any* task or event with a date, the server must only have access to the 15-minute time bucket, not the exact time, while the client can decrypt and access the exact time.
+*For any* task or event with a date, the server must only have access to the 15-minute time bucket, not the exact time, while the React frontend can decrypt and access the exact time.
 
-**Validates: Requirement 25**
+**Validates: Requirements 25.1, 25.2, 25.3, 25.4, 25.5**
 
 ### Property 30: Notification content privacy
 
-*For any* notification, the server must send push notifications with encrypted payloads, and only the client can decrypt and display the notification content.
+*For any* notification, the server must send push notifications with encrypted payloads, and only the React frontend can decrypt and display the notification content.
 
-**Design Rationale:** Notifications are scheduled with encrypted payloads that include the notification title, body, and action URL. The server stores the encrypted payload and exact time (also encrypted), along with a plaintext time bucket for query efficiency. When EventBridge triggers the notification handler every 5 minutes, it queries for schedules with timeBucket <= now + 15min. The handler sends the encrypted payload via AWS SNS to registered device tokens. The client receives the notification, decrypts the payload locally, and displays it to the user. The server never has access to notification content, maintaining zero-knowledge architecture even for time-sensitive reminders.
+**Design Rationale:** Notifications are scheduled with encrypted payloads that include the notification title, body, and action URL. The server stores the encrypted payload and exact time (also encrypted), along with a plaintext time bucket for query efficiency. When EventBridge triggers the notification handler every 5 minutes, it queries for schedules with timeBucket <= now + 15min. The handler sends the encrypted payload via AWS SNS to registered device tokens. The React frontend receives the notification, decrypts the payload locally in the browser, and displays it to the user. The server never has access to notification content, maintaining zero-knowledge architecture even for time-sensitive reminders.
 
-**Validates: Requirement 26**
+**Validates: Requirements 26.1, 26.2, 26.3, 26.4, 26.5**
 
 ### Property 31: Cross-device sync consistency
 
 *For any* item modified on one device, all other connected devices must eventually receive the update and converge to the same state after decryption.
 
-**Design Rationale:** Real-time sync is implemented using WebSocket connections managed by API Gateway and Lambda. When a user modifies an item (create, update, delete), the API handler broadcasts a sync notification to all WebSocket connections for that vault. The notification contains only metadata: item ID, item type, version number, and timestamp. Connected devices receive the notification and fetch the full encrypted item data via REST API. Conflicts are resolved using last-write-wins based on version numbers stored in DynamoDB. Each item has a version field that increments on every update. When a conflict is detected (two devices modified the same item), the client compares version numbers and accepts the higher version. This ensures eventual consistency across all devices while maintaining zero-knowledge architecture (sync notifications never contain encrypted content).
+**Design Rationale:** Real-time sync is implemented using WebSocket connections managed by API Gateway and Lambda. When a user modifies an item (create, update, delete), the API handler broadcasts a sync notification to all WebSocket connections for that vault. The notification contains only metadata: item ID, item type, version number, and timestamp. Connected devices receive the notification and fetch the full encrypted item data via REST API. Conflicts are resolved using last-write-wins based on version numbers stored in DynamoDB. Each item has a version field that increments on every update. When a conflict is detected (two devices modified the same item), the React frontend compares version numbers and accepts the higher version. This ensures eventual consistency across all devices while maintaining zero-knowledge architecture (sync notifications never contain encrypted content).
 
-**Validates: Requirement 27**
+**Validates: Requirements 27.1, 27.2, 27.3, 27.4, 27.5**
+
+## Non-Functional Requirements Design
+
+### Performance Design
+
+**Upload Performance (REQ-NFR-1):**
+- Direct S3 uploads via presigned URLs bypass Lambda, reducing latency
+- Multipart upload for files >100MB with 5MB minimum part size
+- Concurrent upload support (up to 5 files) via client-side queue management
+- S3 Transfer Acceleration enabled for improved global upload speeds
+- Target: <10 seconds for 5MB files on 10 Mbps connection
+
+**Query Performance (REQ-NFR-2):**
+- DynamoDB GSIs optimized for common query patterns (by type, by tag, by date bucket)
+- Pagination with DynamoDB native tokens for consistent performance
+- Target: <2 seconds for 10,000 item collections
+- Tag search via GSI with encrypted tag matching: <3 seconds
+- Page sizes: 10-100 items per page
+
+**Key Derivation Performance (REQ-NFR-3):**
+- Argon2id parameters balanced for security and performance (64MB memory, 3 iterations)
+- Target: <5 seconds on modern client devices
+- HKDF derivation: <100ms for all derived keys
+- Client-side caching of derived keys in encrypted local storage
+
+### Security Design
+
+**Encryption Standards (REQ-NFR-4):**
+- ChaCha20-Poly1305 for all symmetric encryption (256-bit keys)
+- Argon2id for key derivation (64MB memory, 3 iterations, 4 parallelism)
+- HKDF-SHA256 for deriving multiple keys from vault master key
+- Random nonce generation using cryptographically secure RNG
+
+**Authentication (REQ-NFR-5):**
+- AWS SigV4 for all API requests
+- Cognito-issued JWT tokens with 1-hour expiration
+- Refresh tokens valid for 30 days
+- Automatic token refresh before expiration
+
+**Data Protection (REQ-NFR-6):**
+- TLS 1.3 for all data in transit
+- S3 server-side encryption (AES-256) as additional defense layer
+- Presigned URLs with 15-minute expiration
+- HTTPS-only bucket policy
+
+### Scalability Design
+
+**User Capacity (REQ-NFR-7):**
+- Architecture supports 100,000+ concurrent users via serverless auto-scaling
+- Per-user storage limit: 1TB (configurable via quotas)
+- Per-vault item limit: 1 million items
+- DynamoDB partition key design prevents hot partitions
+
+**Infrastructure Scaling (REQ-NFR-8):**
+- Lambda auto-scales based on request volume (no manual intervention)
+- DynamoDB on-demand billing or auto-scaling provisioned capacity
+- S3 unlimited storage capacity
+- API Gateway handles millions of requests per second
+
+### Availability Design
+
+**Uptime (REQ-NFR-9):**
+- Target: 99.9% uptime (8.76 hours downtime per year)
+- Multi-AZ deployment for all AWS services
+- Planned maintenance: <4 hours per month, scheduled during low-traffic windows
+- Automated failover and recovery: <15 minutes
+
+**Data Durability (REQ-NFR-10):**
+- S3: 99.999999999% (11 nines) durability
+- DynamoDB: 99.999999999% (11 nines) durability
+- Point-in-time recovery enabled for DynamoDB
+- S3 versioning enabled for accidental deletion protection
+- Quarterly backup and recovery testing
+
+### Usability Design
+
+**React Frontend (REQ-NFR-11):**
+- Real-time upload/download progress indicators
+- Clear error messages with actionable guidance
+- Password strength indicator during vault password setup
+- Visual distinction between account password and vault password
+- Recovery key display with secure storage instructions
+
+**Documentation (REQ-NFR-12):**
+- API documentation auto-generated from Smithy models (OpenAPI 3.0)
+- User guide explaining two-password model with diagrams
+- Step-by-step recovery procedures for both account and vault recovery
+- Security best practices documentation
+- FAQ covering common scenarios
+
+### Compliance Design
+
+**Privacy Compliance (REQ-NFR-13):**
+- GDPR-compliant data handling and user rights
+- Data export functionality: encrypted data + metadata in portable format
+- Data deletion: permanent removal from S3 and DynamoDB
+- Right to be forgotten: complete account and vault deletion
+- Privacy policy clearly explains zero-knowledge architecture
+
+**Audit Logging (REQ-NFR-14):**
+- CloudTrail logs all AWS API calls
+- Application logs all authentication attempts (success and failure)
+- Application logs all data access operations (without plaintext data)
+- Log retention: minimum 90 days, configurable up to 7 years
+- Log sanitization: no passwords, keys, or encrypted payloads in logs
+- Logged data: user IDs, vault IDs, timestamps, operation types, error codes
 
 ## Error Handling
 
-### Client-Side Error Handling
+### React Frontend Error Handling
 
 **Encryption Failures:**
 - Key derivation failures: Prompt user to re-enter password
@@ -1046,7 +1157,7 @@ Error codes:
 
 Unit tests will verify specific functionality of individual components:
 
-**Client-Side Unit Tests:**
+**React Frontend Unit Tests:**
 - Encryption/decryption functions with known test vectors
 - Key derivation with known inputs and outputs
 - Tag encryption produces consistent output for same input
@@ -1249,7 +1360,7 @@ def test_notification_content_privacy(notification_payload, notification_key):
     """
     Feature: cortex, Property 30: Notification content privacy
     """
-    # Client encrypts notification payload
+    # React frontend encrypts notification payload
     encrypted_payload = encrypt_notification(notification_payload, notification_key)
     
     # Server stores and sends encrypted payload
@@ -1260,7 +1371,7 @@ def test_notification_content_privacy(notification_payload, notification_key):
     assert sent_payload == encrypted_payload
     assert sent_payload != notification_payload
     
-    # Client decrypts on receipt
+    # React frontend decrypts on receipt
     decrypted = decrypt_notification(sent_payload, notification_key)
     assert decrypted == notification_payload
 ```
@@ -1581,11 +1692,11 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 ### Push Notification Implementation
 
 **Notification Scheduling:**
-- Client creates task/event with reminder time
-- Client encrypts notification payload (title, body, action URL) using notification encryption key
-- Client encrypts exact reminder time using notification encryption key
-- Client generates plaintext time bucket (15-minute window) for server queries
-- Client sends encrypted payload, encrypted exact time, time bucket, and encrypted device tokens to server
+- React frontend creates task/event with reminder time
+- React frontend encrypts notification payload (title, body, action URL) using notification encryption key
+- React frontend encrypts exact reminder time using notification encryption key
+- React frontend generates plaintext time bucket (15-minute window) for server queries
+- React frontend sends encrypted payload, encrypted exact time, time bucket, and encrypted device tokens to server
 - Server stores in Notification Schedules table
 
 **Notification Delivery:**
@@ -1594,13 +1705,13 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 - For each matching schedule, Lambda sends push notification via AWS SNS
 - SNS payload contains encrypted notification data
 - Lambda marks schedule as SENT with sentAt timestamp
-- Client receives push notification, decrypts payload, displays to user
+- React frontend receives push notification, decrypts payload, displays to user
 
 **Device Token Management:**
-- Client registers device token (encrypted with metadata encryption key) via API
+- React frontend registers device token (encrypted with metadata encryption key) via API
 - Multiple device tokens per user supported (phone, tablet, desktop)
 - Device tokens stored encrypted in Notification Schedules table
-- Client can unregister device tokens when no longer needed
+- React frontend can unregister device tokens when no longer needed
 
 **Privacy Guarantees:**
 - Server never sees plaintext notification content
@@ -1611,11 +1722,11 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 ### Real-Time Sync Implementation
 
 **WebSocket Connection Management:**
-- Client establishes WebSocket connection via API Gateway WebSocket API
+- React frontend establishes WebSocket connection via API Gateway WebSocket API
 - Connection authenticated using SigV4 or JWT token
 - Lambda stores connection metadata in WebSocket Connections table
 - Connection includes: connectionId, userId, vaultId, connectedAt, lastPingAt
-- Client sends periodic ping messages to keep connection alive
+- React frontend sends periodic ping messages to keep connection alive
 - Server responds with pong messages
 
 **Sync Notification Broadcasting:**
@@ -1634,22 +1745,22 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 ```
 - Notification contains NO encrypted content, only metadata for fetching
 
-**Client Sync Handling:**
-- Client receives sync notification via WebSocket
-- Client compares version number with local cache
-- If remote version > local version, client fetches full encrypted item via REST API
-- Client decrypts item and updates local cache
-- Client displays update to user
+**React Frontend Sync Handling:**
+- React frontend receives sync notification via WebSocket
+- React frontend compares version number with local cache
+- If remote version > local version, React frontend fetches full encrypted item via REST API
+- React frontend decrypts item and updates local cache
+- React frontend displays update to user
 
 **Conflict Resolution:**
 - Last-write-wins based on version numbers
 - Each item has version field that increments on every update
-- When conflict detected, client accepts higher version number
-- Client can optionally show conflict warning to user
+- When conflict detected, React frontend accepts higher version number
+- React frontend can optionally show conflict warning to user
 - Version numbers are monotonically increasing integers
 
 **Connection Cleanup:**
-- When client disconnects, Lambda removes connection from WebSocket Connections table
+- When React frontend disconnects, Lambda removes connection from WebSocket Connections table
 - Stale connections (no ping for 10 minutes) automatically cleaned up
 - Connection state is ephemeral, no persistent data stored
 

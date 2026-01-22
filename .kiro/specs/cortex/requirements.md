@@ -22,7 +22,7 @@ This document is intended for:
 ## 2. Glossary
 
 - **Cortex System**: The complete cloud-based productivity suite including API, storage, and database components
-- **Client Application**: The frontend application that users interact with to manage their items
+- **React Frontend**: The React web application that users interact with to manage their items
 - **Zero-Knowledge Architecture**: A design where the service provider cannot access or decrypt user data
 - **Item**: A generic data object stored in a vault (media file, note, task, or event)
 - **Item Type**: The category of an item (MEDIA, NOTE, TASK, EVENT)
@@ -75,9 +75,9 @@ This document is intended for:
 - **Account Salt**: A unique random value per user account stored on server for authentication key derivation
 - **Argon2id**: A memory-hard key derivation function resistant to GPU and side-channel attacks
 - **ChaCha20-Poly1305**: An authenticated encryption algorithm providing confidentiality and integrity
-- **Device**: A client application instance used to access the Cortex System
+- **Device**: A browser instance running the React Frontend used to access the Cortex System
 - **Key Recovery**: The process of deriving vault encryption keys on a new device using the vault password and vault salt
-- **Local Key Storage**: Encrypted storage of vault keys on the client device only
+- **Local Key Storage**: Encrypted storage of vault keys in the browser only
 - **Share Key**: A temporary encryption key generated for sharing specific files
 - **Public Sharing**: Sharing files via URL containing the share key
 - **User-to-User Sharing**: Sharing files by encrypting share keys with recipient's public key
@@ -96,7 +96,7 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user initiates a media upload, THE Client Application SHALL encrypt the file using ChaCha20-Poly1305 with the data encryption key before transmission
+1. WHEN a user initiates a media upload, THE React Frontend SHALL encrypt the file using ChaCha20-Poly1305 with the data encryption key before transmission
 2. WHEN encrypted data is transmitted, THE Cortex System SHALL store the encrypted data in the S3 Bucket without decryption
 3. WHEN data is stored, THE Cortex System SHALL use S3 server-side encryption for additional security layer
 4. WHEN a user uploads a media file, THE Cortex System SHALL generate a presigned URL for direct S3 upload to optimize transfer speed
@@ -110,9 +110,9 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates an item, THE Client Application SHALL encrypt all metadata including title, timestamps, and type-specific fields using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
+1. WHEN a user creates an item, THE React Frontend SHALL encrypt all metadata including title, timestamps, and type-specific fields using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
 2. WHEN encrypted metadata is received, THE Cortex System SHALL store it in the DynamoDB Table without decryption
-3. WHEN a user requests their item list, THE Cortex System SHALL return encrypted metadata that only the Client Application can decrypt
+3. WHEN a user requests their item list, THE Cortex System SHALL return encrypted metadata that only the React Frontend can decrypt
 4. WHEN storing metadata, THE Cortex System SHALL associate each item with the user identifier and vault identifier without exposing content details
 5. THE Cortex System SHALL maintain referential integrity between DynamoDB Table entries and S3 Bucket objects for media items
 
@@ -129,7 +129,7 @@ This document is intended for:
 3. WHEN scoped credentials are issued, THE Cortex System SHALL limit permissions to only the user's own resources in S3 and DynamoDB
 4. WHEN a user makes an API request, THE API Gateway SHALL validate SigV4 signatures before routing to Lambda Functions
 5. WHEN credential validation fails, THE Cortex System SHALL reject the request and return an authentication error
-6. THE Cortex System SHALL ensure that vault encryption keys never leave the Client Application and are never transmitted to or stored by the service
+6. THE Cortex System SHALL ensure that vault encryption keys never leave the React Frontend and are never transmitted to or stored by the service
 
 ### 3.4 Media Download and Retrieval
 
@@ -140,7 +140,7 @@ This document is intended for:
 #### Acceptance Criteria
 
 1. WHEN a user requests a media item, THE Cortex System SHALL generate a presigned URL for direct S3 download
-2. WHEN a user downloads encrypted data, THE Client Application SHALL decrypt the content using the vault's appropriate encryption key
+2. WHEN a user downloads encrypted data, THE React Frontend SHALL decrypt the content using the vault's appropriate encryption key
 3. WHEN generating download URLs, THE Cortex System SHALL verify user ownership of the requested item
 4. WHEN a download request is unauthorized, THE Cortex System SHALL reject the request and return an authorization error
 5. THE Cortex System SHALL set presigned URL expiration to 15 minutes to limit exposure window
@@ -157,7 +157,7 @@ This document is intended for:
 2. WHEN deletion is authorized for a media item, THE Cortex System SHALL remove the encrypted object from the S3 Bucket
 3. WHEN an item is deleted, THE Cortex System SHALL remove the corresponding metadata entry from the DynamoDB Table
 4. WHEN deletion operations fail, THE Cortex System SHALL maintain consistency between the S3 Bucket and DynamoDB Table
-5. THE Cortex System SHALL return confirmation of successful deletion to the Client Application
+5. THE Cortex System SHALL return confirmation of successful deletion to the React Frontend
 
 ### 3.6 Serverless Infrastructure
 
@@ -183,7 +183,7 @@ This document is intended for:
 
 1. WHEN uploading media files, THE Cortex System SHALL provide presigned URLs for direct client-to-S3 upload bypassing Lambda Function
 2. WHEN a presigned URL is generated, THE Lambda Function SHALL configure it with 15-minute expiration for upload performance
-3. WHERE network conditions support concurrent operations, THE Client Application SHALL upload multiple media files concurrently
+3. WHERE network conditions support concurrent operations, THE React Frontend SHALL upload multiple media files concurrently
 4. WHERE a media file exceeds 100MB, THE Cortex System SHALL support S3 multipart upload with minimum 5MB part size
 5. THE Cortex System SHALL configure S3 Bucket with transfer acceleration for improved global upload speeds
 
@@ -191,7 +191,7 @@ This document is intended for:
 
 **Requirement ID:** REQ-8
 
-**User Story:** As a developer, I want a well-defined API, so that I can build client applications that interact with the backup service.
+**User Story:** As a developer, I want a well-defined API, so that I can build React frontend applications that interact with the backup service.
 
 #### Acceptance Criteria
 
@@ -209,7 +209,7 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. THE Client Application SHALL generate and manage all vault encryption keys locally without server involvement
+1. THE React Frontend SHALL generate and manage all vault encryption keys locally without server involvement
 2. THE Cortex System SHALL never receive, store, or have access to unencrypted item content or metadata
 3. THE Cortex System SHALL never receive or store vault encryption keys in plaintext form
 4. WHEN processing requests, THE Lambda Functions SHALL operate only on encrypted data without decryption capability
@@ -238,11 +238,11 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user adds tags to an item, THE Client Application SHALL encrypt each tag using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
+1. WHEN a user adds tags to an item, THE React Frontend SHALL encrypt each tag using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
 2. WHEN encrypted tags are received, THE Cortex System SHALL store them in the DynamoDB Table without decryption
-3. WHEN a user searches by tag, THE Client Application SHALL encrypt the search term using the metadata encryption key before querying the Cortex System
+3. WHEN a user searches by tag, THE React Frontend SHALL encrypt the search term using the metadata encryption key before querying the Cortex System
 4. WHEN the Cortex System processes tag queries, THE Lambda Function SHALL match encrypted tags without accessing plaintext tag values
-5. WHERE the Client Application supports content analysis, THE Client Application SHALL perform analysis locally on the device to generate suggested tags
+5. WHERE the React Frontend supports content analysis, THE React Frontend SHALL perform analysis locally in the browser to generate suggested tags
 
 ### 3.12 Collection Creation and Organization
 
@@ -252,7 +252,7 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates a collection, THE Client Application SHALL encrypt the collection metadata using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
+1. WHEN a user creates a collection, THE React Frontend SHALL encrypt the collection metadata using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
 2. WHEN encrypted collection metadata is received, THE Cortex System SHALL store it in the DynamoDB Table without decryption
 3. WHEN a user adds an item to a collection, THE Cortex System SHALL store the encrypted item-collection association
 4. WHEN a user requests a collection, THE Cortex System SHALL return encrypted collection metadata and associated items
@@ -266,7 +266,7 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user updates collection metadata, THE Client Application SHALL encrypt the new metadata using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
+1. WHEN a user updates collection metadata, THE React Frontend SHALL encrypt the new metadata using ChaCha20-Poly1305 with the metadata encryption key before sending to the Cortex System
 2. WHEN a user removes an item from a collection, THE Cortex System SHALL delete the item-collection association while preserving the item
 3. WHEN a user deletes a collection, THE Cortex System SHALL remove the collection metadata and all associated item-collection associations
 4. WHEN a collection is deleted, THE Cortex System SHALL preserve all items that were in the collection
@@ -280,11 +280,11 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user first creates a vault, THE Client Application SHALL derive a vault master key from the vault password and vault salt using Argon2id with 64MB memory, 3 iterations, and 4 parallelism
-2. WHEN a vault master key is derived, THE Client Application SHALL use HKDF to derive data encryption key and metadata encryption key from the vault master key
-3. WHEN derived keys are generated, THE Client Application SHALL store them encrypted locally on the device using device-specific encryption
-4. WHEN a user accesses the vault from a new device, THE Client Application SHALL prompt for the vault password and retrieve the vault salt from the Cortex System
-5. WHEN the vault salt is retrieved, THE Client Application SHALL derive the vault master key and all derived keys locally using the vault password
+1. WHEN a user first creates a vault, THE React Frontend SHALL derive a vault master key from the vault password and vault salt using Argon2id with 64MB memory, 3 iterations, and 4 parallelism
+2. WHEN a vault master key is derived, THE React Frontend SHALL use HKDF to derive data encryption key and metadata encryption key from the vault master key
+3. WHEN derived keys are generated, THE React Frontend SHALL store them encrypted locally in the browser using browser-specific encryption
+4. WHEN a user accesses the vault from a new device, THE React Frontend SHALL prompt for the vault password and retrieve the vault salt from the Cortex System
+5. WHEN the vault salt is retrieved, THE React Frontend SHALL derive the vault master key and all derived keys locally using the vault password
 6. THE Cortex System SHALL never receive, store, or have access to the vault master key or any derived keys
 
 ### 3.15 Vault Recovery
@@ -295,10 +295,10 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates a vault, THE Client Application SHALL generate a vault recovery key derived from the vault master key
-2. WHEN a vault recovery key is generated, THE Client Application SHALL display it to the user once for secure offline storage
-3. WHEN a user forgets their vault password, THE Client Application SHALL allow vault access using the vault recovery key to re-derive the vault master key
-4. WHEN vault recovery key is used, THE Client Application SHALL allow the user to set a new vault password
+1. WHEN a user creates a vault, THE React Frontend SHALL generate a vault recovery key derived from the vault master key
+2. WHEN a vault recovery key is generated, THE React Frontend SHALL display it to the user once for secure offline storage
+3. WHEN a user forgets their vault password, THE React Frontend SHALL allow vault access using the vault recovery key to re-derive the vault master key
+4. WHEN vault recovery key is used, THE React Frontend SHALL allow the user to set a new vault password
 5. THE Cortex System SHALL never receive, store, or have access to the vault recovery key
 
 ### 3.16 Administrator Data Privacy
@@ -323,10 +323,10 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user initiates item sharing, THE Client Application SHALL generate a unique share key for the specific item
-2. WHEN a share key is generated, THE Client Application SHALL create a share URL containing the item identifier and base64-encoded share key
+1. WHEN a user initiates item sharing, THE React Frontend SHALL generate a unique share key for the specific item
+2. WHEN a share key is generated, THE React Frontend SHALL create a share URL containing the item identifier and base64-encoded share key
 3. WHEN creating a public share, THE Cortex System SHALL store only the item identifier and share metadata without access to the share key
-4. WHEN a recipient accesses a share URL, THE Client Application SHALL extract the share key from the URL and use it to decrypt the item locally
+4. WHEN a recipient accesses a share URL, THE React Frontend SHALL extract the share key from the URL and use it to decrypt the item locally
 5. THE Cortex System SHALL allow anonymous access to items via share identifier without requiring authentication
 
 ### 3.18 Share Permission Control
@@ -337,10 +337,10 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN creating a share, THE Client Application SHALL allow the user to specify time-limited expiration
+1. WHEN creating a share, THE React Frontend SHALL allow the user to specify time-limited expiration
 2. WHEN a share has expired, THE Cortex System SHALL reject access requests and return an expiration error
-3. WHERE a user enables password protection, THE Client Application SHALL derive an additional encryption key from the password and double-encrypt the share key in the URL
-4. WHEN a password-protected share is accessed, THE Client Application SHALL prompt for the password before decrypting the share key
+3. WHERE a user enables password protection, THE React Frontend SHALL derive an additional encryption key from the password and double-encrypt the share key in the URL
+4. WHEN a password-protected share is accessed, THE React Frontend SHALL prompt for the password before decrypting the share key
 5. WHEN a user revokes a share, THE Cortex System SHALL mark the share identifier as invalid and reject future access attempts
 
 ### 3.20 Automatic Key Rotation
@@ -351,11 +351,11 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN 90 days have elapsed since the last key rotation, THE Client Application SHALL initiate automatic vault key rotation
-2. WHEN key rotation begins, THE Client Application SHALL generate new derived keys from the vault master key using HKDF with updated context parameters
-3. WHEN new keys are generated, THE Client Application SHALL re-encrypt all vault data in the background using the new data encryption key
-4. WHEN re-encryption completes, THE Client Application SHALL update the locally stored encrypted key bundle with the new key material
-5. WHILE key rotation is in progress, THE Client Application SHALL maintain access to data encrypted with both old and new keys during the transition period
+1. WHEN 90 days have elapsed since the last key rotation, THE React Frontend SHALL initiate automatic vault key rotation
+2. WHEN key rotation begins, THE React Frontend SHALL generate new derived keys from the vault master key using HKDF with updated context parameters
+3. WHEN new keys are generated, THE React Frontend SHALL re-encrypt all vault data in the background using the new data encryption key
+4. WHEN re-encryption completes, THE React Frontend SHALL update the locally stored encrypted key bundle with the new key material
+5. WHILE key rotation is in progress, THE React Frontend SHALL maintain access to data encrypted with both old and new keys during the transition period
 
 ### 3.21 Password Security Requirements
 
@@ -365,10 +365,10 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates an account password or vault password, THE Client Application SHALL require a minimum length of 12 characters
-2. WHEN a user creates an account password or vault password, THE Client Application SHALL require inclusion of uppercase letters, lowercase letters, numbers, and special characters
-3. WHEN a user creates or changes an account password or vault password, THE Client Application SHALL validate the password against known breach databases
-4. WHEN a breached password is detected, THE Client Application SHALL reject the password and prompt the user to choose a different password
+1. WHEN a user creates an account password or vault password, THE React Frontend SHALL require a minimum length of 12 characters
+2. WHEN a user creates an account password or vault password, THE React Frontend SHALL require inclusion of uppercase letters, lowercase letters, numbers, and special characters
+3. WHEN a user creates or changes an account password or vault password, THE React Frontend SHALL validate the password against known breach databases
+4. WHEN a breached password is detected, THE React Frontend SHALL reject the password and prompt the user to choose a different password
 5. WHERE a user enables two-factor authentication, THE Cortex System SHALL require a second authentication factor for account access
 
 ### 3.19 Account Recovery
@@ -383,7 +383,7 @@ This document is intended for:
 2. WHEN a user loses access to their account, THE Cortex System SHALL allow authentication using one of the account recovery codes
 3. WHEN an account recovery code is used, THE Cortex System SHALL invalidate that specific code to prevent reuse
 4. WHERE a user enables two-factor authentication, THE Cortex System SHALL provide backup codes for 2FA recovery
-5. WHEN account recovery is successful, THE Client Application SHALL prompt the user to set a new account password
+5. WHEN account recovery is successful, THE React Frontend SHALL prompt the user to set a new account password
 
 ### 3.22 Vault Salt Management
 
@@ -408,10 +408,10 @@ This document is intended for:
 #### Acceptance Criteria
 
 1. WHEN a user changes their account password, THE Cortex System SHALL update the account authentication credentials in AWS Cognito without affecting the vault encryption keys
-2. WHEN an account password is changed, THE Client Application SHALL authenticate with AWS Cognito using the new account password
-3. WHEN a user changes their vault password, THE Client Application SHALL derive a new vault master key from the new vault password and the existing vault salt using Argon2id
-4. WHEN a new vault master key is derived, THE Client Application SHALL re-encrypt all vault data and metadata with keys derived from the new vault master key
-5. WHILE vault password change is processing, THE Client Application SHALL perform re-encryption in the background to minimize user disruption
+2. WHEN an account password is changed, THE React Frontend SHALL authenticate with AWS Cognito using the new account password
+3. WHEN a user changes their vault password, THE React Frontend SHALL derive a new vault master key from the new vault password and the existing vault salt using Argon2id
+4. WHEN a new vault master key is derived, THE React Frontend SHALL re-encrypt all vault data and metadata with keys derived from the new vault master key
+5. WHILE vault password change is processing, THE React Frontend SHALL perform re-encryption in the background to minimize user disruption
 
 ### 3.24 Multi-Type Item Storage
 
@@ -421,10 +421,10 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates an item, THE Client Application SHALL support itemType: MEDIA, NOTE, TASK, EVENT
+1. WHEN a user creates an item, THE React Frontend SHALL support itemType: MEDIA, NOTE, TASK, EVENT
 2. WHEN storing items, THE Cortex System SHALL use a unified Items table for all types
 3. WHEN querying items, THE Cortex System SHALL support filtering by itemType
-4. WHEN encrypting items, THE Client Application SHALL encrypt type-specific content as JSON blobs using the appropriate encryption key
+4. WHEN encrypting items, THE React Frontend SHALL encrypt type-specific content as JSON blobs using the appropriate encryption key
 5. THE Cortex System SHALL maintain referential integrity for all item types
 
 ### 3.25 Privacy-Preserving Date Queries
@@ -435,10 +435,10 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates a task or event with a date, THE Client Application SHALL generate an encrypted date bucket representing a 15-minute time window
+1. WHEN a user creates a task or event with a date, THE React Frontend SHALL generate an encrypted date bucket representing a 15-minute time window
 2. WHEN storing date-based items, THE Cortex System SHALL store both encryptedExactTime and plaintext timeBucket
 3. WHEN querying by date, THE Cortex System SHALL use timeBucket for server-side filtering
-4. WHEN results are returned, THE Client Application SHALL decrypt exact times and filter locally for precise matching
+4. WHEN results are returned, THE React Frontend SHALL decrypt exact times and filter locally for precise matching
 5. THE Cortex System SHALL never have access to exact unencrypted times
 
 ### 3.26 Push Notifications
@@ -451,7 +451,7 @@ This document is intended for:
 
 1. WHEN a user creates a task/event with a reminder, THE Client Application SHALL create a notification schedule with encrypted payload
 2. WHEN storing notification schedules, THE Cortex System SHALL store encryptedPayload, encryptedExactTime, and timeBucket
-3. WHEN a notification is due, THE Cortex System SHALL send push notification with encrypted payload via AWS SNS
+3. WHEN a notification is due, THE Cortex System SHALL send push notifications via AWS SNS with encrypted payloads
 4. WHEN receiving a notification, THE Client Application SHALL decrypt the payload locally before displaying
 5. THE Cortex System SHALL never have access to plaintext notification content
 
@@ -464,10 +464,10 @@ This document is intended for:
 #### Acceptance Criteria
 
 1. WHEN a user modifies an item, THE Cortex System SHALL notify other connected devices via WebSocket
-2. WHEN receiving a sync notification, THE Client Application SHALL fetch updated encrypted data
-3. WHEN conflicts occur, THE Client Application SHALL use last-write-wins resolution based on version numbers
+2. WHEN receiving a sync notification, THE React Frontend SHALL fetch updated encrypted data
+3. WHEN conflicts occur, THE React Frontend SHALL use last-write-wins resolution based on version numbers
 4. THE Cortex System SHALL send only metadata in sync notifications without content
-5. THE Client Application SHALL decrypt and merge changes locally
+5. THE React Frontend SHALL decrypt and merge changes locally
 
 ## 4. Non-Functional Requirements
 
@@ -530,8 +530,8 @@ This document is intended for:
 
 ### 4.5 Usability Requirements
 
-**REQ-NFR-11: Client Application**
-- The client application SHALL provide clear feedback during upload/download operations
+**REQ-NFR-11: React Frontend**
+- The React frontend SHALL provide clear feedback during upload/download operations
 - Error messages SHALL be user-friendly and actionable
 - The vault password setup process SHALL include strength indicators and guidance
 
@@ -569,7 +569,7 @@ This document is intended for:
 
 ### 5.3 Assumptions
 
-- Users have access to modern devices capable of running client-side encryption
+- Users have access to modern web browsers capable of running React applications and performing client-side encryption
 - Users have reliable internet connectivity for uploads and downloads
 - Users will securely store their vault recovery keys offline
 - Users understand the difference between account password and vault password

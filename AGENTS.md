@@ -1,18 +1,27 @@
 # Cortex: Zero-Knowledge Media Backup System
 
-Cortex is a privacy-first photo and video backup solution where all encryption happens client-side. The backend never has access to unencrypted user data, metadata, or encryption keys.
+Cortex is a privacy-first photo and video backup solution where all encryption happens in the React frontend. The backend never has access to unencrypted user data, metadata, or encryption keys.
+
+## Product Model
+
+**B2C Single-User Architecture:**
+- Individual users, not organizations or teams
+- One user = one vault (personal backup)
+- No multi-tenancy or team collaboration features
+- Simplified security model focused on personal data protection
+- Usage tracking and quotas per individual user
 
 ## Critical Architecture Constraints
 
 **Zero-Knowledge Enforcement:**
 - Backend MUST NEVER receive or process unencrypted user data
-- All encryption/decryption operations happen exclusively on client devices
+- All encryption/decryption operations happen exclusively in the React frontend
 - Metadata (filenames, dates, locations), tags, and collections are encrypted before transmission
 - Server only stores encrypted blobs and cannot decrypt them
 
 **Data Flow Pattern:**
-- Client encrypts data → Client uploads directly to S3 via presigned URL → Server stores encrypted metadata in DynamoDB
-- Client requests presigned URL → Client downloads from S3 → Client decrypts locally
+- React frontend encrypts data → Frontend uploads directly to S3 via presigned URL → Server stores encrypted metadata in DynamoDB
+- React frontend requests presigned URL → Frontend downloads from S3 → Frontend decrypts locally
 - Lambda functions only handle presigned URL generation and encrypted metadata operations
 
 **Two-Password Security Model:**
@@ -68,8 +77,8 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - Lambda generates scoped presigned URLs (no per-user IAM policies needed)
 - Never store unencrypted sensitive data
 
-**Client-Side Encryption**: ChaCha20-Poly1305
-- Library: @noble/ciphers (browser), cryptography (Python for testing)
+**Frontend Encryption**: ChaCha20-Poly1305
+- Library: @noble/ciphers (React/browser), cryptography (Python for testing)
 - Key size: 256 bits
 - Nonce size: 96 bits (12 bytes, random per operation)
 - Tag size: 128 bits (16 bytes, authenticated encryption)
@@ -88,16 +97,53 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - Consistent output for same tag (searchability)
 - Tags normalized to lowercase before encryption
 
+## SaaS Operational Patterns
+
+**Usage Metering & Monitoring:**
+- Track storage usage per user (total bytes stored)
+- Track API call counts per user per billing period
+- Track file upload/download operations
+- Publish usage events to EventBridge for analytics
+- Store aggregated usage metrics in DynamoDB
+- Display usage dashboard to users (storage used, API calls, etc.)
+- No payment processing initially - monitoring only
+
+**Quota Management:**
+- Define storage quotas per user (e.g., 5GB free tier, 100GB paid tier)
+- Define API rate limits per user (requests per minute/hour)
+- Check quotas before expensive operations (file uploads, bulk operations)
+- Return 429 (Too Many Requests) with upgrade message when quota exceeded
+- Graceful degradation: read-only mode when storage quota reached
+- Cache quota limits in Lambda memory for performance
+
+**Feature Flags:**
+- Per-user feature flag system for gradual rollout
+- Flags stored in DynamoDB or environment variables
+- Check flags before enabling new features
+- Support A/B testing and beta user groups
+- Common flags: `enable_collections`, `enable_sharing`, `enable_ml_tagging`
+- Default to safe/stable behavior when flag not found
+
+**Health Checks & Monitoring:**
+- `/health` endpoint for service health checks
+- Return service status, version, and dependency health
+- Monitor DynamoDB, S3, and Cognito availability
+- User-aware logging with user_id context (never log sensitive data)
+- CloudWatch metrics for: API latency, error rates, storage usage
+- X-Ray tracing for request flow analysis
+
 ## Directory Structure
 
 ```
 cortex/
 ├── cdk/                   # CDK stacks (TypeScript)
 │   ├── lib/               # Stack definitions
-│   │   ├── storage-stack.ts
-│   │   ├── database-stack.ts
-│   │   ├── auth-stack.ts
-│   │   └── api-stack.ts
+│   │   ├── stacks/
+│   │   │   ├── auth.ts
+│   │   │   ├── service.ts
+│   │   │   └── monitoring.ts  # CloudWatch dashboards, alarms
+│   │   ├── app.ts
+│   │   └── config.ts
 │   ├── bin/app.ts         # CDK entry point
 │   ├── cdk.json
 │   └── package.json
@@ -112,39 +158,55 @@ cortex/
 │   │   ├── collection/
 │   │   ├── tag/
 │   │   ├── share/
-│   │   └── recovery/
+│   │   ├── recovery/
+│   │   └── usage/         # Usage tracking models
 │   └── smithy-build.json
 ├── lambda/                # Python Lambda handlers
-│   ├── api/              # Main API handler using Lambda Powertools
-│   │   ├── handler.py    # Entry point with APIGatewayRestResolver
-│   │   ├── routes/       # Route handlers organized by domain
-│   │   │   ├── auth.py       # Authentication routes
-│   │   │   ├── vaults.py     # Vault management routes
-│   │   │   ├── items.py      # Item CRUD routes (all types: MEDIA, NOTE, TASK, EVENT)
-│   │   │   ├── collections.py # Collection CRUD routes
-│   │   │   ├── tags.py       # Tag search routes
-│   │   │   ├── shares.py     # Item sharing routes
-│   │   │   └── recovery.py   # Account recovery routes
-│   │   └── services/     # Business logic layer
-│   │       ├── item_service.py
-│   │       ├── collection_service.py
-│   │       ├── vault_service.py
-│   │       └── share_service.py
-│   ├── shared/           # Common utilities
-│   │   ├── crypto.py
-│   │   ├── auth.py
-│   │   ├── models.py
-│   │   ├── errors.py
-│   │   └── repository.py  # DynamoDB/S3 access layer
-│   └── requirements.txt
-├── client/                # Client-side encryption library
 │   ├── src/
-│   │   ├── encryption.ts  # ChaCha20-Poly1305 implementation
-│   │   ├── key-management.ts  # Argon2id, HKDF, key derivation
-│   │   ├── password-validation.ts  # Strength and breach checking
-│   │   ├── sharing.ts     # Share key generation
-│   │   └── content-analysis.ts  # Optional ML tagging
-│   └── package.json
+│   │   ├── api/          # Main API handler using Lambda Powertools
+│   │   │   ├── handler.py    # Entry point with APIGatewayRestResolver
+│   │   │   ├── routes/       # Route handlers organized by domain
+│   │   │   │   ├── auth.py
+│   │   │   │   ├── vaults.py
+│   │   │   │   ├── items.py
+│   │   │   │   ├── collections.py
+│   │   │   │   ├── tags.py
+│   │   │   │   ├── shares.py
+│   │   │   │   ├── recovery.py
+│   │   │   │   ├── usage.py      # Usage tracking routes
+│   │   │   │   └── health.py     # Health check routes
+│   │   │   └── services/     # Business logic layer
+│   │   │       ├── item_service.py
+│   │   │       ├── collection_service.py
+│   │   │       ├── vault_service.py
+│   │   │       ├── share_service.py
+│   │   │       └── usage_service.py  # Usage tracking logic
+│   │   └── shared/           # Common utilities
+│   │       ├── crypto.py
+│   │       ├── auth.py
+│   │       ├── models.py
+│   │       ├── errors.py
+│   │       ├── repository.py
+│   │       ├── features.py       # Feature flag utilities
+│   │       ├── usage.py          # Usage metering utilities
+│   │       └── quota.py          # Quota enforcement utilities
+│   ├── requirements.txt
+│   └── requirements-dev.txt
+├── frontend/              # React web application
+│   ├── src/
+│   │   ├── components/    # React components
+│   │   ├── lib/           # Frontend encryption library
+│   │   │   ├── encryption.ts     # ChaCha20-Poly1305
+│   │   │   ├── key-management.ts # Argon2id, HKDF
+│   │   │   ├── password-validation.ts
+│   │   │   └── sharing.ts
+│   │   ├── hooks/         # React hooks
+│   │   ├── pages/         # Page components
+│   │   ├── api/           # API client
+│   │   └── App.tsx
+│   ├── public/
+│   ├── package.json
+│   └── tsconfig.json
 ├── tests/
 │   ├── unit/
 │   ├── integration/
@@ -199,6 +261,62 @@ cortex/
 - Version all APIs (`/v1/...`)
 - Generate OpenAPI docs from Smithy
 
+## Frontend Architecture (React)
+
+**Technology Stack:**
+- React 18+ with TypeScript (strict mode)
+- Vite for build tooling and dev server
+- Tailwind CSS for styling
+- Frontend encryption library integrated directly in React application
+
+**Component Organization:**
+```
+frontend/src/
+├── components/        # Reusable UI components
+│   ├── auth/         # Login, signup, recovery
+│   ├── vault/        # Vault management
+│   ├── files/        # File upload, list, preview
+│   ├── collections/  # Collection management
+│   └── common/       # Buttons, modals, etc.
+├── lib/              # Frontend encryption library
+│   ├── encryption.ts
+│   ├── key-management.ts
+│   ├── password-validation.ts
+│   └── sharing.ts
+├── hooks/            # Custom React hooks
+│   ├── useAuth.ts
+│   ├── useVault.ts
+│   ├── useUsage.ts
+│   └── useFeatureFlag.ts
+├── api/              # API client
+│   └── client.ts
+├── pages/            # Page components
+│   ├── Login.tsx
+│   ├── Dashboard.tsx
+│   ├── Files.tsx
+│   └── Settings.tsx
+└── App.tsx
+```
+
+**Encryption Flow:**
+1. User enters vault password in React frontend (never sent to server)
+2. React frontend derives vault master key using Argon2id + vault salt
+3. React frontend derives encryption keys using HKDF
+4. React frontend encrypts file/metadata using ChaCha20-Poly1305
+5. React frontend uploads encrypted data to S3 via presigned URL
+6. React frontend stores encrypted metadata via API
+
+**State Management:**
+- React Context for auth state and vault keys (in memory only)
+- Local state for UI components
+- No global state library needed initially
+
+**Security Considerations:**
+- React frontend never persists vault password or derived keys
+- React frontend clears sensitive data from memory on logout
+- React frontend uses secure random number generation for nonces
+- React frontend validates all user inputs before encryption
+
 ## Required Dependencies
 
 **Python (Lambda):**
@@ -222,16 +340,22 @@ moto>=4.0  # AWS service mocking
 }
 ```
 
-**TypeScript/JavaScript (Client):**
+**TypeScript/JavaScript (Frontend - React):**
 ```json
 {
   "dependencies": {
+    "react": "^18.x.x",
+    "react-dom": "^18.x.x",
     "@noble/ciphers": "^0.4.0",  // ChaCha20-Poly1305
     "@noble/hashes": "^1.3.0",   // SHA-256, HMAC
     "argon2-browser": "^1.18.0", // Argon2id for browser
     "bip39": "^3.1.0"            // BIP39 mnemonic generation
   },
   "devDependencies": {
+    "@types/react": "^18.x.x",
+    "@types/react-dom": "^18.x.x",
+    "typescript": "^5.x.x",
+    "vite": "^5.x.x",
     "fast-check": "^3.0.0"       // Property-based testing
   }
 }
@@ -243,23 +367,21 @@ moto>=4.0  # AWS service mocking
 
 Examples:
 - `cortex-prod-bucket-files`
-- `cortex-dev-table-users`
-- `cortex-dev-table-vaults`
-- `cortex-dev-table-files`
-- `cortex-dev-table-collections`
-- `cortex-dev-table-file-collection-associations`
-- `cortex-dev-table-shares`
-- `cortex-dev-table-account-recovery`
+- `cortex-dev-table-data` (single table for users, vaults, files, collections, usage, features)
+- `cortex-dev-table-shares` (separate for anonymous access)
 - `cortex-staging-function-api` (single Lambda handles all routes)
 - `cortex-prod-api-gateway`
+- `cortex-prod-eventbus-usage` (for usage event tracking)
 
 Environments: `dev`, `staging`, `prod`
+
+**Note:** Using single-table design for main data (users, vaults, files, collections, usage tracking, feature flags) with separate shares table for security isolation.
 
 ## DynamoDB Schema Patterns
 
 **Users Table:**
 - PK: `USER#{userId}`, SK: `PROFILE`
-- Stores: userId, cognitoId, email, timestamps
+- Stores: userId, cognitoId, email, timestamps, storageQuotaBytes, apiRateLimit
 
 **Vaults Table:**
 - PK: `USER#{userId}`, SK: `VAULT#{vaultId}`
@@ -288,6 +410,16 @@ Environments: `dev`, `staging`, `prod`
 - PK: `USER#{userId}`, SK: `RECOVERY#{codeHash}`
 - Stores: userId, codeHash (SHA-256), createdAt, usedAt, isValid
 
+**Usage Tracking Table:**
+- PK: `USER#{userId}`, SK: `USAGE#{period}` (e.g., USAGE#2024-01)
+- Stores: userId, period, storageBytes, apiCalls, uploadsCount, downloadsCount, lastUpdated
+- TTL: Auto-delete after 13 months (keep 1 year of history)
+
+**Feature Flags Table:**
+- PK: `USER#{userId}`, SK: `FEATURE#{featureName}`
+- Stores: userId, featureName, enabled (boolean), enabledAt
+- Alternative: Store in environment variables for global flags
+
 ## S3 Bucket Structure
 
 **Object Key Pattern:**
@@ -314,7 +446,7 @@ vaults/{vaultId}/files/{fileId}/{timestamp}-{random}
 from aws_lambda_powertools import Logger, Tracer, Metrics
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from routes import auth, vaults, media, collections, tags, shares, recovery
+from routes import auth, vaults, items, collections, tags, shares, recovery, usage, health
 
 logger = Logger()
 tracer = Tracer()
@@ -324,11 +456,13 @@ app = APIGatewayRestResolver()
 # Register route modules
 auth.register_routes(app)
 vaults.register_routes(app)
-media.register_routes(app)
+items.register_routes(app)
 collections.register_routes(app)
 tags.register_routes(app)
 shares.register_routes(app)
 recovery.register_routes(app)
+usage.register_routes(app)
+health.register_routes(app)
 
 @logger.inject_lambda_context
 @tracer.capture_lambda_handler
@@ -337,43 +471,59 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
     return app.resolve(event, context)
 ```
 
-**Python Lambda (route module example - routes/items.py):**
+**Python Lambda (route module with usage tracking):**
 ```python
 from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from services.item_service import ItemService
-from shared.models import CreateItemRequest, CreateItemResponse, ItemType
+from shared.models import CreateItemRequest, CreateItemResponse
 from shared.auth import get_user_from_context
+from shared.usage import track_usage, UsageEventType
+from shared.quota import check_quota, QuotaType
 
 logger = Logger(child=True)
 tracer = Tracer()
 
 def register_routes(app: APIGatewayRestResolver):
-    @app.post("/v1/items")
+    @app.post("/v1/items/upload/init")
     @tracer.capture_method
-    def create_item():
+    def initiate_upload():
         user_id = get_user_from_context(app.current_event)
         body = app.current_event.json_body
         request = CreateItemRequest(**body)
         
+        # Check storage quota before allowing upload
+        check_quota(user_id, QuotaType.STORAGE, request.size_bytes)
+        
         service = ItemService()
-        response = service.create_item(user_id, request)
+        response = service.initiate_upload(user_id, request)
+        
+        # Track usage event
+        track_usage(user_id, UsageEventType.FILE_UPLOAD_INITIATED, {
+            'file_size': request.size_bytes
+        })
         
         return response.dict()
+```
+
+**Python Lambda (feature flag usage):**
+```python
+from shared.features import is_feature_enabled, FeatureFlag
+
+def create_collection():
+    user_id = get_user_from_context(app.current_event)
     
-    @app.get("/v1/items")
-    @tracer.capture_method
-    def list_items():
-        user_id = get_user_from_context(app.current_event)
-        params = app.current_event.query_string_parameters or {}
-        item_type = params.get("itemType")  # Optional filter
-        page_size = int(params.get("pageSize", 50))
-        next_token = params.get("nextToken")
-        
-        service = ItemService()
-        response = service.list_items(user_id, item_type, page_size, next_token)
-        
-        return response.dict()
+    # Check if collections feature is enabled for user
+    if not is_feature_enabled(user_id, FeatureFlag.COLLECTIONS):
+        return {
+            'statusCode': 403,
+            'body': {'error': 'Collections feature not available'}
+        }
+    
+    # Proceed with collection creation
+    service = CollectionService()
+    response = service.create_collection(user_id, request)
+    return response.dict()
 ```
 
 **TypeScript CDK:**
@@ -440,7 +590,7 @@ api.root.addProxy({
 ## Security Requirements
 
 - Never log sensitive data (keys, passwords, PII, encrypted payloads)
-- Log only: user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
+- Log with user context: user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
 - Never log: vault password, vault keys, vault recovery keys, share keys, account recovery codes
 - Use AWS Secrets Manager or Parameter Store for secrets
 - Implement least-privilege IAM policies for Lambda execution roles
@@ -450,11 +600,21 @@ api.root.addProxy({
 - Validate all inputs at API Gateway and Lambda layers
 - Sanitize error messages to prevent information leakage
 
+**User-Aware Logging Pattern:**
+```python
+logger.info("File uploaded", extra={
+    "user_id": user_id,
+    "vault_id": vault_id,
+    "file_size": size_bytes,
+    "operation": "file_upload"
+})
+```
+
 **Password Security:**
 - Minimum 12 characters
 - Require: uppercase, lowercase, numbers, special characters
 - Breach detection via Have I Been Pwned API (k-anonymity model)
-- Client-side SHA-1 hash, send first 5 characters to API
+- React frontend performs SHA-1 hash, sends first 5 characters to API
 - Check full hash against returned list locally
 - Reject any password found in breach database
 
@@ -503,11 +663,121 @@ api.root.addProxy({
 - `POST /v1/recovery/codes` - Generate account recovery codes
 - `POST /v1/recovery/validate` - Validate recovery code
 
+**Usage & Monitoring:**
+- `GET /v1/usage` - Get current user's usage statistics
+- `GET /v1/usage/history` - Get usage history by period
+- `GET /v1/health` - Service health check (public, no auth required)
+
+**Feature Flags (Internal):**
+- Feature flags checked server-side before operations
+- No dedicated API endpoints - flags control feature availability
+
+## Operational Implementation Patterns
+
+**Usage Tracking Pattern:**
+```python
+# Track usage after billable operations
+from shared.usage import track_usage, UsageEventType
+
+# After file upload
+track_usage(user_id, UsageEventType.FILE_UPLOADED, {
+    'file_size': size_bytes,
+    'vault_id': vault_id
+})
+
+# After API call (automatic via decorator)
+@track_api_call
+def list_items():
+    pass
+```
+
+**Quota Enforcement Pattern:**
+```python
+from shared.quota import check_quota, QuotaType, QuotaExceededError
+
+try:
+    # Check before expensive operation
+    check_quota(user_id, QuotaType.STORAGE, additional_bytes)
+    
+    # Proceed with operation
+    upload_file(...)
+    
+except QuotaExceededError as e:
+    return {
+        'statusCode': 429,
+        'body': {
+            'error': {
+                'code': 'QUOTA_EXCEEDED',
+                'message': str(e),
+                'quota_type': e.quota_type,
+                'current_usage': e.current_usage,
+                'limit': e.limit
+            }
+        }
+    }
+```
+
+**Feature Flag Pattern:**
+```python
+from shared.features import is_feature_enabled, FeatureFlag
+
+# Check feature flag before operation
+if not is_feature_enabled(user_id, FeatureFlag.COLLECTIONS):
+    return {
+        'statusCode': 403,
+        'body': {'error': 'Feature not available'}
+    }
+
+# Proceed with feature
+create_collection(...)
+```
+
+**Health Check Pattern:**
+```python
+@app.get("/v1/health")
+def health_check():
+    """
+    Public health check endpoint (no authentication required).
+    Returns service status and dependency health.
+    """
+    health_status = {
+        'status': 'healthy',
+        'version': '1.0.0',
+        'timestamp': datetime.utcnow().isoformat(),
+        'dependencies': {
+            'dynamodb': check_dynamodb_health(),
+            's3': check_s3_health(),
+            'cognito': check_cognito_health()
+        }
+    }
+    
+    # Return 503 if any critical dependency is unhealthy
+    if any(not dep['healthy'] for dep in health_status['dependencies'].values()):
+        return {'statusCode': 503, 'body': health_status}
+    
+    return {'statusCode': 200, 'body': health_status}
+```
+
+**Money Handling (Future Billing):**
+```python
+# Always use integers for money (cents, not dollars)
+def calculate_storage_cost(bytes_used: int) -> int:
+    """Calculate storage cost in cents."""
+    gb_used = bytes_used / (1024 ** 3)
+    cost_per_gb_cents = 10  # $0.10 per GB
+    return int(gb_used * cost_per_gb_cents)
+
+# Display to user
+def format_price(cents: int) -> str:
+    """Format cents as dollar string."""
+    return f"${cents / 100:.2f}"
+```
+
 ## Testing Requirements
 
 **Property-Based Testing**
 - Use Hypothesis (Python) for server-side property tests
-- Use fast-check (TypeScript/JavaScript) for client-side property tests
+- Use fast-check (TypeScript/JavaScript) for React frontend property tests
 - Minimum 100 iterations per property test
 - Each property test must reference design document property in comment
 - Tag format: `# Feature: cortex-backup, Property {number}: {property_text}`

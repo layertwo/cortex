@@ -1,7 +1,5 @@
-# Implementation Plan
-
 - [x] 1. Set up project structure and CDK infrastructure foundation
-  - Create directory structure: cdk/, lambda/, client/, tests/
+  - Create directory structure: cdk/, lambda/, frontend/, tests/
   - Initialize CDK project with TypeScript in cdk/
   - Set up Python project structure for Lambda functions
   - Configure package.json and requirements.txt with dependencies
@@ -75,37 +73,44 @@
   - Create models for DynamoDB items
   - _Requirements: 8.1, 8.3_
 
-- [ ] 5. Build client-side encryption library
-- [ ] 5.1 Implement ChaCha20-Poly1305 encryption engine
-  - Create client/src/encryption.ts with encryption functions using @noble/ciphers
+- [ ] 5. Build React frontend encryption library (frontend/src/lib/)
+- [ ] 5.1 Set up frontend project structure
+  - Create frontend/src directory structure
+  - Create package.json with dependencies (@noble/ciphers, @noble/hashes, argon2-browser, bip39, fast-check)
+  - Configure TypeScript (tsconfig.json)
+  - Set up Jest for testing
+  - _Requirements: 1.1, 2.1, 9.1_
+
+- [ ] 5.2 Implement ChaCha20-Poly1305 encryption engine
+  - Create frontend/src/lib/encryption.ts with encryption functions using @noble/ciphers
   - Generate random 96-bit nonces for each operation
   - Handle authenticated encryption with 128-bit tags
   - Implement decryption with tag verification
   - Export functions: encrypt(), decrypt(), generateNonce()
   - _Requirements: 1.1, 2.1, 9.1_
 
-- [ ]* 5.2 Write property test for encryption round-trip
-  - Create tests/property/test_encryption.ts
+- [ ]* 5.3 Write property test for encryption round-trip
+  - Create frontend/tests/property/test_encryption.test.ts
   - Use fast-check for property-based testing
   - **Property 7: Upload and download round-trip preserves content**
   - **Validates: Requirements 4.2**
 
-- [ ] 5.3 Implement deterministic tag encryption using HMAC-SHA256
-  - Add tag encryption functions to client/src/encryption.ts
+- [ ] 5.4 Implement deterministic tag encryption using HMAC-SHA256
+  - Add tag encryption functions to frontend/src/lib/encryption.ts
   - Create tag encryption function for searchable encrypted tags
   - Normalize tags to lowercase before encryption
   - Use @noble/hashes for HMAC-SHA256
   - Export function: encryptTagForSearch()
   - _Requirements: 11.2, 11.4_
 
-- [ ]* 5.4 Write property test for tag encryption consistency
-  - Add to tests/property/test_encryption.ts
+- [ ]* 5.5 Write property test for tag encryption consistency
+  - Add to frontend/tests/property/test_encryption.test.ts
   - **Property 13: Encrypted tag search functionality**
   - **Validates: Requirements 11.4, 11.5**
 
-- [ ] 6. Implement client-side key management system
+- [ ] 6. Implement frontend key management system
 - [ ] 6.1 Create vault master key derivation with Argon2id
-  - Create client/src/key-management.ts
+  - Create frontend/src/lib/key-management.ts
   - Implement Argon2id key derivation using argon2-browser
   - Configure parameters: 64MB memory, 3 iterations, 4 parallelism
   - Derive 256-bit vault master key from vault password + vault salt
@@ -113,7 +118,7 @@
   - _Requirements: 14.1, 14.2_
 
 - [ ] 6.2 Implement HKDF for derived key generation
-  - Add HKDF functions to client/src/key-management.ts
+  - Add HKDF functions to frontend/src/lib/key-management.ts
   - Use @noble/hashes for HKDF with SHA-256
   - Derive data encryption key (context: "cortex-data-encryption-v1")
   - Derive metadata encryption key (context: "cortex-metadata-encryption-v1")
@@ -127,7 +132,7 @@
   - _Requirements: 14.2, 24.3, 25.1, 26.1_
 
 - [ ] 6.3 Implement vault recovery key generation and validation
-  - Add recovery key functions to client/src/key-management.ts
+  - Add recovery key functions to frontend/src/lib/key-management.ts
   - Generate BIP39 mnemonic from vault master key using bip39 library
   - Display recovery key to user once with secure storage instructions
   - Implement recovery key validation for vault password reset
@@ -136,7 +141,7 @@
   - _Requirements: 15.1, 15.2, 15.3_
 
 - [ ] 6.4 Build local key storage with device-specific encryption
-  - Create client/src/key-storage.ts
+  - Create frontend/src/lib/key-storage.ts
   - Encrypt derived keys with device-specific key
   - Store encrypted keys in browser localStorage or secure storage
   - Implement key retrieval and decryption on device
@@ -145,7 +150,7 @@
   - _Requirements: 14.3, 14.6_
 
 - [ ] 6.5 Implement password validation with strength and breach checking
-  - Create client/src/password-validation.ts
+  - Create frontend/src/lib/password-validation.ts
   - Validate minimum 12 characters and complexity requirements
   - Integrate with Have I Been Pwned API using k-anonymity model
   - Client-side SHA-1 hash, send first 5 characters to API
@@ -156,34 +161,36 @@
   - _Requirements: 21.1, 21.2, 21.3, 21.4_
 
 - [ ]* 6.6 Write property test for vault key derivation determinism
-  - Create tests/property/test_key_management.ts
+  - Create frontend/tests/property/test_key_management.test.ts
   - **Property 17: Vault key derivation is deterministic**
   - **Validates: Requirements 14.1, 14.2, 14.5**
 
 - [ ]* 6.7 Write property test for vault recovery key
-  - Add to tests/property/test_key_management.ts
+  - Add to frontend/tests/property/test_key_management.test.ts
   - **Property 18: Vault recovery key enables vault access**
   - **Validates: Requirements 15.3**
 
 - [ ]* 6.8 Write property test for vault keys never transmitted
-  - Add to tests/property/test_key_management.ts
+  - Add to frontend/tests/property/test_key_management.test.ts
   - **Property 6: Vault keys never transmitted to server**
   - **Validates: Requirements 3.6, 9.3, 14.6, 15.5, 16.4**
 
 - [ ]* 6.9 Write property test for password strength validation
-  - Create tests/property/test_password_validation.ts
+  - Create frontend/tests/property/test_password_validation.test.ts
   - **Property 23: Password strength validation**
   - **Validates: Requirements 21.1, 21.2**
 
 - [ ]* 6.10 Write property test for breached password detection
-  - Add to tests/property/test_password_validation.ts
+  - Add to frontend/tests/property/test_password_validation.test.ts
   - **Property 24: Breached password detection**
   - **Validates: Requirements 21.3, 21.4**
 
 - [ ]* 6.11 Write property test for vault salt uniqueness
-  - Create tests/property/test_vault_salt.py (server-side test)
+  - Create lambda/tests/property/test_vault_salt.py (server-side test)
   - **Property 27: Vault salt uniqueness**
   - **Validates: Requirements 22.4**
+
+
 
 - [ ] 7. Implement Lambda API handler foundation
 - [ ] 7.1 Create main Lambda handler with APIGatewayRestResolver
@@ -272,8 +279,8 @@
   - Implement idempotency for critical operations
   - _Requirements: 2.5_
 
-- [ ]* 10.4 Write property test for client-side encryption before transmission
-  - **Property 1: Client-side encryption before transmission**
+- [ ]* 10.4 Write property test for frontend encryption before transmission
+  - **Property 1: Frontend encryption before transmission**
   - **Validates: Requirements 1.1, 2.1, 11.2, 12.1, 13.1, 24.3**
 
 - [ ]* 10.5 Write property test for server storage preserves encryption
@@ -415,14 +422,14 @@
   - **Validates: Requirements 11.4, 11.5**
 
 - [ ] 15. Implement password change functionality
-- [ ] 15.1 Create account password change route handler (client-side)
+- [ ] 15.1 Create account password change route handler (frontend)
   - Implement account password change flow with Cognito
   - Update Cognito credentials with new account password
   - Verify vault encryption keys remain unchanged
   - No re-encryption required
   - _Requirements: 23.1, 23.2_
 
-- [ ] 15.2 Create vault password change functionality (client-side)
+- [ ] 15.2 Create vault password change functionality (frontend)
   - Derive new vault master key from new vault password
   - Trigger background re-encryption of all vault data
   - Re-encrypt files in batches
@@ -439,7 +446,7 @@
   - **Validates: Requirements 23.3, 23.4**
 
 - [ ] 16. Implement file sharing system
-- [ ] 16.1 Build client-side share key generation and URL creation
+- [ ] 16.1 Build frontend share key generation and URL creation
   - Generate unique share keys using HKDF from share key derivation key + file ID
   - Create share URLs with share ID and base64-encoded share key in fragment
   - Implement password-protected shares with double encryption
@@ -465,7 +472,7 @@
   - **Property 20: Share keys enable file access without vault password**
   - **Validates: Requirements 17.1, 17.4**
 
-- [ ] 17. Implement automatic key rotation (client-side)
+- [ ] 17. Implement automatic key rotation (frontend)
 - [ ] 17.1 Build key rotation trigger and monitoring
   - Monitor key age (90 days since last rotation)
   - Trigger automatic rotation
@@ -487,7 +494,7 @@
   - **Property 26: Automatic key rotation preserves data access**
   - **Validates: Requirements 20.1, 20.2, 20.3, 20.4, 20.5**
 
-- [ ] 18. Implement optional local content analysis (client-side)
+- [ ] 18. Implement optional local content analysis (frontend)
 - [ ] 18.1 Integrate on-device ML model
   - Load TensorFlow Lite/Core ML/ONNX model (MobileNet or EfficientNet)
   - Run inference on media before encryption
@@ -501,7 +508,7 @@
   - Store encrypted tags with media metadata
   - _Requirements: 11.1, 11.2_
 
-- [ ] 19. Implement concurrent upload coordination (client-side)
+- [ ] 19. Implement concurrent upload coordination (frontend)
 - [ ] 19.1 Build upload queue and concurrency manager
   - Queue multiple media items for upload
   - Configure concurrent upload limit based on network conditions
@@ -518,7 +525,7 @@
   - Implement exponential backoff for DynamoDB throttling
   - _Requirements: 3.5, 4.4, 8.3_
 
-- [ ] 20.2 Add client-side error handling
+- [ ] 20.2 Add frontend error handling
   - Handle encryption failures (key derivation, encryption operations)
   - Implement network failure retry logic with exponential backoff
   - Handle authentication failures (token expiration, invalid credentials)
@@ -581,12 +588,23 @@
 
 - [ ] 23. Write integration tests
   - Test complete upload flow (authenticate → get presigned URL → upload to S3 → store metadata)
-  - Test complete download flow (authenticate → list media → get download URL → download from S3)
+  - Test complete download flow (authenticate → list items → get download URL → download from S3)
   - Test multi-device flow (setup on device 1 → login on device 2 → access same items)
   - Test collection management (create → add items → retrieve → delete)
   - Test tag search (upload with tags → search → verify results)
   - Test error recovery (simulate S3 failure → verify cleanup)
-  - Test two-password flow (change account password → verify vault unchanged → change vault password → verify re-encryption)
+  - Test account recovery (use recovery code → reset password → verify access)
+  - Test vault recovery (use recovery key → reset vault password → verify data accessible)
+  - Test file sharing (create share → access anonymously → verify download)
+  - Test password-protected sharing (create protected share → enter password → verify access)
+  - Test share expiration (create time-limited share → wait → verify access denied)
+  - Test share revocation (create share → revoke → verify access denied)
+  - Test key rotation (trigger rotation → verify re-encryption → verify data accessible)
+  - Test password validation (attempt weak password → verify rejection → attempt breached password → verify rejection)
+  - Test notification scheduling (create TASK/EVENT with notification → verify encrypted schedule stored → verify notification delivery)
+  - Test date bucket privacy (create multiple notifications → verify server only knows 15-min buckets → verify exact times encrypted)
+  - Test real-time sync (update item on device 1 → verify device 2 receives update via WebSocket)
+  - _Requirements: All_t two-password flow (change account password → verify vault unchanged → change vault password → verify re-encryption)
   - Test account recovery (use recovery code → reset password → verify access)
   - Test vault recovery (use recovery key → reset vault password → verify data accessible)
   - Test file sharing (create share → access anonymously → verify download)
@@ -600,46 +618,55 @@
   - Test real-time sync (update item on device 1 → verify device 2 receives update via WebSocket)
   - _Requirements: All_
 
-- [ ] 24. Implement date bucket encryption (client-side)
-- [ ] 24.1 Update Smithy model for date-based queries
-  - Add timeBucket field to item structures for tasks/events
-  - Add date bucket query parameters to list/search operations
-  - _Requirements: 25.1, 25.2, 25.3_
-
-- [ ] 24.2 Create date bucket encryption functions
+- [ ] 24. Implement date bucket encryption (frontend)
+- [ ] 24.1 Create date bucket encryption functions
+  - Create frontend/src/lib/date-bucket.ts
   - Implement function to round notification time to 15-minute bucket
   - Derive date bucket encryption key using HKDF (context: "cortex-date-bucket-encryption-v1")
   - Encrypt exact notification time with ChaCha20-Poly1305
   - Create encrypted notification payload (item ID, notification type, encrypted exact time)
+  - Export functions: roundToTimeBucket(), encryptExactTime(), encryptDateBucket()
   - _Requirements: 25.1, 25.3_
 
-- [ ] 24.3 Create date bucket decryption functions
+- [ ] 24.2 Create date bucket decryption functions
+  - Add to frontend/src/lib/date-bucket.ts
   - Decrypt notification payloads received from server
   - Extract exact notification time from encrypted payload
   - Validate notification time matches expected bucket
+  - Export functions: decryptExactTime(), decryptNotificationPayload()
   - _Requirements: 25.3_
 
-- [ ]* 24.4 Write property test for date bucket privacy
+- [ ]* 24.3 Write property test for date bucket privacy
+  - Create frontend/tests/property/test_date_bucket.test.ts
   - **Property 29: Date bucket encryption preserves privacy**
   - **Validates: Requirements 25.1, 25.2, 25.3**
 
 - [ ] 25. Implement notification scheduling system
-- [ ] 25.1 Update CDK to add Notification Schedules table and EventBridge
+- [ ] 25.1 Update Smithy model for notifications
+  - Add notification schedule structures to smithy/models/
+  - Define operations for creating, listing, and canceling notification schedules
+  - Add timeBucket field to item structures for tasks/events
+  - Add date bucket query parameters to list/search operations
+  - _Requirements: 25.1, 25.2, 25.3, 26.1_
+
+- [ ] 25.2 Update CDK to add Notification Schedules table and EventBridge
   - Create Notification Schedules DynamoDB table (PK: VAULT#{vaultId}, SK: SCHEDULE#{timeBucket}#{scheduleId})
   - Add GSI for global notification processing (PK: STATUS#{status}, SK: TIMEBUCKET#{timeBucket})
   - Configure EventBridge rule to trigger Lambda every 5 minutes
-  - Add SNS topic for push notifications
+  - Create SNS topic for push notifications
   - Grant Lambda permissions for SNS publish
   - _Requirements: 26.1, 26.2, 26.3, 26.4_
 
-- [ ] 25.2 Create notification scheduling route handlers (server-side)
-  - Implement POST /v1/notifications/schedule route (store encrypted notification)
-  - Implement DELETE /v1/notifications/schedule/{id} route (cancel notification)
-  - Implement GET /v1/notifications/poll route (poll for due notifications in current bucket)
+- [ ] 25.3 Create notification scheduling route handlers (server-side)
+  - Create lambda/src/api/routes/notifications.py
+  - Implement POST /v1/notifications/schedules route (store encrypted notification)
+  - Implement DELETE /v1/notifications/schedules/{id} route (cancel notification)
+  - Implement GET /v1/notifications/schedules route (list pending schedules)
   - Extract user identity from API Gateway context
   - _Requirements: 26.1, 26.2, 26.3_
 
-- [ ] 25.3 Create notification scheduling service layer (server-side)
+- [ ] 25.4 Create notification scheduling service layer (server-side)
+  - Create lambda/src/api/services/notification_service.py
   - Store encrypted notification payload in Notification Schedules table
   - Index by date bucket (PK: VAULT#{vaultId}, SK: SCHEDULE#{timeBucket}#{scheduleId})
   - Query notifications by date bucket for polling
@@ -647,7 +674,8 @@
   - Never decrypt notification payloads
   - _Requirements: 26.1, 26.2, 26.3_
 
-- [ ] 25.4 Create notification processing Lambda handler
+- [ ] 25.5 Create notification processing Lambda handler
+  - Create lambda/src/notification_processor/handler.py
   - Triggered by EventBridge every 5 minutes
   - Query schedules with timeBucket <= now + 15min
   - Send push notifications via SNS with encrypted payloads
@@ -655,7 +683,8 @@
   - Handle retry logic for failed notifications
   - _Requirements: 26.3, 26.4_
 
-- [ ] 25.5 Create notification polling system (client-side)
+- [ ] 25.6 Create notification polling system (frontend)
+  - Create frontend/src/lib/notifications.ts
   - Poll server every 15 minutes for current date bucket
   - Decrypt notification payloads locally
   - Check if exact notification time has passed
@@ -663,44 +692,53 @@
   - Mark notifications as delivered
   - _Requirements: 26.3, 26.4_
 
-- [ ] 25.6 Integrate SNS for push notifications (optional)
+- [ ] 25.7 Integrate SNS for push notifications (optional)
   - Configure SNS topics for notification delivery
   - Subscribe client devices to SNS topics
   - Send encrypted notification payloads via SNS
   - Client decrypts and displays notifications
   - _Requirements: 26.4_
 
-- [ ]* 25.7 Write property test for notification encryption
+- [ ]* 25.8 Write property test for notification encryption
+  - Create lambda/tests/property/test_notifications.py
   - **Property 30: Notification metadata is encrypted**
   - **Validates: Requirements 26.1, 26.2**
 
-- [ ]* 25.8 Write property test for server cannot determine exact notification times
+- [ ]* 25.9 Write property test for server cannot determine exact notification times
+  - Add to lambda/tests/property/test_notifications.py
   - **Property 31: Server cannot determine exact notification times**
   - **Validates: Requirements 25.2, 26.2**
 
 - [ ] 26. Implement real-time sync (optional)
-- [ ] 26.1 Update CDK to add WebSocket API and Connections table
+- [ ] 26.1 Update Smithy model for WebSocket API
+  - Add WebSocket connection structures to smithy/models/
+  - Define sync notification message formats
+  - _Requirements: 27.1, 27.2_
+
+- [ ] 26.2 Update CDK to add WebSocket API and Connections table
   - Create WebSocket API Gateway
   - Create WebSocket Connections DynamoDB table (PK: CONNECTION#{connectionId}, SK: METADATA)
   - Add GSI for vault-based queries (PK: VAULT#{vaultId}, SK: CONNECTION#{connectionId})
   - Grant Lambda permissions for API Gateway Management API
   - _Requirements: 27.1, 27.2_
 
-- [ ] 26.2 Create WebSocket API for real-time sync
+- [ ] 26.3 Create WebSocket API for real-time sync
+  - Create lambda/src/websocket/handler.py
   - Implement connection management (connect, disconnect)
   - Store connection IDs in DynamoDB
   - Associate connections with user IDs and vault IDs
   - Handle ping/pong for keep-alive
   - _Requirements: 27.1, 27.2_
 
-- [ ] 26.3 Create sync notification system
-  - Trigger sync notifications on item create/update/delete
+- [ ] 26.4 Create sync notification system
+  - Update item route handlers to trigger sync notifications
   - Send encrypted item metadata to connected clients
   - Broadcast to all user's connected devices
   - Never send unencrypted data over WebSocket
   - _Requirements: 27.1, 27.2, 27.3_
 
-- [ ] 26.4 Create client-side sync handler
+- [ ] 26.5 Create frontend sync handler
+  - Create frontend/src/lib/sync.ts
   - Establish WebSocket connection on app startup
   - Listen for sync notifications
   - Decrypt received item metadata
@@ -708,7 +746,8 @@
   - Trigger UI refresh
   - _Requirements: 27.1, 27.2, 27.3_
 
-- [ ]* 26.5 Write property test for real-time sync preserves encryption
+- [ ]* 26.6 Write property test for real-time sync preserves encryption
+  - Create lambda/tests/property/test_sync.py
   - **Property 32: Real-time sync preserves encryption**
   - **Validates: Requirements 27.2, 27.3**
 
