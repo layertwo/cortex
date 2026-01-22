@@ -1,0 +1,36 @@
+{
+  "name": "@cortex/encryption",
+  "version": "1.0.0",
+  "description": "Zero-knowledge encryption library for Cortex",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage"
+  },
+  "keywords": [
+    "encryption",
+    "chacha20-poly1305",
+    "argon2",
+    "zero-knowledge"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/ciphers": "^2.1.1",
+    "@noble/hashes": "^2.0.1",
+    "@scure/bip39": "^2.0.1",
+    "argon2id": "^1.0.1"
+  },
+  "devDependencies": {
+    "@fast-check/jest": "^2.1.1",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^20.0.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "typescript": "~5.9.0"
+  }
+}

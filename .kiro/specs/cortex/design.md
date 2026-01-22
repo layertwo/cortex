@@ -181,9 +181,25 @@ This separation provides:
 
 ## Components and Interfaces
 
-### 1. React Frontend
+### 1. Frontend (Monorepo Architecture)
 
-**Responsibilities:**
+**Monorepo Structure:**
+- npm workspaces for package management
+- `@cortex/encryption` - Standalone encryption library (reusable across platforms)
+- `@cortex/web` - React web application (imports encryption library)
+
+**@cortex/encryption Library Responsibilities:**
+- Provide pure TypeScript encryption/decryption functions
+- Implement ChaCha20-Poly1305 authenticated encryption
+- Implement Argon2id key derivation and HKDF key expansion
+- Generate cryptographically secure random nonces
+- Provide password validation and breach checking utilities
+- Support share key derivation
+- No React dependencies - pure crypto library
+- Reusable across web, mobile (React Native), and desktop (Electron) platforms
+
+**@cortex/web Application Responsibilities:**
+- Import and use `@cortex/encryption` for all cryptographic operations
 - Generate and manage vault encryption keys locally in browser
 - Encrypt/decrypt all user data before transmission/after receipt
 - Perform optional local content analysis for tagging
@@ -196,7 +212,7 @@ This separation provides:
 - Validate passwords against breach databases and enforce strength requirements
 - Handle automatic vault key rotation every 90 days
 
-**Key Modules:**
+**Key Modules (@cortex/encryption):**
 
 **Encryption Engine:**
 - Algorithm: ChaCha20-Poly1305 for symmetric encryption (fast, secure, authenticated)

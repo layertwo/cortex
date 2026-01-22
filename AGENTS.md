@@ -36,7 +36,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - Vault salt stored on server (non-secret, enables multi-device key derivation)
 - Keys never transmitted to or stored on backend
 - Multi-device support via vault password + vault salt (derive same keys on any device)
-- Vault recovery key (BIP39 mnemonic) enables vault password reset without re-encryption
+- Vault recovery key (24-word BIP39 mnemonic) enables complete offline vault recovery without server dependency
 - Account recovery codes (10 per user) enable account password reset
 - Automatic key rotation every 90 days with background re-encryption
 
@@ -92,10 +92,20 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
   - Metadata encryption key (context: "cortex-metadata-encryption-v1")
   - Share key derivation key (context: "cortex-share-key-derivation-v1")
 
-**Tag Encryption**: Deterministic HMAC-SHA256
+**Tag Encryption**: Deterministic HMAC-SHA256 with vault-scoped salting and padding
 - Enables server-side exact match without revealing plaintext
-- Consistent output for same tag (searchability)
+- Vault-scoped salting prevents cross-vault tag correlation
+- Fixed-length padding (64 bytes) prevents length-based analysis
+- Consistent output for same tag within same vault (searchability)
 - Tags normalized to lowercase before encryption
+- Security enhancements:
+  - Same tag in different vaults produces different encrypted values (vault isolation)
+  - All encrypted tags have same length regardless of input (padding)
+  - Input validation prevents empty vaultId attacks
+- Trade-offs remain:
+  - Frequency analysis still possible within single vault
+  - Dictionary attacks possible if tag space is small
+  - No protection against known-plaintext attacks
 
 ## SaaS Operational Patterns
 
@@ -192,25 +202,34 @@ cortex/
 │   │       └── quota.py          # Quota enforcement utilities
 │   ├── requirements.txt
 │   └── requirements-dev.txt
-├── frontend/              # React web application
-│   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── lib/           # Frontend encryption library
-│   │   │   ├── encryption.ts     # ChaCha20-Poly1305
-│   │   │   ├── key-management.ts # Argon2id, HKDF
-│   │   │   ├── password-validation.ts
-│   │   │   └── sharing.ts
-│   │   ├── hooks/         # React hooks
-│   │   ├── pages/         # Page components
-│   │   ├── api/           # API client
-│   │   └── App.tsx
-│   ├── public/
-│   ├── package.json
-│   └── tsconfig.json
-├── tests/
-│   ├── unit/
-│   ├── integration/
-│   └── property/          # Property-based tests
+├── packages/              # Monorepo packages (npm workspaces)
+│   ├── encryption/        # @cortex/encryption - Standalone encryption library
+│   │   ├── src/
+│   │   │   ├── lib/
+│   │   │   │   ├── encryption.ts     # ChaCha20-Poly1305
+│   │   │   │   ├── key-management.ts # Argon2id, HKDF
+│   │   │   │   ├── password-validation.ts
+│   │   │   │   └── sharing.ts
+│   │   │   └── index.ts
+│   │   ├── tests/
+│   │   │   ├── unit/
+│   │   │   └── property/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   └── web/               # @cortex/web - React web application
+│       ├── src/
+│       │   ├── components/    # React components
+│       │   ├── hooks/         # React hooks
+│       │   ├── pages/         # Page components
+│       │   ├── api/           # API client
+│       │   ├── App.tsx
+│       │   └── main.tsx
+│       ├── public/
+│       ├── index.html
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── vite.config.ts
+├── package.json           # Root workspace configuration
 └── docs/
 ```
 
@@ -221,12 +240,15 @@ cortex/
 - Lambda handlers: `lambda/{feature}/handler.py`
 - Shared utilities: `lambda/shared/{purpose}.py`
 - API models: `smithy/models/{domain}/{resource}.smithy`
-- Tests: `tests/{unit|integration}/test_{module}.py`
+- Encryption library: `packages/encryption/src/lib/{module}.ts`
+- Web app components: `packages/web/src/components/{Component}.tsx`
+- Tests: `packages/{package}/tests/{unit|integration|property}/test_{module}.{ts|py}`
 
 **Naming conventions:**
 - TypeScript: kebab-case files, PascalCase classes (`storage-stack.ts` → `StorageStack`)
 - Python: snake_case for files and functions
 - Smithy: kebab-case with namespace `com.cortex.{service}`
+- React components: PascalCase files and components (`Button.tsx` → `Button`)
 
 ## Code Organization Patterns
 
@@ -261,28 +283,42 @@ cortex/
 - Version all APIs (`/v1/...`)
 - Generate OpenAPI docs from Smithy
 
-## Frontend Architecture (React)
+## Frontend Architecture (Monorepo)
+
+**Monorepo Structure:**
+- npm workspaces for package management
+- `@cortex/encryption` - Standalone encryption library (reusable across platforms)
+- `@cortex/web` - React web application (imports encryption library)
 
 **Technology Stack:**
 - React 18+ with TypeScript (strict mode)
 - Vite for build tooling and dev server
-- Tailwind CSS for styling
-- Frontend encryption library integrated directly in React application
+- Tailwind CSS for styling (to be added)
+- `@cortex/encryption` library for all cryptographic operations
 
-**Component Organization:**
+**Encryption Library (@cortex/encryption):**
 ```
-frontend/src/
+packages/encryption/src/
+├── lib/
+│   ├── encryption.ts          # ChaCha20-Poly1305 core
+│   ├── key-management.ts      # Argon2id, HKDF
+│   ├── password-validation.ts # Password strength, breach check
+│   └── sharing.ts             # Share key derivation
+├── index.ts                   # Public API exports
+└── tests/
+    ├── unit/                  # Unit tests
+    └── property/              # Property-based tests (fast-check)
+```
+
+**Web Application (@cortex/web):**
+```
+packages/web/src/
 ├── components/        # Reusable UI components
 │   ├── auth/         # Login, signup, recovery
 │   ├── vault/        # Vault management
 │   ├── files/        # File upload, list, preview
 │   ├── collections/  # Collection management
 │   └── common/       # Buttons, modals, etc.
-├── lib/              # Frontend encryption library
-│   ├── encryption.ts
-│   ├── key-management.ts
-│   ├── password-validation.ts
-│   └── sharing.ts
 ├── hooks/            # Custom React hooks
 │   ├── useAuth.ts
 │   ├── useVault.ts
@@ -295,14 +331,15 @@ frontend/src/
 │   ├── Dashboard.tsx
 │   ├── Files.tsx
 │   └── Settings.tsx
-└── App.tsx
+├── App.tsx
+└── main.tsx
 ```
 
 **Encryption Flow:**
 1. User enters vault password in React frontend (never sent to server)
-2. React frontend derives vault master key using Argon2id + vault salt
-3. React frontend derives encryption keys using HKDF
-4. React frontend encrypts file/metadata using ChaCha20-Poly1305
+2. React frontend uses `@cortex/encryption` to derive vault master key (Argon2id + vault salt)
+3. React frontend uses `@cortex/encryption` to derive encryption keys (HKDF)
+4. React frontend uses `@cortex/encryption` to encrypt file/metadata (ChaCha20-Poly1305)
 5. React frontend uploads encrypted data to S3 via presigned URL
 6. React frontend stores encrypted metadata via API
 
@@ -314,8 +351,14 @@ frontend/src/
 **Security Considerations:**
 - React frontend never persists vault password or derived keys
 - React frontend clears sensitive data from memory on logout
-- React frontend uses secure random number generation for nonces
+- `@cortex/encryption` uses secure random number generation for nonces
 - React frontend validates all user inputs before encryption
+
+**Development Workflow:**
+- `npm run dev:web` - Start Vite dev server for web app
+- `npm run dev:encryption` - Watch mode for encryption library
+- Web app automatically picks up encryption library changes via workspace linking
+- Both packages can be developed simultaneously
 
 ## Required Dependencies
 
@@ -340,23 +383,40 @@ moto>=4.0  # AWS service mocking
 }
 ```
 
-**TypeScript/JavaScript (Frontend - React):**
+**TypeScript/JavaScript (Encryption Library - @cortex/encryption):**
 ```json
 {
   "dependencies": {
-    "react": "^18.x.x",
-    "react-dom": "^18.x.x",
     "@noble/ciphers": "^0.4.0",  // ChaCha20-Poly1305
     "@noble/hashes": "^1.3.0",   // SHA-256, HMAC
     "argon2-browser": "^1.18.0", // Argon2id for browser
     "bip39": "^3.1.0"            // BIP39 mnemonic generation
   },
   "devDependencies": {
+    "@types/node": "^20.x.x",
+    "typescript": "^5.x.x",
+    "jest": "^29.x.x",
+    "ts-jest": "^29.x.x",
+    "fast-check": "^3.0.0"       // Property-based testing
+  }
+}
+```
+
+**TypeScript/JavaScript (Web App - @cortex/web):**
+```json
+{
+  "dependencies": {
+    "@cortex/encryption": "workspace:*",  // Local workspace dependency
+    "react": "^18.x.x",
+    "react-dom": "^18.x.x"
+  },
+  "devDependencies": {
     "@types/react": "^18.x.x",
     "@types/react-dom": "^18.x.x",
+    "@vitejs/plugin-react": "^4.x.x",
     "typescript": "^5.x.x",
     "vite": "^5.x.x",
-    "fast-check": "^3.0.0"       // Property-based testing
+    "vitest": "^1.x.x"
   }
 }
 ```
@@ -591,7 +651,7 @@ api.root.addProxy({
 
 - Never log sensitive data (keys, passwords, PII, encrypted payloads)
 - Log with user context: user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
-- Never log: vault password, vault keys, vault recovery keys, share keys, account recovery codes
+- Never log: vault password, vault keys, 24-word vault recovery keys, share keys, account recovery codes
 - Use AWS Secrets Manager or Parameter Store for secrets
 - Implement least-privilege IAM policies for Lambda execution roles
 - No per-user IAM policies (use scoped presigned URLs instead)
@@ -622,7 +682,8 @@ logger.info("File uploaded", extra={
 - Account recovery codes: 10 per user, 16 characters, format: XXXX-XXXX-XXXX-XXXX
 - Codes hashed with SHA-256 before server storage
 - One-time use (invalidated after successful recovery)
-- Vault recovery key: BIP39 mnemonic (12-24 words), never stored on server
+- Vault recovery key: 24-word BIP39 mnemonic encoding full 256-bit master key
+- Enables complete offline vault recovery without server dependency (no vault salt needed)
 - Display recovery keys once with secure offline storage guidance
 
 ## API Endpoints

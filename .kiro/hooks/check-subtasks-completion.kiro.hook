@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Check Subtasks Completion",
+  "description": "At the end of each agent session, verify if all associated subtasks have been completed. If not, continue working on the remaining subtasks.",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the current task and all associated subtasks. Check if all subtasks have been completed. If any subtasks remain incomplete, list them and continue working on them. If all subtasks are complete, confirm completion and summarize what was accomplished."
+  }
+}
