@@ -79,3 +79,4 @@ samconfig.toml
 
 coverage.*
 .coverage*
+.hypothesis*

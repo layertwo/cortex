@@ -1,0 +1,27 @@
+{
+  "name": "cortex",
+  "version": "1.0.0",
+  "description": "Cortex - Zero-Knowledge Media Backup System",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=@cortex/web",
+    "dev:encryption": "npm run build --workspace=@cortex/encryption -- --watch",
+    "build:web": "npm run build --workspace=@cortex/web",
+    "build:encryption": "npm run build --workspace=@cortex/encryption",
+    "build:all": "npm run build:encryption && npm run build:web",
+    "test:web": "npm run test --workspace=@cortex/web",
+    "test:encryption": "npm run test --workspace=@cortex/encryption",
+    "test:all": "npm run test:encryption && npm run test:web"
+  },
+  "keywords": [
+    "backup",
+    "encryption",
+    "zero-knowledge",
+    "privacy"
+  ],
+  "author": "",
+  "license": "MIT"
+}
