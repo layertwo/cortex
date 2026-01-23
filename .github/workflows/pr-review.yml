@@ -2,7 +2,11 @@ name: pr-review
 
 on:
   pull_request:
-    paths: ['.github/workflows/pr-review.yml', 'cdk/**', 'packages/**', 'lambda/**']
+    paths:
+      - '.github/workflows/pr-review.yml'
+      - '**.ts'
+      - '**.py'
+      - '**.smithy'
     branches: [ "mainline" ]
 
 concurrency:
