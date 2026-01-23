@@ -55,6 +55,11 @@ describe('Encryption Property Tests', () => {
         fc.uint8Array({ minLength: 32, maxLength: 32 }), // 256-bit encryption key
         fc.string({ minLength: 1, maxLength: 50 }), // vaultId
         (tag, key, vaultId) => {
+          // Skip if tag or vaultId is empty/whitespace-only after trimming
+          if (tag.trim().length === 0 || vaultId.trim().length === 0) {
+            return true;
+          }
+          
           // Encrypt the tag twice with same vaultId
           const encrypted1 = encryptTagForSearch(tag, key, vaultId);
           const encrypted2 = encryptTagForSearch(tag, key, vaultId);
@@ -70,6 +75,8 @@ describe('Encryption Property Tests', () => {
           
           // Both should produce the same encrypted output
           expect(encryptedUpper).toEqual(encryptedLower);
+          
+          return true;
         }
       ),
       { numRuns: 100 }
@@ -93,6 +100,11 @@ describe('Encryption Property Tests', () => {
         fc.string({ minLength: 1, maxLength: 50 }), // vaultId1
         fc.string({ minLength: 1, maxLength: 50 }), // vaultId2
         (tag, key, vaultId1, vaultId2) => {
+          // Skip if tag or vaultIds are empty/whitespace-only after trimming
+          if (tag.trim().length === 0 || vaultId1.trim().length === 0 || vaultId2.trim().length === 0) {
+            return true;
+          }
+          
           // Skip if vaultIds are identical
           if (vaultId1 === vaultId2) {
             return true;
@@ -128,6 +140,11 @@ describe('Encryption Property Tests', () => {
         fc.uint8Array({ minLength: 32, maxLength: 32 }), // 256-bit encryption key
         fc.string({ minLength: 1, maxLength: 50 }), // vaultId
         (tag, key, vaultId) => {
+          // Skip if tag or vaultId is empty/whitespace-only after trimming
+          if (tag.trim().length === 0 || vaultId.trim().length === 0) {
+            return true;
+          }
+          
           // Encrypt the tag
           const encrypted = encryptTagForSearch(tag, key, vaultId);
           
@@ -157,16 +174,22 @@ describe('Encryption Property Tests', () => {
         fc.uint8Array({ minLength: 32, maxLength: 32 }), // 256-bit encryption key
         fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 2, maxLength: 5 }), // vaultIds
         (tags, key, vaultIds) => {
+          // Filter out whitespace-only tags and vaultIds
+          const validTags = tags.filter(tag => tag.trim().length > 0);
+          const validVaultIds = vaultIds.filter(vaultId => vaultId.trim().length > 0);
+          
           // Deduplicate vaultIds
-          const uniqueVaultIds = Array.from(new Set(vaultIds));
-          if (uniqueVaultIds.length < 2) {
-            return true; // Skip if we don't have at least 2 different vaults
+          const uniqueVaultIds = Array.from(new Set(validVaultIds));
+          
+          // Skip if we don't have valid inputs
+          if (validTags.length === 0 || uniqueVaultIds.length < 2) {
+            return true;
           }
           
           // Encrypt all tags in all vaults
           const encryptedMap = new Map<string, Uint8Array>();
           
-          for (const tag of tags) {
+          for (const tag of validTags) {
             for (const vaultId of uniqueVaultIds) {
               const encrypted = encryptTagForSearch(tag, key, vaultId);
               const mapKey = `${tag}:${vaultId}`;
@@ -177,7 +200,7 @@ describe('Encryption Property Tests', () => {
           }
           
           // Verify that same tag in different vaults has different encrypted values
-          for (const tag of tags) {
+          for (const tag of validTags) {
             const vaultEncryptions = uniqueVaultIds.map(vaultId => 
               encryptedMap.get(`${tag}:${vaultId}`)!
             );

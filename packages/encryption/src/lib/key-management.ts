@@ -33,9 +33,31 @@ async function initArgon2idLoader() {
       const { fileURLToPath } = await import('url');
       const setupWasm = (await import('argon2id/lib/setup.js')).default;
       
-      // Get the path to argon2id package
-      const __dirname = path.dirname(fileURLToPath(import.meta.url));
-      const argon2idPath = path.resolve(__dirname, '../../node_modules/argon2id');
+      // Dynamically resolve argon2id package location using import.meta.resolve()
+      // This works in all monorepo configurations (npm workspaces, yarn PnP, pnpm)
+      // by letting Node.js resolve the package path instead of assuming a structure
+      let argon2idPath: string;
+      
+      try {
+        // Try import.meta.resolve() first (Node.js 20.6+)
+        const argon2idPackageUrl = import.meta.resolve('argon2id');
+        const argon2idPackagePath = fileURLToPath(argon2idPackageUrl);
+        argon2idPath = path.dirname(argon2idPackagePath);
+      } catch (resolveError) {
+        // Fallback: Use require.resolve if import.meta.resolve is not available
+        // This handles older Node.js versions and different module systems
+        try {
+          const argon2idMainPath = require.resolve('argon2id');
+          argon2idPath = path.dirname(argon2idMainPath);
+        } catch (requireError) {
+          throw new Error(
+            'Failed to resolve argon2id package location. ' +
+            'Ensure argon2id is installed and accessible. ' +
+            `import.meta.resolve error: ${resolveError instanceof Error ? resolveError.message : 'unknown'}; ` +
+            `require.resolve error: ${requireError instanceof Error ? requireError.message : 'unknown'}`
+          );
+        }
+      }
       
       const simdPath = path.join(argon2idPath, 'dist/simd.wasm');
       const nonSimdPath = path.join(argon2idPath, 'dist/no-simd.wasm');
