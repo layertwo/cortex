@@ -152,6 +152,8 @@ export const TAG_PADDING_LENGTH = 64;
  * - Vault-scoped salting: Same tag in different vaults produces different encrypted values
  * - Length padding: All tags padded to 64 bytes to prevent length-based analysis
  * - Case normalization: Case-insensitive search enabled via lowercase normalization
+ * - Constant-time validation: Prevents timing side-channel attacks by always performing
+ *   cryptographic operations regardless of validation results
  * 
  * Trade-offs:
  * - Frequency analysis is still possible within a single vault
@@ -172,16 +174,22 @@ export const TAG_PADDING_LENGTH = 64;
  * // Store encryptedTag in database for searchable encryption
  */
 export function encryptTagForSearch(tag: string, key: Uint8Array, vaultId: string): Uint8Array {
+  // Collect validation errors without early return (timing attack mitigation)
+  let validationError: Error | null = null;
+  
   // Validate key size
   if (key.length !== KEY_SIZE) {
-    throw new Error(`Invalid key size: expected ${KEY_SIZE} bytes, got ${key.length} bytes`);
+    validationError = new Error(`Invalid key size: expected ${KEY_SIZE} bytes, got ${key.length} bytes`);
   }
 
   // Validate vaultId
-  if (!vaultId || vaultId.trim().length === 0) {
-    throw new Error('vaultId must be a non-empty string');
+  if (!validationError && (!vaultId || vaultId.trim().length === 0)) {
+    validationError = new Error('vaultId must be a non-empty string');
   }
 
+  // Always perform expensive cryptographic operations regardless of validation
+  // This prevents timing side-channels from revealing validation failures
+  
   // Normalize tag to lowercase for case-insensitive search
   const normalizedTag = tag.toLowerCase().trim();
   
@@ -197,7 +205,14 @@ export function encryptTagForSearch(tag: string, key: Uint8Array, vaultId: strin
   const tagBytes = new TextEncoder().encode(tagWithSalt);
   
   // Use HMAC-SHA256 for deterministic encryption
+  // This operation is performed even if validation failed to maintain constant timing
   const encryptedTag = hmac(sha256, key, tagBytes);
+  
+  // Throw validation error after cryptographic operations complete
+  // This ensures all code paths take similar time regardless of input validity
+  if (validationError) {
+    throw validationError;
+  }
   
   return encryptedTag;
 }
@@ -229,7 +244,7 @@ export function bytesToString(bytes: Uint8Array): string {
  * @returns Base64 string representation
  */
 export function bytesToBase64(bytes: Uint8Array): string {
-  const binString = Array.from(bytes, (byte) => String.fromCodePoint(byte)).join('');
+  const binString = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
   return btoa(binString);
 }
 
@@ -241,5 +256,5 @@ export function bytesToBase64(bytes: Uint8Array): string {
  */
 export function base64ToBytes(base64: string): Uint8Array {
   const binString = atob(base64);
-  return Uint8Array.from(binString, (char) => char.codePointAt(0)!);
+  return Uint8Array.from(binString, (char) => char.charCodeAt(0));
 }
