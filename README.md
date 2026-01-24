@@ -2,18 +2,31 @@
 
 [Full report](https://htmlpreview.github.io/?https://github.com/layertwo/cortex/blob/python-coverage-comment-action-data/htmlcov/index.html)
 
-| Name                             |    Stmts |     Miss |   Branch |   BrPart |  Cover |   Missing |
-|--------------------------------- | -------: | -------: | -------: | -------: | -----: | --------: |
-| src/api/\_\_init\_\_.py          |        0 |        0 |        0 |        0 |   100% |           |
-| src/api/handler.py               |        2 |        0 |        0 |        0 |   100% |           |
-| src/api/routes/\_\_init\_\_.py   |        0 |        0 |        0 |        0 |   100% |           |
-| src/api/services/\_\_init\_\_.py |        0 |        0 |        0 |        0 |   100% |           |
-| src/shared/\_\_init\_\_.py       |        0 |        0 |        0 |        0 |   100% |           |
-| src/shared/auth.py               |       56 |       56 |       16 |        0 |     0% |    10-225 |
-| src/shared/errors.py             |       81 |       81 |        8 |        0 |     0% |    10-239 |
-| src/shared/models.py             |      204 |      204 |        2 |        0 |     0% |    10-445 |
-| src/shared/repository.py         |      145 |      145 |       22 |        0 |     0% |    10-510 |
-| **TOTAL**                        |  **488** |  **486** |   **48** |    **0** | **1%** |           |
+| Name                                 |    Stmts |     Miss |   Branch |   BrPart |   Cover |   Missing |
+|------------------------------------- | -------: | -------: | -------: | -------: | ------: | --------: |
+| src/\_\_init\_\_.py                  |        0 |        0 |        0 |        0 |    100% |           |
+| src/api/\_\_init\_\_.py              |        0 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/\_\_init\_\_.py       |        0 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/auth.py               |       22 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/base\_route.py        |        3 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/collections.py        |       46 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/items.py              |       58 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/recovery.py           |       16 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/shares.py             |       22 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/tags.py               |       10 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/vaults.py             |       16 |        0 |        0 |        0 |    100% |           |
+| src/api/services/\_\_init\_\_.py     |        0 |        0 |        0 |        0 |    100% |           |
+| src/api/services/api\_router.py      |       20 |        0 |        2 |        0 |    100% |           |
+| src/entrypoint/\_\_init\_\_.py       |        0 |        0 |        0 |        0 |    100% |           |
+| src/entrypoint/api.py                |        5 |        0 |        0 |        0 |    100% |           |
+| src/environment/\_\_init\_\_.py      |        0 |        0 |        0 |        0 |    100% |           |
+| src/environment/service\_provider.py |       15 |        0 |        0 |        0 |    100% |           |
+| src/shared/\_\_init\_\_.py           |        0 |        0 |        0 |        0 |    100% |           |
+| src/shared/auth.py                   |       56 |        5 |       16 |        1 |     92% |60-64, 84-85, 223 |
+| src/shared/errors.py                 |       81 |        0 |        8 |        0 |    100% |           |
+| src/shared/models.py                 |      204 |        0 |        2 |        0 |    100% |           |
+| src/shared/repository.py             |      145 |        4 |       22 |        1 |     97% |187, 508-510 |
+| **TOTAL**                            |  **719** |    **9** |   **50** |    **2** | **99%** |           |
 
 
 ## Setup coverage badge
