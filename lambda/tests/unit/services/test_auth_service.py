@@ -59,8 +59,13 @@ class TestGenerateRecoveryCodes:
 
 class TestValidateRecoveryCode:
     def test_validate_recovery_code_success(self):
+        import hashlib
+
         mock_table = MagicMock()
-        mock_table.get_item.return_value = {"Item": {"is_valid": True, "code_hash": "somehash"}}
+        # Compute the correct hash for the test code
+        test_code = "ABCDEFGHIJKLMNOP"
+        code_hash = hashlib.sha256(test_code.encode("utf-8")).hexdigest()
+        mock_table.get_item.return_value = {"Item": {"is_valid": True, "code_hash": code_hash}}
         service = AuthService(recovery_table=mock_table)
         result = service.validate_recovery_code("user-123", "ABCD-EFGH-IJKL-MNOP")
         assert result is True

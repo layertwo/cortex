@@ -216,6 +216,16 @@ class AuthService:
                 )
                 raise RecoveryCodeInvalidError()
 
+            # Defense-in-depth: verify hash match using constant-time comparison
+            # to prevent timing attacks even though DynamoDB already did the lookup
+            stored_hash = item.get("code_hash", "")
+            if not secrets.compare_digest(stored_hash, code_hash):
+                logger.warning(
+                    "Recovery code hash mismatch",
+                    extra={"user_id": user_id},
+                )
+                raise RecoveryCodeInvalidError()
+
             # Check if code is still valid (not used)
             if not item.get("is_valid", False):
                 logger.warning(
