@@ -8,6 +8,8 @@
   },
   "then": {
     "type": "askAgent",
-    "prompt": "Review the current task and all associated subtasks. Check if all subtasks have been completed. If any subtasks remain incomplete, list them and continue working on them. If all subtasks are complete, confirm completion and summarize what was accomplished."
-  }
+    "prompt": "If you were originally invoked by the user for a Kiro task, review the current task and all associated subtasks. Check if all subtasks have been completed. If any subtasks remain incomplete, list them and and if the user if they would like you to continue. If all subtasks are complete, confirm completion and summarize what was accomplished."
+  },
+  "workspaceFolderName": "cortex",
+  "shortName": "check-subtasks-completion"
 }

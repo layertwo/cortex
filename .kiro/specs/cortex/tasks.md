@@ -218,20 +218,19 @@
   - Use @cortex/encryption for tag encryption
   - _Requirements: 11.2, 11.4, 12.1, 13.1_
 
-- [ ] 8. Implement Lambda API handler foundation
-- [ ] 8.1 Create main Lambda handler with APIGatewayRestResolver
+- [-] 8. Implement Lambda API handler foundation
+- [x] 8.1 Create main Lambda handler with APIGatewayRestResolver
   - Update lambda/src/api/handler.py with Lambda Powertools
   - Configure Logger, Tracer, and Metrics
   - Initialize APIGatewayRestResolver
-  - Add lambda_handler function with decorators (@logger.inject_lambda_context, @tracer.capture_lambda_handler, @metrics.log_metrics)
   - Set up error handling with format_error_response
   - _Requirements: 6.1, 6.2_
 
-- [ ] 8.2 Create route registration system
+- [x] 8.2 Create route registration system
   - Create lambda/src/api/routes/ directory structure
   - Create route modules: auth.py, vaults.py, items.py, collections.py, tags.py, shares.py, recovery.py
-  - Implement register_routes() function in each module
-  - Import and register all routes in handler.py
+  - Import and register all routes in api_router in Service Provider
+  - Setup handler at lambda/src/entrypoint/api.py to run the API handler
   - _Requirements: 8.1, 8.2_
 
 - [ ] 9. Implement authentication routes and services

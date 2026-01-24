@@ -4,6 +4,7 @@ Pytest configuration and shared fixtures for Cortex tests.
 
 import pytest
 
+from src.environment.service_provider import ServiceProvider
 from tests.fixtures.boto import *  # noqa: F403,F401
 
 
@@ -16,13 +17,15 @@ def setup_environment(
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", aws_access_key_id)
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", aws_secret_access_key)
     monkeypatch.setenv("AWS_SESSION_TOKEN", aws_session_token)
-    monkeypatch.setenv("USERS_TABLE", "test-users-table")
-    monkeypatch.setenv("VAULTS_TABLE", "test-vaults-table")
-    monkeypatch.setenv("FILES_TABLE", "test-files-table")
-    monkeypatch.setenv("COLLECTIONS_TABLE", "test-collections-table")
-    monkeypatch.setenv(
-        "FILE_COLLECTION_ASSOCIATIONS_TABLE", "test-file-collection-associations-table"
-    )
-    monkeypatch.setenv("SHARES_TABLE", "test-shares-table")
-    monkeypatch.setenv("ACCOUNT_RECOVERY_TABLE", "test-account-recovery-table")
-    monkeypatch.setenv("FILES_BUCKET", "test-files-bucket")
+    monkeypatch.setenv("USERS_TABLE_NAME", "test-users-table")
+    monkeypatch.setenv("VAULTS_TABLE_NAME", "test-vaults-table")
+    monkeypatch.setenv("ITEMS_TABLE_NAME", "test-items-table")
+    monkeypatch.setenv("COLLECTIONS_TABLE_NAME", "test-collections-table")
+    monkeypatch.setenv("SHARES_TABLE_NAME", "test-shares-table")
+    monkeypatch.setenv("RECOVERY_TABLE_NAME", "test-recovery-table")
+    monkeypatch.setenv("FILES_BUCKET_NAME", "test-files-bucket")
+
+
+@pytest.fixture
+def mock_service_provider():
+    return ServiceProvider()

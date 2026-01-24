@@ -15,7 +15,7 @@ import boto3
 from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
 
-from shared.errors import StorageError
+from src.shared.errors import StorageError
 
 logger = Logger(child=True)
 
