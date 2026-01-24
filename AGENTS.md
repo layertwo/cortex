@@ -370,7 +370,6 @@ boto3  # Provided by Lambda runtime
 hypothesis>=6.0  # Property-based testing
 pytest>=7.0
 pytest-cov>=4.0
-moto>=4.0  # AWS service mocking
 ```
 
 **TypeScript (CDK):**
@@ -858,9 +857,73 @@ def format_price(cents: int) -> str:
 
 **Unit & Integration Tests:**
 - Write unit tests for all Lambda functions
-- Use moto for mocking AWS services in tests
+- **CRITICAL: Use botocore Stubber for AWS service testing - DO NOT use mocking libraries (unittest.mock, MagicMock, etc.)**
+- botocore Stubber provides type-safe, realistic AWS API responses without actual AWS calls
+- Stubber validates request parameters and response structures match actual AWS APIs
 - Aim for >80% code coverage
 - Test error paths and edge cases
+
+**botocore Stubber Pattern:**
+```python
+import boto3
+from botocore.stub import Stubber
+from unittest.mock import ANY  # Use for dynamic/generated values
+
+# Create real boto3 resource
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+table = dynamodb.Table('test-table')
+
+# Create stubber for the underlying client
+stubber = Stubber(table.meta.client)
+
+# Add expected response - use ANY for parameters that boto3 transforms
+stubber.add_response(
+    'put_item',
+    {},  # Response
+    {
+        'TableName': 'test-table',
+        'Item': ANY,  # Use ANY when boto3 transforms high-level to low-level format
+        'ConditionExpression': ANY,
+    }
+)
+
+# Activate stubber
+with stubber:
+    # Call service method
+    result = service.create_vault(user_id='123')
+    
+# Stubber automatically validates all expected calls were made
+stubber.assert_no_pending_responses()
+```
+
+**Using Stubber Fixtures (Recommended):**
+```python
+# Test fixtures provide pre-configured stubbers (see lambda/tests/fixtures/boto.py)
+def test_s3_operation(s3_stubber, s3_bucket_name, s3_client):
+    """Test using fixture-provided stubber."""
+    # Create repository and inject stubbed client
+    repo = S3Repository(bucket_name=s3_bucket_name)
+    repo.s3_client = s3_client
+    
+    # Configure stubber response
+    s3_stubber.add_response(
+        'head_object',
+        {'ContentLength': 100, 'ContentType': 'image/jpeg'},
+        {'Bucket': s3_bucket_name, 'Key': 'test-key'}
+    )
+    
+    # Call method - stubber validates automatically
+    result = repo.object_exists('test-key')
+    assert result is True
+```
+
+**Why botocore Stubber over mocking:**
+- Type safety: Validates request/response structures match AWS APIs
+- Realistic testing: Uses actual boto3 client code paths
+- Catches API misuse: Fails if parameters don't match AWS API expectations
+- No mock drift: Stubber stays in sync with boto3 library updates
+- Better refactoring: Changes to AWS calls are caught by tests
+- Use `unittest.mock.ANY` for dynamic values (generated IDs, timestamps, etc.)
 
 ## Kiro Specs
 

@@ -143,6 +143,13 @@ class ServiceProvider:
             user_pool_id=os.environ.get("COGNITO_USER_POOL_ID"),
         )
 
+    @cached_property
+    def vault_service(self):
+        """Create vault service."""
+        from src.api.services.vault_service import VaultService
+
+        return VaultService(vaults_table=self.vaults_table)
+
     # API Router with all routes
     @cached_property
     def api_router(self):
@@ -159,8 +166,8 @@ class ServiceProvider:
                 RefreshRoute(auth_service=self.auth_service),
                 RecoverRoute(auth_service=self.auth_service),
                 # Vault routes
-                CreateVaultRoute(),
-                GetVaultSaltRoute(),
+                CreateVaultRoute(vault_service=self.vault_service),
+                GetVaultSaltRoute(vault_service=self.vault_service),
                 # Item routes
                 CreateItemRoute(),
                 InitiateUploadRoute(),

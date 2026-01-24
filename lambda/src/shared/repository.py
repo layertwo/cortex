@@ -7,7 +7,9 @@ including presigned URL generation and DynamoDB query helpers.
 Requirements: 1.4, 1.5, 4.1, 7.1, 7.2
 """
 
-import os
+import base64
+import json
+import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -23,19 +25,16 @@ logger = Logger(child=True)
 class DynamoDBRepository:
     """Base repository class for DynamoDB operations."""
 
-    def __init__(self, table_name: Optional[str] = None):
+    def __init__(self, session: boto3.Session, table_name: str):
         """
         Initialize DynamoDB repository.
 
         Args:
             table_name: DynamoDB table name (defaults to env variable)
         """
-        self.dynamodb = boto3.resource("dynamodb")
+        self._resource = session.resource("dynamodb")
         self.table_name = table_name
-        self.table = None
-
-        if table_name:
-            self.table = self.dynamodb.Table(table_name)
+        self.table = self._resource.Table(table_name)
 
     def get_item(self, key: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -213,18 +212,15 @@ class DynamoDBRepository:
 class S3Repository:
     """Repository class for S3 operations and presigned URL generation."""
 
-    def __init__(self, bucket_name: Optional[str] = None):
+    def __init__(self, session: boto3.Session, bucket_name: str):
         """
         Initialize S3 repository.
 
         Args:
             bucket_name: S3 bucket name (defaults to env variable)
         """
-        self.s3_client = boto3.client("s3")
-        self.bucket_name = bucket_name or os.environ.get("FILES_BUCKET_NAME")
-
-        if not self.bucket_name:
-            raise ValueError("S3 bucket name not configured")
+        self._client = session.client("s3")
+        self.bucket_name = bucket_name
 
     def generate_upload_url(
         self, object_key: str, content_type: str, expiration: int = 900  # 15 minutes
@@ -247,7 +243,7 @@ class S3Repository:
             StorageError: If URL generation fails
         """
         try:
-            url = self.s3_client.generate_presigned_url(
+            url = self._client.generate_presigned_url(
                 "put_object",
                 Params={"Bucket": self.bucket_name, "Key": object_key, "ContentType": content_type},
                 ExpiresIn=expiration,
@@ -284,7 +280,7 @@ class S3Repository:
             StorageError: If URL generation fails
         """
         try:
-            url = self.s3_client.generate_presigned_url(
+            url = self._client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": self.bucket_name, "Key": object_key},
                 ExpiresIn=expiration,
@@ -328,7 +324,7 @@ class S3Repository:
             StorageError: If URL generation fails
         """
         try:
-            url = self.s3_client.generate_presigned_url(
+            url = self._client.generate_presigned_url(
                 "upload_part",
                 Params={
                     "Bucket": self.bucket_name,
@@ -368,7 +364,7 @@ class S3Repository:
             StorageError: If initiation fails
         """
         try:
-            response = self.s3_client.create_multipart_upload(
+            response = self._client.create_multipart_upload(
                 Bucket=self.bucket_name,
                 Key=object_key,
                 ContentType=content_type,
@@ -402,7 +398,7 @@ class S3Repository:
             StorageError: If deletion fails
         """
         try:
-            self.s3_client.delete_object(Bucket=self.bucket_name, Key=object_key)
+            self._client.delete_object(Bucket=self.bucket_name, Key=object_key)
 
             logger.info("Deleted S3 object", extra={"object_key": object_key})
 
@@ -424,7 +420,7 @@ class S3Repository:
             True if object exists, False otherwise
         """
         try:
-            self.s3_client.head_object(Bucket=self.bucket_name, Key=object_key)
+            self._client.head_object(Bucket=self.bucket_name, Key=object_key)
             return True
 
         except ClientError as e:
@@ -451,7 +447,6 @@ def build_s3_key(vault_id: str, file_id: str) -> str:
     Returns:
         S3 object key
     """
-    import uuid
 
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     random_suffix = str(uuid.uuid4())[:8]
@@ -473,8 +468,6 @@ def parse_pagination_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        import base64
-        import json
 
         decoded = base64.b64decode(token)
         return json.loads(decoded)
@@ -498,8 +491,6 @@ def encode_pagination_token(last_evaluated_key: Optional[Dict[str, Any]]) -> Opt
         return None
 
     try:
-        import base64
-        import json
 
         json_str = json.dumps(last_evaluated_key)
         encoded = base64.b64encode(json_str.encode("utf-8"))

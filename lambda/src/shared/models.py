@@ -7,10 +7,11 @@ and DynamoDB item structures.
 Requirements: 8.1, 8.3
 """
 
+import base64
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 # ============================================================================
 # Request/Response Models for API Operations
@@ -228,9 +229,27 @@ class SearchByTagResponse(BaseModel):
 class CreateVaultRequest(BaseModel):
     """Request model for creating a vault."""
 
-    vault_salt: bytes = Field(
-        ..., min_length=16, max_length=16, description="16-byte vault salt for key derivation"
+    vault_salt: Optional[bytes] = Field(
+        default=None,
+        min_length=16,
+        max_length=16,
+        description="Optional 16-byte vault salt for key derivation (if not provided, will be generated)",
     )
+
+    @field_validator("vault_salt", mode="before")
+    @classmethod
+    def decode_vault_salt(cls, v: Any) -> Optional[bytes]:
+        """Decode base64-encoded vault salt from JSON."""
+        if v is None:
+            return None
+        if isinstance(v, bytes):
+            return v
+        if isinstance(v, str):
+            try:
+                return base64.b64decode(v)
+            except Exception as e:
+                raise ValueError(f"Invalid base64-encoded vault_salt: {e}")
+        raise ValueError("vault_salt must be a base64-encoded string or bytes")
 
 
 class CreateVaultResponse(BaseModel):
@@ -251,6 +270,11 @@ class GetVaultSaltResponse(BaseModel):
 
     vault_id: str = Field(..., description="Vault identifier")
     vault_salt: bytes = Field(..., description="16-byte vault salt")
+
+    @field_serializer("vault_salt")
+    def serialize_vault_salt(self, vault_salt: bytes, _info) -> str:
+        """Serialize vault salt as base64-encoded string."""
+        return base64.b64encode(vault_salt).decode("utf-8")
 
 
 # ============================================================================
