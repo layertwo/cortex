@@ -43,7 +43,7 @@ jobs:
           additional_permissions: |
             actions: read
           claude_args: |
-            --allowedTools "mcp__github_create_issue,mcp__github_update_issue,mcp__github_search_issues,mcp__github_list_issues, mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh run view:*)"
+            --allowedTools "mcp__github_create_issue,mcp__github_update_issue,mcp__github_search_issues,mcp__github_list_issues, mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh run view:*),Bash(git push:*),Bash(git rebase:*)"
             --disallowedTools WebSearch
             --max-turns 30
             --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
