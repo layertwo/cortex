@@ -218,7 +218,7 @@
   - Use @cortex/encryption for tag encryption
   - _Requirements: 11.2, 11.4, 12.1, 13.1_
 
-- [-] 8. Implement Lambda API handler foundation
+- [x] 8. Implement Lambda API handler foundation
 - [x] 8.1 Create main Lambda handler with APIGatewayRestResolver
   - Update lambda/src/api/handler.py with Lambda Powertools
   - Configure Logger, Tracer, and Metrics
@@ -233,22 +233,22 @@
   - Setup handler at lambda/src/entrypoint/api.py to run the API handler
   - _Requirements: 8.1, 8.2_
 
-- [ ] 9. Implement authentication routes and services
-- [ ] 9.1 Create authentication route handlers
+- [x] 9. Implement authentication routes and services
+- [x] 9.1 Create authentication route handlers
   - Implement POST /v1/auth/login route
   - Implement POST /v1/auth/refresh route
   - Implement POST /v1/auth/recover route
   - Extract user identity from API Gateway context
   - _Requirements: 3.1, 3.2, 19.2_
 
-- [ ] 9.2 Create authentication service layer
+- [x] 9.2 Create authentication service layer
   - Implement user registration logic
   - Implement login validation
   - Handle token refresh
   - Implement custom authentication flow for recovery codes
   - _Requirements: 3.1, 3.2_
 
-- [ ] 9.3 Implement account recovery code system
+- [x] 9.3 Implement account recovery code system
   - Generate 10 recovery codes at signup (16 chars, format: XXXX-XXXX-XXXX-XXXX)
   - Hash codes with SHA-256 before storage in DynamoDB
   - Store in Account Recovery table
@@ -256,7 +256,7 @@
   - Invalidate used codes (mark as used, set usedAt timestamp)
   - _Requirements: 19.1, 19.2, 19.3, 19.5_
 
-- [ ]* 9.4 Write property test for account recovery code validation
+- [x] 9.4 Write property test for account recovery code validation
   - **Property 25: Account recovery code validation**
   - **Validates: Requirements 19.2, 19.3**
 

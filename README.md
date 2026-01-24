@@ -11,6 +11,7 @@ Cortex is a privacy-first backup system where all encryption happens client-side
 - **Zero-Knowledge Architecture**: Server never sees plaintext data or encryption keys
 - **Client-Side Encryption**: ChaCha20-Poly1305 encryption on all user devices
 - **Two-Password Model**: Separate account password (authentication) and vault password (encryption)
+- **Account Recovery**: 10 one-time recovery codes for account password reset
 - **Multi-Device Support**: Access encrypted data from any device using vault password
 - **Encrypted Search**: Tag-based organization with deterministic encryption
 - **Secure Sharing**: Share files with unique share keys and optional password protection
@@ -86,10 +87,15 @@ npm test
 ### Security Model
 
 1. **Account Password**: Authenticates with AWS Cognito
-2. **Vault Password**: Derives encryption keys (never transmitted to server)
-3. **Vault Salt**: Stored on server (non-secret), enables multi-device key derivation
-4. **Vault Master Key**: Derived from vault password + salt using Argon2id
-5. **Derived Keys**: Data encryption key, metadata encryption key, share key derivation key
+2. **Account Recovery Codes**: 10 one-time codes (format: XXXX-XXXX-XXXX-XXXX) for account password reset
+3. **Vault Password**: Derives encryption keys (never transmitted to server)
+4. **Vault Salt**: Stored on server (non-secret), enables multi-device key derivation
+5. **Vault Master Key**: Derived from vault password + salt using Argon2id
+6. **Derived Keys**: Data encryption key, metadata encryption key, share key derivation key
+
+**Recovery Options:**
+- **Account Recovery**: Use one of 10 recovery codes to reset account password (codes are hashed with SHA-256 and invalidated after use)
+- **Vault Recovery**: 24-word BIP39 mnemonic enables vault password reset without re-encrypting data
 
 ## Development
 
@@ -108,4 +114,4 @@ npm test
 
 ## License
 
-ISC
+MIT
