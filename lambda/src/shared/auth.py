@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from aws_lambda_powertools import Logger
 
-from shared.errors import AuthenticationError, AuthorizationError
+from src.shared.errors import AuthenticationError, AuthorizationError
 
 logger = Logger(child=True)
 
