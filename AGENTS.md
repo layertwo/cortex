@@ -854,6 +854,7 @@ def format_price(cents: int) -> str:
 - Encrypted tag search functionality
 - Password strength validation
 - Breached password detection
+- Account recovery code validation
 
 **Unit & Integration Tests:**
 - Write unit tests for all Lambda functions

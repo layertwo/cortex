@@ -36,6 +36,7 @@ from src.api.routes.shares import CreateShareRoute, GetShareRoute, RevokeShareRo
 from src.api.routes.tags import SearchTagsRoute
 from src.api.routes.vaults import CreateVaultRoute, GetVaultSaltRoute
 from src.api.services.api_router import ApiRouter
+from src.api.services.auth_service import AuthService
 
 
 class ServiceProvider:
@@ -132,6 +133,16 @@ class ServiceProvider:
         """Create S3 client."""
         return self.session.client("s3")
 
+    # Services
+    @cached_property
+    def auth_service(self):
+        """Create authentication service."""
+        return AuthService(
+            recovery_table=self.recovery_table,
+            cognito_client=None,  # Cognito client would be injected here in production
+            user_pool_id=os.environ.get("COGNITO_USER_POOL_ID"),
+        )
+
     # API Router with all routes
     @cached_property
     def api_router(self):
@@ -143,10 +154,10 @@ class ServiceProvider:
         """
         return ApiRouter(
             routes=[
-                # Auth routes
-                LoginRoute(),
-                RefreshRoute(),
-                RecoverRoute(),
+                # Auth routes (with service injection)
+                LoginRoute(auth_service=self.auth_service),
+                RefreshRoute(auth_service=self.auth_service),
+                RecoverRoute(auth_service=self.auth_service),
                 # Vault routes
                 CreateVaultRoute(),
                 GetVaultSaltRoute(),
@@ -174,8 +185,8 @@ class ServiceProvider:
                 CreateShareRoute(),
                 GetShareRoute(),
                 RevokeShareRoute(),
-                # Recovery routes
-                GenerateRecoveryCodesRoute(),
-                ValidateRecoveryCodeRoute(),
+                # Recovery routes (with service injection)
+                GenerateRecoveryCodesRoute(auth_service=self.auth_service),
+                ValidateRecoveryCodeRoute(auth_service=self.auth_service),
             ]
         )

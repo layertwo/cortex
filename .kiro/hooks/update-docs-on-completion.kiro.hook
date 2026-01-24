@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Update Documentation on Task Completion",
+  "description": "Automatically prompts to update README.md and AGENTS.md documentation after any agent task completes, ensuring documentation reflects the latest implementation changes",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the work just completed and update documentation in README.md and AGENTS.md if needed. Focus on:\n- README.md: Update project status, features implemented, setup instructions, or usage examples if they changed\n- AGENTS.md: Update architecture patterns, code organization, API endpoints, or implementation guidelines if they changed\nOnly make updates if the completed work introduced meaningful changes to the documented information. Keep updates concise and accurate."
+  }
+}
