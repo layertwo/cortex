@@ -33,10 +33,11 @@ jobs:
 
       - uses: anthropics/claude-code-action@v1
         with:
-          use_bedrock: "true"
+          use_bedrock: true
           claude_args: |
             --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
-            --allowedTools "Read,Bash(npm:*),Bash(gh issue:*),Bash(git:*)"
+            --disallowedTools WebSearch
+            --allowedTools "mcp__github_create_issue,mcp__github_update_issue,mcp__github_search_issues,mcp__github_list_issues,mcp__github_create_comment,mcp__github_get_issue,mcp__github__list_pull_request_comments,Read"
           prompt: |
             REPO: ${{ github.repository }}
 
@@ -48,5 +49,10 @@ jobs:
             - Performance considerations
             - Review documentation and AGENTS.md is accurate
 
-            Create a single issue summarizing any findings if open issues do not cover the issues found.
+            Before creating ANY issues:
+            1. FIRST use `mcp__github__list_issues` to fetch ALL existing issues 
+            2. Check each existing issue for similar issue description (same security concern, same code smell, etc.)
+            3. SKIP posting if an existing issue has already been created
+            4. Only post NEW issues that haven't been raised in previous review runs
+
             If critical security issues are found, also comment on open PRs if relevant.
