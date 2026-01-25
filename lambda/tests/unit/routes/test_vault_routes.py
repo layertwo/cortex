@@ -8,9 +8,9 @@ Uses botocore Stubber for AWS service testing (not mocking).
 import base64
 import json
 import secrets
-from unittest.mock import ANY
 
 import pytest
+from botocore.stub import ANY
 
 from src.entrypoint.api import lambda_handler
 

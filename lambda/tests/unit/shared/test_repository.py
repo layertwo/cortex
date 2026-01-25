@@ -161,6 +161,63 @@ class TestDynamoDBRepository:
 
         assert result["count"] == 10
 
+    def test_update_item_conditional_success(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should update item with condition expression."""
+        dynamodb_stubber.add_response(
+            "update_item",
+            {
+                "Attributes": {"status": {"S": "COMPLETE"}},
+            },
+            {
+                "Key": {"PK": "VAULT#v1", "SK": "ITEM#i1"},
+                "UpdateExpression": "SET #status = :complete",
+                "ConditionExpression": "#status = :pending",
+                "ExpressionAttributeNames": {"#status": "status"},
+                "ExpressionAttributeValues": {":complete": "COMPLETE", ":pending": "PENDING"},
+                "ReturnValues": "ALL_NEW",
+                "TableName": dynamodb_table_name,
+            },
+        )
+        result = dynamodb_repository.update_item_conditional(
+            key={"PK": "VAULT#v1", "SK": "ITEM#i1"},
+            update_expression="SET #status = :complete",
+            condition_expression="#status = :pending",
+            expression_attribute_values={":complete": "COMPLETE", ":pending": "PENDING"},
+            expression_attribute_names={"#status": "status"},
+        )
+
+        assert result["status"] == "COMPLETE"
+
+    def test_update_item_conditional_fails_on_condition_not_met(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should raise StorageError when condition is not met."""
+        dynamodb_stubber.add_client_error(
+            "update_item",
+            service_error_code="ConditionalCheckFailedException",
+            service_message="The conditional request failed",
+            expected_params={
+                "Key": {"PK": "VAULT#v1", "SK": "ITEM#i1"},
+                "UpdateExpression": "SET #status = :complete",
+                "ConditionExpression": "#status = :pending",
+                "ExpressionAttributeNames": {"#status": "status"},
+                "ExpressionAttributeValues": {":complete": "COMPLETE", ":pending": "PENDING"},
+                "ReturnValues": "ALL_NEW",
+                "TableName": dynamodb_table_name,
+            },
+        )
+
+        with pytest.raises(StorageError, match="Conditional update failed"):
+            dynamodb_repository.update_item_conditional(
+                key={"PK": "VAULT#v1", "SK": "ITEM#i1"},
+                update_expression="SET #status = :complete",
+                condition_expression="#status = :pending",
+                expression_attribute_values={":complete": "COMPLETE", ":pending": "PENDING"},
+                expression_attribute_names={"#status": "status"},
+            )
+
     def test_delete_item_removes_item(
         self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
     ):
@@ -410,6 +467,95 @@ class TestS3Repository:
         result = s3_repository.object_exists(object_key="nonexistent")
 
         assert result is False
+
+    def test_get_object_metadata_returns_metadata(
+        self, s3_repository, s3_stubber, s3_bucket_name, s3_client
+    ):
+        """Should return object metadata including version ID."""
+        s3_stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 1024,
+                "ContentType": "image/jpeg",
+                "ETag": '"abc123"',
+                "LastModified": "2024-01-24T12:00:00Z",
+                "VersionId": "version-abc123",
+            },
+            {"Bucket": s3_bucket_name, "Key": "test-key"},
+        )
+
+        metadata = s3_repository.get_object_metadata(object_key="test-key")
+
+        assert metadata is not None
+        assert metadata["content_length"] == 1024
+        assert metadata["etag"] == '"abc123"'
+        assert metadata["version_id"] == "version-abc123"
+
+    def test_get_object_metadata_without_version_id(
+        self, s3_repository, s3_stubber, s3_bucket_name, s3_client
+    ):
+        """Should return metadata without version ID for non-versioned buckets."""
+        s3_stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 2048,
+                "ContentType": "video/mp4",
+                "ETag": '"def456"',
+                "LastModified": "2024-01-24T12:00:00Z",
+            },
+            {"Bucket": s3_bucket_name, "Key": "test-key"},
+        )
+
+        metadata = s3_repository.get_object_metadata(object_key="test-key")
+
+        assert metadata is not None
+        assert metadata["content_length"] == 2048
+        assert "version_id" not in metadata
+
+    def test_get_object_metadata_returns_none_for_404(
+        self, s3_repository, s3_stubber, s3_bucket_name, s3_client
+    ):
+        """Should return None when object doesn't exist."""
+        s3_stubber.add_client_error(
+            "head_object",
+            service_error_code="404",
+            service_message="Not Found",
+            expected_params={"Bucket": s3_bucket_name, "Key": "nonexistent"},
+        )
+
+        metadata = s3_repository.get_object_metadata(object_key="nonexistent")
+
+        assert metadata is None
+
+    def test_get_object_metadata_raises_storage_error_on_other_errors(
+        self, s3_repository, s3_stubber, s3_bucket_name, s3_client
+    ):
+        """Should raise StorageError on non-404 errors."""
+        s3_stubber.add_client_error(
+            "head_object",
+            service_error_code="InternalServerError",
+            service_message="Test error",
+            expected_params={"Bucket": s3_bucket_name, "Key": "test-key"},
+        )
+
+        with pytest.raises(StorageError, match="Failed to get object metadata"):
+            s3_repository.get_object_metadata(object_key="test-key")
+
+    def test_abort_multipart_upload(self, s3_repository, s3_stubber, s3_bucket_name, s3_client):
+        """Should abort multipart upload and clean up parts."""
+        s3_stubber.add_response(
+            "abort_multipart_upload",
+            {},
+            {
+                "Bucket": s3_bucket_name,
+                "Key": "large-file",
+                "UploadId": "test-upload-id-123",
+            },
+        )
+
+        s3_repository.abort_multipart_upload(
+            object_key="large-file", upload_id="test-upload-id-123"
+        )
 
 
 class TestBuildS3Key:
@@ -662,3 +808,21 @@ class TestS3RepositoryErrors:
 
         with pytest.raises(StorageError):
             s3_repository.object_exists("key")
+
+    def test_abort_multipart_upload_raises_storage_error(
+        self, s3_repository, s3_stubber, s3_bucket_name
+    ):
+        """Should raise StorageError on abort failure."""
+        s3_stubber.add_client_error(
+            "abort_multipart_upload",
+            service_error_code="InternalServerError",
+            service_message="Test error",
+            expected_params={
+                "Bucket": s3_bucket_name,
+                "Key": "key",
+                "UploadId": "upload-id",
+            },
+        )
+
+        with pytest.raises(StorageError):
+            s3_repository.abort_multipart_upload("key", "upload-id")

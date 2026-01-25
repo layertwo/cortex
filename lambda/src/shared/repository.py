@@ -127,6 +127,64 @@ class DynamoDBRepository:
             )
             raise StorageError(f"Failed to update item in {self.table_name}")
 
+    def update_item_conditional(
+        self,
+        key: Dict[str, Any],
+        update_expression: str,
+        condition_expression: str,
+        expression_attribute_values: Dict[str, Any],
+        expression_attribute_names: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Update item in DynamoDB with condition expression.
+
+        This method prevents race conditions by ensuring the item state
+        matches expected conditions before applying the update.
+
+        Args:
+            key: Primary key dictionary
+            update_expression: DynamoDB update expression
+            condition_expression: Condition that must be true for update to succeed
+            expression_attribute_values: Values for expressions
+            expression_attribute_names: Optional attribute name mappings
+
+        Returns:
+            Updated item attributes
+
+        Raises:
+            StorageError: If DynamoDB operation fails or condition is not met
+        """
+        try:
+            kwargs = {
+                "Key": key,
+                "UpdateExpression": update_expression,
+                "ConditionExpression": condition_expression,
+                "ExpressionAttributeValues": expression_attribute_values,
+                "ReturnValues": "ALL_NEW",
+            }
+
+            if expression_attribute_names:
+                kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+            response = self.table.update_item(**kwargs)
+            return response.get("Attributes", {})
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code")
+
+            if error_code == "ConditionalCheckFailedException":
+                logger.warning(
+                    "DynamoDB conditional update failed - condition not met",
+                    extra={"table": self.table_name, "key": key},
+                )
+                raise StorageError("Conditional update failed - item state changed")
+
+            logger.error(
+                "DynamoDB update_item_conditional failed",
+                extra={"error": str(e), "table": self.table_name, "key": key},
+            )
+            raise StorageError(f"Failed to update item in {self.table_name}")
+
     def delete_item(self, key: Dict[str, Any]) -> None:
         """
         Delete item from DynamoDB.
@@ -387,6 +445,41 @@ class S3Repository:
             )
             raise StorageError("Failed to initiate multipart upload")
 
+    def abort_multipart_upload(self, object_key: str, upload_id: str) -> None:
+        """
+        Abort multipart upload and clean up parts.
+
+        Args:
+            object_key: S3 object key
+            upload_id: Multipart upload ID to abort
+
+        Raises:
+            StorageError: If abort fails
+        """
+        try:
+            self._client.abort_multipart_upload(
+                Bucket=self.bucket_name,
+                Key=object_key,
+                UploadId=upload_id,
+            )
+
+            logger.info(
+                "Aborted multipart upload",
+                extra={"object_key": object_key, "upload_id": upload_id},
+            )
+
+        except ClientError as e:
+            logger.error(
+                "Failed to abort multipart upload",
+                extra={
+                    "error": str(e),
+                    "bucket": self.bucket_name,
+                    "key": object_key,
+                    "upload_id": upload_id,
+                },
+            )
+            raise StorageError("Failed to abort multipart upload")
+
     def delete_object(self, object_key: str) -> None:
         """
         Delete object from S3.
@@ -432,6 +525,48 @@ class S3Repository:
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise StorageError("Failed to check object existence")
+
+    def get_object_metadata(self, object_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Get object metadata from S3 including version ID if available.
+
+        This method retrieves object metadata which can be used to verify
+        object existence and track specific versions in versioned buckets.
+
+        Args:
+            object_key: S3 object key
+
+        Returns:
+            Dictionary with metadata (version_id, content_length, etag, etc.)
+            or None if object doesn't exist
+
+        Raises:
+            StorageError: If S3 operation fails (excluding 404)
+        """
+        try:
+            response = self._client.head_object(Bucket=self.bucket_name, Key=object_key)
+
+            metadata = {
+                "content_length": response.get("ContentLength"),
+                "etag": response.get("ETag"),
+                "last_modified": response.get("LastModified"),
+            }
+
+            # Include version ID if bucket has versioning enabled
+            if "VersionId" in response:
+                metadata["version_id"] = response["VersionId"]
+
+            return metadata
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return None
+
+            logger.error(
+                "Failed to get object metadata",
+                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+            )
+            raise StorageError("Failed to get object metadata")
 
 
 def build_s3_key(vault_id: str, file_id: str) -> str:

@@ -37,6 +37,8 @@ from src.api.routes.tags import SearchTagsRoute
 from src.api.routes.vaults import CreateVaultRoute, GetVaultSaltRoute
 from src.api.services.api_router import ApiRouter
 from src.api.services.auth_service import AuthService
+from src.api.services.item_service import ItemService
+from src.api.services.vault_service import VaultService
 
 
 class ServiceProvider:
@@ -135,7 +137,7 @@ class ServiceProvider:
 
     # Services
     @cached_property
-    def auth_service(self):
+    def auth_service(self) -> AuthService:
         """Create authentication service."""
         return AuthService(
             recovery_table=self.recovery_table,
@@ -146,9 +148,16 @@ class ServiceProvider:
     @cached_property
     def vault_service(self):
         """Create vault service."""
-        from src.api.services.vault_service import VaultService
-
         return VaultService(vaults_table=self.vaults_table)
+
+    @cached_property
+    def item_service(self) -> ItemService:
+        """Create item service."""
+        return ItemService(
+            session=self.session,
+            items_table_name=self.items_table_name,
+            s3_bucket_name=self.files_bucket_name,
+        )
 
     # API Router with all routes
     @cached_property
@@ -169,9 +178,9 @@ class ServiceProvider:
                 CreateVaultRoute(vault_service=self.vault_service),
                 GetVaultSaltRoute(vault_service=self.vault_service),
                 # Item routes
-                CreateItemRoute(),
-                InitiateUploadRoute(),
-                CompleteUploadRoute(),
+                CreateItemRoute(item_service=self.item_service),
+                InitiateUploadRoute(item_service=self.item_service),
+                CompleteUploadRoute(item_service=self.item_service),
                 ListItemsRoute(),
                 GetItemRoute(),
                 UpdateItemRoute(),

@@ -448,8 +448,9 @@ Environments: `dev`, `staging`, `prod`
 
 **Files Table:**
 - PK: `VAULT#{vaultId}`, SK: `FILE#{fileId}`
-- Stores: fileId, vaultId, userId, s3Key, encryptedMetadata (binary), encryptedTags (list<binary>), uploadedAt, sizeBytes
+- Stores: fileId, vaultId, userId, s3Key, encryptedMetadata (binary), encryptedTags (list<binary>), uploadedAt, sizeBytes, upload_status (PENDING/COMPLETE), ttl (Unix epoch, for PENDING uploads only)
 - GSI1: PK: `VAULT#{vaultId}#TAG#{encryptedTag}`, SK: `FILE#{fileId}` (for tag-based queries)
+- TTL: Pending uploads auto-expire after 48 hours to prevent data inconsistency from failed/abandoned uploads
 
 **Collections Table:**
 - PK: `VAULT#{vaultId}`, SK: `COLLECTION#{collectionId}`
@@ -646,6 +647,53 @@ api.root.addProxy({
 - Validate inputs with Pydantic models
 - Organize routes by domain in separate modules
 
+**Pydantic Validation Error Handling Pattern:**
+```python
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from pydantic import ValidationError as PydanticValidationError
+from src.shared.models import CreateItemRequest
+from src.shared.errors import ValidationError  # Custom validation error
+
+@app.post("/v1/items")
+def handle():
+    try:
+        # Parse and validate request
+        body = app.current_event.json_body
+        request = CreateItemRequest(**body)
+        
+        # Process request...
+        
+    except PydanticValidationError as e:
+        # Catch Pydantic validation errors BEFORE custom ValidationError
+        logger.warning("Request validation failed", extra={"errors": e.errors()})
+        return Response(
+            status_code=400,
+            content_type="application/json",
+            body={
+                "error": {
+                    "code": "INVALID_REQUEST",
+                    "message": "Invalid request format",
+                }
+            },
+        )
+    
+    except ValidationError as e:
+        # Handle custom validation errors
+        logger.warning("Validation failed", extra={"error": str(e)})
+        return Response(
+            status_code=400,
+            content_type="application/json",
+            body={"error": {"code": "INVALID_REQUEST", "message": str(e)}},
+        )
+```
+
+**Key Points:**
+- Always catch `PydanticValidationError` explicitly before custom `ValidationError`
+- Import as `from pydantic import ValidationError as PydanticValidationError` to avoid naming conflicts
+- Return sanitized error messages to prevent exposing internal validation details
+- Log full error details server-side for debugging (use `e.errors()` for structured logging)
+- Use Lambda Powertools `Response` object for consistent error formatting
+
 ## Security Requirements
 
 - Never log sensitive data (keys, passwords, PII, encrypted payloads)
@@ -832,6 +880,53 @@ def format_price(cents: int) -> str:
     """Format cents as dollar string."""
     return f"${cents / 100:.2f}"
 ```
+
+**TOCTOU Race Condition Protection:**
+```python
+# Prevent Time-of-Check-Time-of-Use vulnerabilities using conditional updates
+# Example: Upload completion with S3 verification
+
+# 1. Verify S3 object exists and get metadata
+s3_metadata = self.s3_repo.get_object_metadata(s3_key)
+if not s3_metadata:
+    raise StorageError("Upload verification failed - object not found")
+
+# 2. Use conditional update to prevent race conditions
+try:
+    self.items_repo.update_item_conditional(
+        key=key,
+        update_expression="SET upload_status = :status, updated_at = :updated_at REMOVE #ttl",
+        condition_expression="upload_status = :pending",  # Ensures state hasn't changed
+        expression_attribute_values={
+            ":status": "COMPLETE",
+            ":updated_at": int(now.timestamp()),
+            ":pending": "PENDING",
+        },
+        expression_attribute_names={"#ttl": "ttl"},
+    )
+except StorageError:
+    # Conditional update failed - verify S3 object still exists
+    if not self.s3_repo.object_exists(s3_key):
+        logger.error("TOCTOU race condition detected - S3 object deleted during completion")
+        # Clean up orphaned metadata
+        self.items_repo.delete_item(key)
+        raise StorageError("Upload verification failed - object was deleted during completion")
+    raise
+
+# 3. Store S3 version ID for versioned buckets (optional but recommended)
+if s3_metadata.get("version_id"):
+    # Version ID provides stronger referential integrity
+    update_expression += ", s3_version_id = :version_id"
+    expression_attribute_values[":version_id"] = s3_metadata["version_id"]
+```
+
+**Key Points:**
+- Use DynamoDB conditional expressions to prevent concurrent modifications
+- Verify external resources (S3) before and after critical operations
+- Store version IDs when available for stronger referential integrity
+- Detect race conditions by re-checking resource existence on conditional update failure
+- Clean up orphaned metadata when race conditions are detected
+- Prevents OWASP A04:2021 - Insecure Design vulnerabilities
 
 ## Testing Requirements
 

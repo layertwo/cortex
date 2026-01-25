@@ -8,8 +8,9 @@ Requirements: 19.1, 19.2, 19.3, 19.5
 """
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.auth_service import AuthService
@@ -149,6 +150,19 @@ class ValidateRecoveryCodeRoute(BaseRoute):
                 )
 
                 return ValidateRecoveryCodeResponse(valid=is_valid, user_id=user_id).model_dump()
+
+            except PydanticValidationError as e:
+                logger.warning("Request validation failed", extra={"errors": e.errors()})
+                return Response(
+                    status_code=400,
+                    content_type="application/json",
+                    body={
+                        "error": {
+                            "code": "INVALID_REQUEST",
+                            "message": "Invalid request format",
+                        }
+                    },
+                )
 
             except ValidationError as e:
                 logger.warning("Recovery code validation failed", extra={"error": str(e)})

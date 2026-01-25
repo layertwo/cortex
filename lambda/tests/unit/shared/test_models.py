@@ -88,13 +88,13 @@ class TestInitiateUploadResponse:
         """Should create valid response."""
         now = datetime.utcnow()
         response = InitiateUploadResponse(
-            file_id="file-123",
+            item_id="item-123",
             upload_url="https://s3.amazonaws.com/bucket/key",
             expires_at=now,
             s3_key="vaults/v1/files/f1/123",
         )
 
-        assert response.file_id == "file-123"
+        assert response.item_id == "item-123"
         assert response.upload_url == "https://s3.amazonaws.com/bucket/key"
         assert response.expires_at == now
         assert response.s3_key == "vaults/v1/files/f1/123"
@@ -103,7 +103,7 @@ class TestInitiateUploadResponse:
     def test_with_upload_id(self):
         """Should accept upload_id for multipart."""
         response = InitiateUploadResponse(
-            file_id="file-123",
+            item_id="item-123",
             upload_url="https://s3.amazonaws.com/bucket/key",
             expires_at=datetime.utcnow(),
             s3_key="key",
@@ -397,9 +397,9 @@ class TestCompleteUploadRequest:
 
     def test_valid_request(self):
         """Should create valid request."""
-        request = CompleteUploadRequest(file_id="file-123", vault_id="vault-456")
+        request = CompleteUploadRequest(item_id="item-123", vault_id="vault-456")
 
-        assert request.file_id == "file-123"
+        assert request.item_id == "item-123"
         assert request.vault_id == "vault-456"
 
 
