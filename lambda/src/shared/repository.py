@@ -210,6 +210,7 @@ class DynamoDBRepository:
         key_condition_expression: str,
         expression_attribute_values: Dict[str, Any],
         expression_attribute_names: Optional[Dict[str, str]] = None,
+        filter_expression: Optional[str] = None,
         index_name: Optional[str] = None,
         limit: Optional[int] = None,
         exclusive_start_key: Optional[Dict[str, Any]] = None,
@@ -222,6 +223,7 @@ class DynamoDBRepository:
             key_condition_expression: Key condition expression
             expression_attribute_values: Values for expression
             expression_attribute_names: Optional attribute name mappings
+            filter_expression: Optional filter expression to apply after query
             index_name: Optional GSI name
             limit: Optional result limit
             exclusive_start_key: Optional pagination token
@@ -242,6 +244,9 @@ class DynamoDBRepository:
 
             if expression_attribute_names:
                 kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+            if filter_expression:
+                kwargs["FilterExpression"] = filter_expression
 
             if index_name:
                 kwargs["IndexName"] = index_name

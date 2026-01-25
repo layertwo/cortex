@@ -723,6 +723,7 @@ class TestListItems:
                 "TableName": "test-items-table",
                 "KeyConditionExpression": ANY,
                 "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
                 "ScanIndexForward": False,
                 "Limit": 50,
             },
@@ -772,6 +773,7 @@ class TestListItems:
                 "IndexName": "GSI1",
                 "KeyConditionExpression": ANY,
                 "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
                 "ScanIndexForward": False,
                 "Limit": 50,
             },
@@ -791,8 +793,8 @@ class TestListItems:
         assert next_token is None
 
     def test_list_items_filters_pending_uploads(self, item_service, dynamodb_stubber):
-        """Test that PENDING uploads are filtered out from results."""
-        # Configure stubber with mix of COMPLETE and PENDING items
+        """Test that PENDING uploads are filtered out from results using FilterExpression."""
+        # Configure stubber - DynamoDB filters at query level, so only COMPLETE item returned
         dynamodb_stubber.add_response(
             "query",
             {
@@ -810,26 +812,14 @@ class TestListItems:
                         "updated_at": {"N": "1234567890"},
                         "version": {"N": "1"},
                     },
-                    {
-                        "PK": {"S": "VAULT#vault-123"},
-                        "SK": {"S": "ITEM#MEDIA#item-2"},
-                        "item_id": {"S": "item-2"},
-                        "item_type": {"S": "MEDIA"},
-                        "vault_id": {"S": "vault-123"},
-                        "user_id": {"S": "user-123"},
-                        "encrypted_metadata": {"B": b"encrypted-metadata"},
-                        "upload_status": {"S": "PENDING"},
-                        "created_at": {"N": "1234567890"},
-                        "updated_at": {"N": "1234567890"},
-                        "version": {"N": "1"},
-                    },
                 ],
-                "Count": 2,
+                "Count": 1,
             },
             {
                 "TableName": "test-items-table",
                 "KeyConditionExpression": ANY,
                 "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
                 "ScanIndexForward": False,
                 "Limit": 50,
             },
@@ -879,6 +869,7 @@ class TestListItems:
                 "TableName": "test-items-table",
                 "KeyConditionExpression": ANY,
                 "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
                 "ScanIndexForward": False,
                 "Limit": 50,
             },

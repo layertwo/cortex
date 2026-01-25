@@ -491,6 +491,7 @@ class ItemService:
             key_condition_expression = "GSI1PK = :pk"
             expression_attribute_values = {
                 ":pk": f"VAULT#{vault_id}#TYPE#{item_type}",
+                ":pending": "PENDING",
             }
             index_name = "GSI1"
         else:
@@ -499,13 +500,19 @@ class ItemService:
             expression_attribute_values = {
                 ":pk": f"VAULT#{vault_id}",
                 ":sk_prefix": "ITEM#",
+                ":pending": "PENDING",
             }
             index_name = None
+
+        # Filter out PENDING uploads at query level (not application level)
+        # This ensures consistent page sizes and reduces data transfer
+        filter_expression = "upload_status <> :pending OR attribute_not_exists(upload_status)"
 
         # Execute query
         result = self.items_repo.query(
             key_condition_expression=key_condition_expression,
             expression_attribute_values=expression_attribute_values,
+            filter_expression=filter_expression,
             index_name=index_name,
             limit=page_size,
             exclusive_start_key=exclusive_start_key,
@@ -514,9 +521,6 @@ class ItemService:
 
         items = result["Items"]
         last_evaluated_key = result.get("LastEvaluatedKey")
-
-        # Filter out PENDING uploads (only return COMPLETE items)
-        items = [item for item in items if item.get("upload_status") != "PENDING"]
 
         # Encode pagination token
         next_page_token = encode_pagination_token(last_evaluated_key)
