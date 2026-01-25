@@ -603,8 +603,16 @@ def parse_pagination_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-
         decoded = base64.b64decode(token)
+
+        # Prevent DoS via oversized tokens (limit to 1KB of decoded data)
+        if len(decoded) > 1024:
+            logger.warning(
+                "Pagination token too large",
+                extra={"decoded_size": len(decoded)}
+            )
+            return None
+
         return json.loads(decoded)
 
     except Exception as e:

@@ -266,6 +266,7 @@ structure ListItemsInput {
 
     @httpQuery("nextToken")
     @documentation("Pagination token from previous response")
+    @length(max: 1024)
     nextToken: String
 }
 
