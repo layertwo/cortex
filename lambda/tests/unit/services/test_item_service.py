@@ -200,9 +200,7 @@ class TestInitiateUpload:
             },
         )
 
-        # Execute with stubbers
-        with s3_stubber, dynamodb_stubber:
-            response = item_service.initiate_upload("user-123", request)
+        response = item_service.initiate_upload("user-123", request)
 
         # Verify response
         assert response.item_id is not None
@@ -633,9 +631,7 @@ class TestCleanupFailedUpload:
             },
         )
 
-        # Execute with stubbers
-        with s3_stubber, dynamodb_stubber:
-            item_service.cleanup_failed_upload("vault-123", item_id, s3_key)
+        item_service.cleanup_failed_upload("vault-123", item_id, s3_key)
 
     def test_cleanup_without_s3_object(self, item_service, dynamodb_stubber):
         """Test cleanup when S3 object doesn't exist."""
@@ -680,6 +676,533 @@ class TestCleanupFailedUpload:
             },
         )
 
-        # Execute with stubbers
-        with s3_stubber, dynamodb_stubber:
-            item_service.cleanup_failed_upload("vault-123", item_id, s3_key, upload_id)
+        item_service.cleanup_failed_upload("vault-123", item_id, s3_key, upload_id)
+
+
+class TestListItems:
+    """Tests for list_items method."""
+
+    def test_list_items_all_types(self, item_service, dynamodb_stubber):
+        """Test listing all items without type filter."""
+        # Configure stubber for query
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "PK": {"S": "VAULT#vault-123"},
+                        "SK": {"S": "ITEM#NOTE#item-1"},
+                        "item_id": {"S": "item-1"},
+                        "item_type": {"S": "NOTE"},
+                        "vault_id": {"S": "vault-123"},
+                        "user_id": {"S": "user-123"},
+                        "encrypted_metadata": {"B": b"encrypted-metadata-1"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                        "version": {"N": "1"},
+                    },
+                    {
+                        "PK": {"S": "VAULT#vault-123"},
+                        "SK": {"S": "ITEM#MEDIA#item-2"},
+                        "item_id": {"S": "item-2"},
+                        "item_type": {"S": "MEDIA"},
+                        "vault_id": {"S": "vault-123"},
+                        "user_id": {"S": "user-123"},
+                        "encrypted_metadata": {"B": b"encrypted-metadata-2"},
+                        "s3_key": {"S": "vaults/vault-123/files/item-2/file.jpg"},
+                        "size_bytes": {"N": "1024"},
+                        "upload_status": {"S": "COMPLETE"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                        "version": {"N": "1"},
+                    },
+                ],
+                "Count": 2,
+            },
+            {
+                "TableName": "test-items-table",
+                "KeyConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
+                "ScanIndexForward": False,
+                "Limit": 50,
+            },
+        )
+
+        items, next_token = item_service.list_items(
+            user_id="user-123",
+            vault_id="vault-123",
+            item_type=None,
+            page_size=50,
+            next_token=None,
+            sort_order="desc",
+        )
+
+        assert len(items) == 2
+        assert items[0]["item_id"] == "item-1"
+        assert items[1]["item_id"] == "item-2"
+        assert next_token is None
+
+    def test_list_items_with_type_filter(self, item_service, dynamodb_stubber):
+        """Test listing items filtered by type using GSI."""
+        # Configure stubber for GSI query
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "PK": {"S": "VAULT#vault-123"},
+                        "SK": {"S": "ITEM#MEDIA#item-1"},
+                        "item_id": {"S": "item-1"},
+                        "item_type": {"S": "MEDIA"},
+                        "vault_id": {"S": "vault-123"},
+                        "user_id": {"S": "user-123"},
+                        "encrypted_metadata": {"B": b"encrypted-metadata"},
+                        "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                        "size_bytes": {"N": "2048"},
+                        "upload_status": {"S": "COMPLETE"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                        "version": {"N": "1"},
+                    }
+                ],
+                "Count": 1,
+            },
+            {
+                "TableName": "test-items-table",
+                "IndexName": "GSI1",
+                "KeyConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
+                "ScanIndexForward": False,
+                "Limit": 50,
+            },
+        )
+
+        items, next_token = item_service.list_items(
+            user_id="user-123",
+            vault_id="vault-123",
+            item_type=ItemType.MEDIA,
+            page_size=50,
+            next_token=None,
+            sort_order="desc",
+        )
+
+        assert len(items) == 1
+        assert items[0]["item_type"] == "MEDIA"
+        assert next_token is None
+
+    def test_list_items_filters_pending_uploads(self, item_service, dynamodb_stubber):
+        """Test that PENDING uploads are filtered out from results using FilterExpression."""
+        # Configure stubber - DynamoDB filters at query level, so only COMPLETE item returned
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "PK": {"S": "VAULT#vault-123"},
+                        "SK": {"S": "ITEM#MEDIA#item-1"},
+                        "item_id": {"S": "item-1"},
+                        "item_type": {"S": "MEDIA"},
+                        "vault_id": {"S": "vault-123"},
+                        "user_id": {"S": "user-123"},
+                        "encrypted_metadata": {"B": b"encrypted-metadata"},
+                        "upload_status": {"S": "COMPLETE"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                        "version": {"N": "1"},
+                    },
+                ],
+                "Count": 1,
+            },
+            {
+                "TableName": "test-items-table",
+                "KeyConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
+                "ScanIndexForward": False,
+                "Limit": 50,
+            },
+        )
+
+        items, next_token = item_service.list_items(
+            user_id="user-123",
+            vault_id="vault-123",
+            item_type=None,
+            page_size=50,
+            next_token=None,
+            sort_order="desc",
+        )
+
+        # Should only return COMPLETE item
+        assert len(items) == 1
+        assert items[0]["item_id"] == "item-1"
+        assert items[0]["upload_status"] == "COMPLETE"
+
+    def test_list_items_with_pagination(self, item_service, dynamodb_stubber):
+        """Test listing items with pagination token."""
+        # Configure stubber with LastEvaluatedKey
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "PK": {"S": "VAULT#vault-123"},
+                        "SK": {"S": "ITEM#NOTE#item-1"},
+                        "item_id": {"S": "item-1"},
+                        "item_type": {"S": "NOTE"},
+                        "vault_id": {"S": "vault-123"},
+                        "user_id": {"S": "user-123"},
+                        "encrypted_metadata": {"B": b"encrypted-metadata"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                        "version": {"N": "1"},
+                    }
+                ],
+                "Count": 1,
+                "LastEvaluatedKey": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#NOTE#item-1"},
+                },
+            },
+            {
+                "TableName": "test-items-table",
+                "KeyConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
+                "ScanIndexForward": False,
+                "Limit": 50,
+            },
+        )
+
+        items, next_token = item_service.list_items(
+            user_id="user-123",
+            vault_id="vault-123",
+            item_type=None,
+            page_size=50,
+            next_token=None,
+            sort_order="desc",
+        )
+
+        assert len(items) == 1
+        assert next_token is not None  # Should have pagination token
+
+
+class TestGetItem:
+    """Tests for get_item method."""
+
+    def test_get_item_success(self, item_service, dynamodb_stubber):
+        """Test successfully retrieving an item."""
+        # Configure stubber - will try each type until found
+        # First try MEDIA (not found)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Second try NOTE (found)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#NOTE#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "NOTE"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_content": {"B": b"encrypted-content"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        item = item_service.get_item("user-123", "vault-123", "item-1")
+
+        assert item is not None
+        assert item["item_id"] == "item-1"
+        assert item["item_type"] == "NOTE"
+        assert item["user_id"] == "user-123"
+
+    def test_get_item_not_found(self, item_service, dynamodb_stubber):
+        """Test retrieving non-existent item."""
+        # Configure stubber - all types return empty
+        for _ in range(4):  # MEDIA, NOTE, TASK, EVENT
+            dynamodb_stubber.add_response(
+                "get_item",
+                {},
+                {
+                    "TableName": "test-items-table",
+                    "Key": ANY,
+                },
+            )
+
+        item = item_service.get_item("user-123", "vault-123", "nonexistent")
+
+        assert item is None
+
+    def test_get_item_unauthorized(self, item_service, dynamodb_stubber):
+        """Test retrieving item owned by different user."""
+        # Configure stubber - item found but owned by different user
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#NOTE#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "NOTE"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "other-user"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        with pytest.raises(AuthorizationError, match="Access denied to item"):
+            item_service.get_item("user-123", "vault-123", "item-1")
+
+    def test_get_item_filters_pending(self, item_service, dynamodb_stubber):
+        """Test that PENDING items are filtered out."""
+        # Configure stubber - item found but status is PENDING
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "PENDING"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        item = item_service.get_item("user-123", "vault-123", "item-1")
+
+        assert item is None
+
+
+class TestGetDownloadUrl:
+    """Tests for get_download_url method."""
+
+    def test_get_download_url_success(self, item_service, dynamodb_stubber, s3_stubber):
+        """Test successfully generating download URL for MEDIA item."""
+        # Configure DynamoDB stubber
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure S3 stubber for object existence check
+        s3_stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 1024,
+                "ETag": '"abc123"',
+                "LastModified": datetime(2026, 1, 24, 12, 0, 0),
+            },
+            {
+                "Bucket": "test-bucket",
+                "Key": "vaults/vault-123/files/item-1/file.jpg",
+            },
+        )
+
+        download_url, expires_at, encrypted_metadata, s3_key = item_service.get_download_url(
+            "user-123", "vault-123", "item-1"
+        )
+
+        assert s3_key == "vaults/vault-123/files/item-1/file.jpg"
+        assert encrypted_metadata == b"encrypted-metadata"
+        assert expires_at is not None
+
+    def test_get_download_url_item_not_found(self, item_service, dynamodb_stubber):
+        """Test download URL when item doesn't exist."""
+        # Configure stubber - item not found
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        with pytest.raises(ResourceNotFoundError, match="Item not found"):
+            item_service.get_download_url("user-123", "vault-123", "nonexistent")
+
+    def test_get_download_url_unauthorized(self, item_service, dynamodb_stubber):
+        """Test download URL when user doesn't own item."""
+        # Configure stubber - item owned by different user
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "other-user"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        with pytest.raises(AuthorizationError, match="Access denied to item"):
+            item_service.get_download_url("user-123", "vault-123", "item-1")
+
+    def test_get_download_url_not_media_type(self, item_service, dynamodb_stubber):
+        """Test download URL for non-MEDIA item type."""
+        from src.shared.errors import ValidationError
+
+        # Configure stubber - item is NOTE type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "NOTE"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        with pytest.raises(ValidationError, match="Download URL only available for MEDIA items"):
+            item_service.get_download_url("user-123", "vault-123", "item-1")
+
+    def test_get_download_url_pending_upload(self, item_service, dynamodb_stubber):
+        """Test download URL when upload is still pending."""
+        from src.shared.errors import ValidationError
+
+        # Configure stubber - item upload is PENDING
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "PENDING"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        with pytest.raises(ValidationError, match="Item upload not yet complete"):
+            item_service.get_download_url("user-123", "vault-123", "item-1")
+
+    def test_get_download_url_s3_object_missing(self, item_service, dynamodb_stubber, s3_stubber):
+        """Test download URL when S3 object doesn't exist."""
+        # Configure DynamoDB stubber
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure S3 stubber - object doesn't exist
+        s3_stubber.add_client_error(
+            "head_object",
+            service_error_code="404",
+            service_message="Not Found",
+            http_status_code=404,
+        )
+
+        with pytest.raises(StorageError, match="Item file not found in storage"):
+            item_service.get_download_url("user-123", "vault-123", "item-1")

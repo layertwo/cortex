@@ -210,6 +210,7 @@ class DynamoDBRepository:
         key_condition_expression: str,
         expression_attribute_values: Dict[str, Any],
         expression_attribute_names: Optional[Dict[str, str]] = None,
+        filter_expression: Optional[str] = None,
         index_name: Optional[str] = None,
         limit: Optional[int] = None,
         exclusive_start_key: Optional[Dict[str, Any]] = None,
@@ -222,6 +223,7 @@ class DynamoDBRepository:
             key_condition_expression: Key condition expression
             expression_attribute_values: Values for expression
             expression_attribute_names: Optional attribute name mappings
+            filter_expression: Optional filter expression to apply after query
             index_name: Optional GSI name
             limit: Optional result limit
             exclusive_start_key: Optional pagination token
@@ -242,6 +244,9 @@ class DynamoDBRepository:
 
             if expression_attribute_names:
                 kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+            if filter_expression:
+                kwargs["FilterExpression"] = filter_expression
 
             if index_name:
                 kwargs["IndexName"] = index_name
@@ -603,8 +608,16 @@ def parse_pagination_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-
         decoded = base64.b64decode(token)
+
+        # Prevent DoS via oversized tokens (limit to 1KB of decoded data)
+        if len(decoded) > 1024:
+            logger.warning(
+                "Pagination token too large",
+                extra={"decoded_size": len(decoded)}
+            )
+            return None
+
         return json.loads(decoded)
 
     except Exception as e:

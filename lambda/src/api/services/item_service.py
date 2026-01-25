@@ -449,3 +449,258 @@ class ItemService:
                 "Failed to clean up failed upload",
                 extra={"vault_id": vault_id, "item_id": item_id, "error": str(e)},
             )
+
+    def list_items(
+        self,
+        user_id: str,
+        vault_id: str,
+        item_type: Optional[str] = None,
+        page_size: int = 50,
+        next_token: Optional[str] = None,
+        sort_order: str = "desc",
+    ) -> tuple[list[dict], Optional[str]]:
+        """
+        List items with optional type filter and pagination.
+
+        This method queries DynamoDB for user's encrypted metadata and supports
+        filtering by item type. All data returned is encrypted and cannot be
+        decrypted by the server.
+
+        Args:
+            user_id: Authenticated user ID
+            vault_id: Vault ID to list items from
+            item_type: Optional filter by item type (MEDIA, NOTE, TASK, EVENT)
+            page_size: Number of items per page (1-100)
+            next_token: Pagination token from previous response
+            sort_order: Sort order ('asc' or 'desc')
+
+        Returns:
+            Tuple of (items list, next_token)
+
+        Raises:
+            StorageError: If DynamoDB operation fails
+        """
+        from src.shared.repository import encode_pagination_token, parse_pagination_token
+
+        # Parse pagination token
+        exclusive_start_key = parse_pagination_token(next_token)
+
+        # Build query based on whether we're filtering by type
+        if item_type:
+            # Use GSI1 for type-based queries
+            key_condition_expression = "GSI1PK = :pk"
+            expression_attribute_values = {
+                ":pk": f"VAULT#{vault_id}#TYPE#{item_type}",
+                ":pending": "PENDING",
+            }
+            index_name = "GSI1"
+        else:
+            # Query main table for all items in vault
+            key_condition_expression = "PK = :pk AND begins_with(SK, :sk_prefix)"
+            expression_attribute_values = {
+                ":pk": f"VAULT#{vault_id}",
+                ":sk_prefix": "ITEM#",
+                ":pending": "PENDING",
+            }
+            index_name = None
+
+        # Filter out PENDING uploads at query level (not application level)
+        # This ensures consistent page sizes and reduces data transfer
+        filter_expression = "upload_status <> :pending OR attribute_not_exists(upload_status)"
+
+        # Execute query
+        result = self.items_repo.query(
+            key_condition_expression=key_condition_expression,
+            expression_attribute_values=expression_attribute_values,
+            filter_expression=filter_expression,
+            index_name=index_name,
+            limit=page_size,
+            exclusive_start_key=exclusive_start_key,
+            scan_index_forward=(sort_order == "asc"),
+        )
+
+        items = result["Items"]
+        last_evaluated_key = result.get("LastEvaluatedKey")
+
+        # Encode pagination token
+        next_page_token = encode_pagination_token(last_evaluated_key)
+
+        logger.info(
+            "Listed items",
+            extra={
+                "user_id": user_id,
+                "vault_id": vault_id,
+                "item_type": item_type,
+                "count": len(items),
+                "has_more": next_page_token is not None,
+            },
+        )
+
+        return items, next_page_token
+
+    def get_item(self, user_id: str, vault_id: str, item_id: str) -> Optional[dict]:
+        """
+        Get a specific item by ID.
+
+        This method retrieves encrypted item metadata from DynamoDB. The server
+        cannot decrypt the data.
+
+        Args:
+            user_id: Authenticated user ID
+            vault_id: Vault ID
+            item_id: Item ID
+
+        Returns:
+            Item dictionary or None if not found
+
+        Raises:
+            AuthorizationError: If user doesn't own the item
+            StorageError: If DynamoDB operation fails
+        """
+        # Try each item type since we don't know which one it is
+        for item_type in [ItemType.MEDIA, ItemType.NOTE, ItemType.TASK, ItemType.EVENT]:
+            key = {
+                "PK": f"VAULT#{vault_id}",
+                "SK": f"ITEM#{item_type}#{item_id}",
+            }
+
+            item = self.items_repo.get_item(key)
+
+            if item:
+                # Verify user owns the item
+                if item["user_id"] != user_id:
+                    logger.warning(
+                        "User does not own item",
+                        extra={
+                            "user_id": user_id,
+                            "item_id": item_id,
+                            "item_user_id": item["user_id"],
+                        },
+                    )
+                    raise AuthorizationError("Access denied to item")
+
+                # Filter out PENDING uploads
+                if item.get("upload_status") == "PENDING":
+                    return None
+
+                logger.info(
+                    "Retrieved item",
+                    extra={
+                        "user_id": user_id,
+                        "vault_id": vault_id,
+                        "item_id": item_id,
+                        "item_type": item_type,
+                    },
+                )
+
+                return item
+
+        # Item not found
+        logger.info(
+            "Item not found",
+            extra={"user_id": user_id, "vault_id": vault_id, "item_id": item_id},
+        )
+
+        return None
+
+    def get_download_url(
+        self, user_id: str, vault_id: str, item_id: str
+    ) -> tuple[str, datetime, bytes, str]:
+        """
+        Generate presigned download URL for MEDIA items.
+
+        This method verifies the item exists, is owned by the user, and is a
+        MEDIA type before generating a time-limited presigned S3 URL.
+
+        Args:
+            user_id: Authenticated user ID
+            vault_id: Vault ID
+            item_id: Item ID
+
+        Returns:
+            Tuple of (download_url, expires_at, encrypted_metadata, s3_key)
+
+        Raises:
+            ResourceNotFoundError: If item not found
+            AuthorizationError: If user doesn't own the item
+            ValidationError: If item is not a MEDIA type
+            StorageError: If DynamoDB or S3 operation fails
+        """
+        from src.shared.errors import ValidationError
+
+        # Retrieve item from DynamoDB
+        key = {
+            "PK": f"VAULT#{vault_id}",
+            "SK": f"ITEM#{ItemType.MEDIA}#{item_id}",
+        }
+
+        item = self.items_repo.get_item(key)
+
+        if not item:
+            logger.warning(
+                "Item not found for download",
+                extra={"user_id": user_id, "item_id": item_id},
+            )
+            raise ResourceNotFoundError("Item not found")
+
+        # Verify user owns the item
+        if item["user_id"] != user_id:
+            logger.warning(
+                "User does not own item",
+                extra={
+                    "user_id": user_id,
+                    "item_id": item_id,
+                    "item_user_id": item["user_id"],
+                },
+            )
+            raise AuthorizationError("Access denied to item")
+
+        # Verify item type is MEDIA
+        if item["item_type"] != ItemType.MEDIA:
+            logger.warning(
+                "Item is not a MEDIA type",
+                extra={
+                    "user_id": user_id,
+                    "item_id": item_id,
+                    "item_type": item["item_type"],
+                },
+            )
+            raise ValidationError("Download URL only available for MEDIA items")
+
+        # Verify upload is complete
+        if item.get("upload_status") == "PENDING":
+            logger.warning(
+                "Item upload not complete",
+                extra={"user_id": user_id, "item_id": item_id},
+            )
+            raise ValidationError("Item upload not yet complete")
+
+        # Get S3 key
+        s3_key = item["s3_key"]
+
+        # Verify S3 object exists
+        if not self.s3_repo.object_exists(s3_key):
+            logger.error(
+                "S3 object not found for item",
+                extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
+            )
+            raise StorageError("Item file not found in storage")
+
+        # Generate presigned download URL
+        download_url = self.s3_repo.generate_download_url(s3_key, PRESIGNED_URL_EXPIRATION)
+
+        # Calculate expiration time
+        now = datetime.now(tz=timezone.utc)
+        expires_at = now + timedelta(seconds=PRESIGNED_URL_EXPIRATION)
+
+        logger.info(
+            "Generated download URL",
+            extra={
+                "user_id": user_id,
+                "vault_id": vault_id,
+                "item_id": item_id,
+                "s3_key": s3_key,
+            },
+        )
+
+        return download_url, expires_at, item["encrypted_metadata"], s3_key

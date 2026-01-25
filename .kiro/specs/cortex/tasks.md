@@ -324,15 +324,15 @@
   - **File: lambda/tests/property/test_item_api.py**
   - **Validates: Requirements 24.1, 24.2, 24.3**
 
-- [ ] 12. Implement item download and listing routes and services
-- [ ] 12.1 Create item listing route handlers
+- [x] 12. Implement item download and listing routes and services
+- [x] 12.1 Create item listing route handlers
   - Implement GET /v1/items route (list all items with optional type filter)
   - Implement GET /v1/items/{id} route (get specific item)
   - Extract user identity and query parameters
   - Support filtering by item type (MEDIA, NOTE, TASK, EVENT)
   - _Requirements: 2.3, 10.1, 10.2, 24.1, 24.2_
 
-- [ ] 12.2 Create item listing service layer
+- [x] 12.2 Create item listing service layer
   - Query DynamoDB for user's encrypted metadata
   - Implement pagination with consistent results (use DynamoDB pagination tokens)
   - Support filtering by item type and sorting by timestamp
@@ -340,13 +340,13 @@
   - Return encrypted data without decryption
   - _Requirements: 2.3, 2.4, 10.1, 10.2, 10.4, 10.5, 24.1, 24.2_
 
-- [ ] 12.3 Create item download route handler
+- [x] 12.3 Create item download route handler
   - Implement GET /v1/items/{id}/download route (for MEDIA items)
   - Extract user identity from context
   - Return error for non-MEDIA items
   - _Requirements: 4.1, 4.3, 24.2_
 
-- [ ] 12.4 Create item download service layer
+- [x] 12.4 Create item download service layer
   - Query DynamoDB to verify user owns requested item
   - Verify item type is MEDIA
   - Generate presigned S3 GET URLs scoped to specific object
