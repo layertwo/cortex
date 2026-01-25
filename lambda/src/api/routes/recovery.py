@@ -7,8 +7,6 @@ generation and validation.
 Requirements: 19.1, 19.2, 19.3, 19.5
 """
 
-from typing import Optional
-
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from pydantic import BaseModel, Field
@@ -51,7 +49,7 @@ class ValidateRecoveryCodeResponse(BaseModel):
 class GenerateRecoveryCodesRoute(BaseRoute):
     """Handle recovery code generation."""
 
-    def __init__(self, auth_service: Optional[AuthService] = None):
+    def __init__(self, auth_service: AuthService):
         """
         Initialize generate recovery codes route.
 
@@ -61,7 +59,6 @@ class GenerateRecoveryCodesRoute(BaseRoute):
         self.auth_service = auth_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
-        auth_service = self.auth_service
 
         @app.post("/v1/recovery/codes")
         def handle():
@@ -82,11 +79,8 @@ class GenerateRecoveryCodesRoute(BaseRoute):
 
                 logger.info("Generating recovery codes", extra={"user_id": user_id})
 
-                if not auth_service:
-                    raise ValidationError("Auth service not configured")
-
                 # Generate recovery codes
-                codes, timestamp = auth_service.generate_recovery_codes(user_id)
+                codes, timestamp = self.auth_service.generate_recovery_codes(user_id)
 
                 logger.info(
                     "Recovery codes generated successfully",
@@ -110,7 +104,7 @@ class GenerateRecoveryCodesRoute(BaseRoute):
 class ValidateRecoveryCodeRoute(BaseRoute):
     """Handle recovery code validation."""
 
-    def __init__(self, auth_service: Optional[AuthService] = None):
+    def __init__(self, auth_service: AuthService):
         """
         Initialize validate recovery code route.
 
@@ -120,7 +114,6 @@ class ValidateRecoveryCodeRoute(BaseRoute):
         self.auth_service = auth_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
-        auth_service = self.auth_service
 
         @app.post("/v1/recovery/validate")
         def handle():
@@ -147,11 +140,8 @@ class ValidateRecoveryCodeRoute(BaseRoute):
 
                 logger.info("Validating recovery code", extra={"user_id": user_id})
 
-                if not auth_service:
-                    raise ValidationError("Auth service not configured")
-
                 # Validate recovery code (marks as used if valid)
-                is_valid = auth_service.validate_recovery_code(user_id, request.recovery_code)
+                is_valid = self.auth_service.validate_recovery_code(user_id, request.recovery_code)
 
                 logger.info(
                     "Recovery code validation completed",

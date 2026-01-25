@@ -260,20 +260,20 @@
   - **Property 25: Account recovery code validation**
   - **Validates: Requirements 19.2, 19.3**
 
-- [ ] 10. Implement vault management routes and services
-- [ ] 10.1 Create vault route handlers
+- [x] 10. Implement vault management routes and services
+- [x] 10.1 Create vault route handlers
   - Implement POST /v1/vaults route (create vault with salt)
   - Implement GET /v1/vaults/{id}/salt route (retrieve salt for key derivation)
   - _Requirements: 14.4, 22.1, 22.2, 22.3_
 
-- [ ] 10.2 Create vault service layer
+- [x] 10.2 Create vault service layer
   - Generate unique vault salt using cryptographically secure RNG (16 bytes)
   - Store vault salt in DynamoDB Vaults table
   - Retrieve vault salt for key derivation on new devices
   - Ensure vault salt uniqueness across all vaults
   - _Requirements: 14.4, 22.1, 22.2, 22.3, 22.4, 22.5_
 
-- [ ]* 10.3 Write property test for vault salt uniqueness
+- [x] 10.3 Write property test for vault salt uniqueness
   - **Property 27: Vault salt uniqueness**
   - **Validates: Requirements 22.4**
 

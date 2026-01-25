@@ -4,25 +4,17 @@ import hashlib
 import json
 import time
 
-from botocore.stub import Stubber
-
 from src.entrypoint.api import lambda_handler
 
 
 class TestGenerateRecoveryCodesRoute:
-    def test_generate_recovery_codes_success(self, mock_service_provider):
+    def test_generate_recovery_codes_success(self, mock_service_provider, dynamodb_stubber):
         """Should generate 10 recovery codes and store them in DynamoDB."""
-        # Get the recovery table from service provider
-        recovery_table = mock_service_provider.recovery_table
-
-        # Create stubber for the DynamoDB client
-        dynamodb_client = recovery_table.meta.client
-        stubber = Stubber(dynamodb_client)
 
         # Stub 10 PutItem calls (one for each recovery code)
         # We can't predict the exact hash, so we use a more flexible approach
         for _ in range(10):
-            stubber.add_response(
+            dynamodb_stubber.add_response(
                 "put_item",
                 {},
             )
@@ -39,8 +31,7 @@ class TestGenerateRecoveryCodesRoute:
             },
         }
 
-        with stubber:
-            response = lambda_handler(event, {}, mock_service_provider)
+        response = lambda_handler(event, {}, mock_service_provider)
 
         assert response["statusCode"] == 200
         body = json.loads(response["body"])
@@ -55,15 +46,10 @@ class TestGenerateRecoveryCodesRoute:
 
 
 class TestValidateRecoveryCodeRoute:
-    def test_validate_recovery_code_success(self, mock_service_provider):
+    def test_validate_recovery_code_success(
+        self, mock_service_provider, dynamodb_stubber, recovery_table_name
+    ):
         """Should validate a recovery code and mark it as used."""
-        # Get the recovery table from service provider
-        recovery_table = mock_service_provider.recovery_table
-
-        # Create stubber for the DynamoDB client
-        dynamodb_client = recovery_table.meta.client
-        stubber = Stubber(dynamodb_client)
-
         # Prepare test data
         user_id = "user-123"
         recovery_code = "ABCD-EFGH-IJKL-MNOP"
@@ -73,7 +59,7 @@ class TestValidateRecoveryCodeRoute:
 
         # Stub GetItem response (code exists and is valid)
         # Note: boto3 Table resource sends keys without type descriptors
-        stubber.add_response(
+        dynamodb_stubber.add_response(
             "get_item",
             {
                 "Item": {
@@ -87,7 +73,7 @@ class TestValidateRecoveryCodeRoute:
                 }
             },
             expected_params={
-                "TableName": recovery_table.name,
+                "TableName": recovery_table_name,
                 "Key": {
                     "PK": f"USER#{user_id}",  # Table resource sends plain values
                     "SK": f"RECOVERY#{code_hash}",
@@ -97,7 +83,7 @@ class TestValidateRecoveryCodeRoute:
 
         # Stub UpdateItem response (mark code as used)
         # We can't predict the exact timestamp, so we don't validate it
-        stubber.add_response(
+        dynamodb_stubber.add_response(
             "update_item",
             {},
         )
@@ -114,8 +100,7 @@ class TestValidateRecoveryCodeRoute:
             },
         }
 
-        with stubber:
-            response = lambda_handler(event, {}, mock_service_provider)
+        response = lambda_handler(event, {}, mock_service_provider)
 
         assert response["statusCode"] == 200
         body = json.loads(response["body"])

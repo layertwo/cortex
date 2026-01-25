@@ -7,8 +7,6 @@ token refresh, and account recovery.
 Requirements: 3.1, 3.2, 19.2
 """
 
-from typing import Optional
-
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from pydantic import BaseModel, Field
@@ -67,7 +65,7 @@ class RecoverResponse(BaseModel):
 class LoginRoute(BaseRoute):
     """Handle user login with account password."""
 
-    def __init__(self, auth_service: Optional[AuthService] = None):
+    def __init__(self, auth_service: AuthService):
         """
         Initialize login route.
 
@@ -77,7 +75,6 @@ class LoginRoute(BaseRoute):
         self.auth_service = auth_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
-        auth_service = self.auth_service
 
         @app.post("/v1/auth/login")
         def handle():
@@ -110,15 +107,7 @@ class LoginRoute(BaseRoute):
                     },
                 )
 
-                # Use injected service or create placeholder response
-                if auth_service:
-                    result = auth_service.validate_login(request.email, request.password)
-                else:
-                    # Authentication is handled by Cognito via API Gateway
-                    result = {
-                        "message": "Authentication handled by Cognito authorizer",
-                        "auth_type": "cognito",
-                    }
+                result = self.auth_service.validate_login(request.email, request.password)
 
                 return LoginResponse(**result).model_dump()
 
@@ -133,7 +122,7 @@ class LoginRoute(BaseRoute):
 class RefreshRoute(BaseRoute):
     """Handle authentication token refresh."""
 
-    def __init__(self, auth_service: Optional[AuthService] = None):
+    def __init__(self, auth_service: AuthService):
         """
         Initialize refresh route.
 
@@ -143,7 +132,6 @@ class RefreshRoute(BaseRoute):
         self.auth_service = auth_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
-        auth_service = self.auth_service
 
         @app.post("/v1/auth/refresh")
         def handle():
@@ -167,15 +155,7 @@ class RefreshRoute(BaseRoute):
 
                 logger.info("Token refresh request received")
 
-                # Use injected service or create placeholder response
-                if auth_service:
-                    result = auth_service.refresh_token(request.refresh_token)
-                else:
-                    # Token refresh is handled by Cognito
-                    result = {
-                        "message": "Token refresh handled by Cognito",
-                        "auth_type": "cognito",
-                    }
+                result = self.auth_service.refresh_token(request.refresh_token)
 
                 return RefreshResponse(**result).model_dump()
 
@@ -190,7 +170,7 @@ class RefreshRoute(BaseRoute):
 class RecoverRoute(BaseRoute):
     """Handle account recovery with recovery code."""
 
-    def __init__(self, auth_service: Optional[AuthService] = None):
+    def __init__(self, auth_service: AuthService):
         """
         Initialize recover route.
 
@@ -200,7 +180,6 @@ class RecoverRoute(BaseRoute):
         self.auth_service = auth_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
-        auth_service = self.auth_service
 
         @app.post("/v1/auth/recover")
         def handle():
@@ -233,15 +212,7 @@ class RecoverRoute(BaseRoute):
                     },
                 )
 
-                # Use injected service or create placeholder response
-                if auth_service:
-                    result = auth_service.initiate_recovery(request.email, request.recovery_code)
-                else:
-                    # Placeholder response
-                    result = {
-                        "message": "Recovery code validation - service not configured",
-                        "recovery_type": "account_password",
-                    }
+                result = self.auth_service.initiate_recovery(request.email, request.recovery_code)
 
                 return RecoverResponse(**result).model_dump()
 
