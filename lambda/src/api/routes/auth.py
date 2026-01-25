@@ -8,8 +8,9 @@ Requirements: 3.1, 3.2, 19.2
 """
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
 from pydantic import BaseModel, Field
+from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.auth_service import AuthService
@@ -111,6 +112,19 @@ class LoginRoute(BaseRoute):
 
                 return LoginResponse(**result).model_dump()
 
+            except PydanticValidationError as e:
+                logger.warning("Request validation failed", extra={"errors": e.errors()})
+                return Response(
+                    status_code=400,
+                    content_type="application/json",
+                    body={
+                        "error": {
+                            "code": "INVALID_REQUEST",
+                            "message": "Invalid request format",
+                        }
+                    },
+                )
+
             except ValidationError as e:
                 logger.warning("Login validation failed", extra={"error": str(e)})
                 raise
@@ -158,6 +172,19 @@ class RefreshRoute(BaseRoute):
                 result = self.auth_service.refresh_token(request.refresh_token)
 
                 return RefreshResponse(**result).model_dump()
+
+            except PydanticValidationError as e:
+                logger.warning("Request validation failed", extra={"errors": e.errors()})
+                return Response(
+                    status_code=400,
+                    content_type="application/json",
+                    body={
+                        "error": {
+                            "code": "INVALID_REQUEST",
+                            "message": "Invalid request format",
+                        }
+                    },
+                )
 
             except ValidationError as e:
                 logger.warning("Refresh validation failed", extra={"error": str(e)})
@@ -215,6 +242,19 @@ class RecoverRoute(BaseRoute):
                 result = self.auth_service.initiate_recovery(request.email, request.recovery_code)
 
                 return RecoverResponse(**result).model_dump()
+
+            except PydanticValidationError as e:
+                logger.warning("Request validation failed", extra={"errors": e.errors()})
+                return Response(
+                    status_code=400,
+                    content_type="application/json",
+                    body={
+                        "error": {
+                            "code": "INVALID_REQUEST",
+                            "message": "Invalid request format",
+                        }
+                    },
+                )
 
             except ValidationError as e:
                 logger.warning("Recovery validation failed", extra={"error": str(e)})

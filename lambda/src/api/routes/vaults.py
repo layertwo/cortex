@@ -10,7 +10,8 @@ Requirements: 14.4, 22.1, 22.2, 22.3
 from datetime import datetime
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.vault_service import VaultService
@@ -78,6 +79,19 @@ class CreateVaultRoute(BaseRoute):
                 )
 
                 return response.model_dump(mode="json")
+
+            except PydanticValidationError as e:
+                logger.warning("Request validation failed", extra={"errors": e.errors()})
+                return Response(
+                    status_code=400,
+                    content_type="application/json",
+                    body={
+                        "error": {
+                            "code": "INVALID_REQUEST",
+                            "message": "Invalid request format",
+                        }
+                    },
+                )
 
             except ValidationError as e:
                 logger.warning("Vault creation validation failed", extra={"error": str(e)})

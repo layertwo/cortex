@@ -14,47 +14,95 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_serializer, field_validator
 
 # ============================================================================
+# Enums
+# ============================================================================
+
+
+class ItemType(str):
+    """Item type enumeration."""
+
+    MEDIA = "MEDIA"
+    NOTE = "NOTE"
+    TASK = "TASK"
+    EVENT = "EVENT"
+
+
+# ============================================================================
 # Request/Response Models for API Operations
 # ============================================================================
 
 
-class InitiateUploadRequest(BaseModel):
-    """Request model for initiating file upload."""
+class CreateItemRequest(BaseModel):
+    """Request model for creating items (NOTE, TASK, EVENT with inline content)."""
 
+    vault_id: str = Field(..., description="Vault ID for the item")
+    item_type: str = Field(..., description="Item type: NOTE, TASK, or EVENT")
+    encrypted_content: bytes = Field(..., description="Encrypted item content as JSON blob")
+    encrypted_metadata: bytes = Field(..., description="Encrypted item metadata")
+    encrypted_tags: Optional[List[bytes]] = Field(
+        default=None, description="List of encrypted tags"
+    )
+    encrypted_date_bucket: Optional[bytes] = Field(
+        default=None, description="Encrypted date bucket for tasks/events"
+    )
+    time_bucket: Optional[str] = Field(
+        default=None, description="Plaintext 15-min time bucket for server queries"
+    )
+
+    @field_validator("item_type")
+    @classmethod
+    def validate_item_type(cls, v: str) -> str:
+        """Validate item type value."""
+        if v not in [ItemType.NOTE, ItemType.TASK, ItemType.EVENT]:
+            raise ValueError("item_type must be NOTE, TASK, or EVENT for inline content")
+        return v
+
+
+class CreateItemResponse(BaseModel):
+    """Response model for item creation."""
+
+    item_id: str = Field(..., description="Unique item identifier")
+    item_type: str = Field(..., description="Item type")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+
+class InitiateUploadRequest(BaseModel):
+    """Request model for initiating MEDIA file upload."""
+
+    vault_id: str = Field(..., description="Vault ID for the file")
     encrypted_metadata: bytes = Field(
         ..., description="Encrypted file metadata (filename, size, MIME type, etc.)"
     )
-    size_bytes: int = Field(..., gt=0, description="File size in bytes")
+    size_bytes: int = Field(..., gt=0, le=5_368_709_120, description="File size in bytes (max 5GB)")
     content_type: str = Field(..., description="MIME type of the file")
-    vault_id: str = Field(..., description="Vault ID for the file")
     encrypted_tags: Optional[List[bytes]] = Field(
         default=None, description="List of encrypted tags"
     )
 
 
 class InitiateUploadResponse(BaseModel):
-    """Response model for upload initiation."""
+    """Response model for MEDIA upload initiation."""
 
-    file_id: str = Field(..., description="Unique file identifier")
+    item_id: str = Field(..., description="Unique item identifier")
     upload_url: str = Field(..., description="Presigned S3 upload URL")
     expires_at: datetime = Field(..., description="URL expiration timestamp")
     s3_key: str = Field(..., description="S3 object key")
     upload_id: Optional[str] = Field(
-        default=None, description="Multipart upload ID (for large files)"
+        default=None, description="Multipart upload ID (for large files >100MB)"
     )
 
 
 class CompleteUploadRequest(BaseModel):
-    """Request model for completing file upload."""
+    """Request model for completing MEDIA file upload."""
 
-    file_id: str = Field(..., description="File identifier from initiation")
+    item_id: str = Field(..., description="Item identifier from initiation")
     vault_id: str = Field(..., description="Vault ID")
 
 
 class CompleteUploadResponse(BaseModel):
-    """Response model for upload completion."""
+    """Response model for MEDIA upload completion."""
 
-    file_id: str = Field(..., description="File identifier")
+    item_id: str = Field(..., description="Item identifier")
     uploaded_at: datetime = Field(..., description="Upload completion timestamp")
 
 
@@ -368,6 +416,52 @@ class ValidateRecoveryCodeResponse(BaseModel):
 # ============================================================================
 # DynamoDB Item Models
 # ============================================================================
+
+
+class DynamoDBItemModel(BaseModel):
+    """DynamoDB item model for all item types (MEDIA, NOTE, TASK, EVENT)."""
+
+    PK: str = Field(..., description="Partition key: VAULT#{vaultId}")
+    SK: str = Field(..., description="Sort key: ITEM#{itemType}#{itemId}")
+    item_id: str = Field(..., description="Item identifier")
+    item_type: str = Field(..., description="Item type: MEDIA, NOTE, TASK, EVENT")
+    vault_id: str = Field(..., description="Vault identifier")
+    user_id: str = Field(..., description="User identifier")
+    encrypted_content: Optional[bytes] = Field(
+        default=None, description="Encrypted content (for NOTE, TASK, EVENT)"
+    )
+    encrypted_metadata: bytes = Field(..., description="Encrypted metadata")
+    encrypted_tags: Optional[List[bytes]] = Field(default=None, description="Encrypted tags")
+    encrypted_date_bucket: Optional[bytes] = Field(
+        default=None, description="Encrypted date bucket (for TASK, EVENT)"
+    )
+    time_bucket: Optional[str] = Field(
+        default=None, description="Plaintext 15-min time bucket for queries"
+    )
+    created_at: int = Field(..., description="Creation timestamp (Unix epoch)")
+    updated_at: int = Field(..., description="Update timestamp (Unix epoch)")
+    version: int = Field(default=1, description="Version number for conflict resolution")
+    size_bytes: Optional[int] = Field(default=None, description="File size (for MEDIA items)")
+    s3_key: Optional[str] = Field(default=None, description="S3 object key (for MEDIA items)")
+    upload_status: Optional[str] = Field(
+        default=None, description="Upload status: PENDING or COMPLETE (for MEDIA items)"
+    )
+    ttl: Optional[int] = Field(
+        default=None,
+        description="TTL for auto-expiration (Unix epoch, for PENDING uploads only)",
+    )
+    GSI1PK: Optional[str] = Field(
+        default=None, description="GSI1 PK: VAULT#{vaultId}#TYPE#{itemType}"
+    )
+    GSI1SK: Optional[str] = Field(default=None, description="GSI1 SK: ITEM#{itemId}")
+    GSI2PK: Optional[str] = Field(
+        default=None, description="GSI2 PK: VAULT#{vaultId}#TYPE#{itemType}#DATE#{timeBucket}"
+    )
+    GSI2SK: Optional[str] = Field(default=None, description="GSI2 SK: ITEM#{itemId}")
+    GSI3PK: Optional[str] = Field(
+        default=None, description="GSI3 PK: VAULT#{vaultId}#TAG#{encryptedTag}"
+    )
+    GSI3SK: Optional[str] = Field(default=None, description="GSI3 SK: ITEM#{itemId}")
 
 
 class DynamoDBFileItem(BaseModel):
