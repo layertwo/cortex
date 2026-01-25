@@ -106,6 +106,41 @@ class CompleteUploadResponse(BaseModel):
     uploaded_at: datetime = Field(..., description="Upload completion timestamp")
 
 
+class ListItemsRequest(BaseModel):
+    """Request model for listing items with optional filters."""
+
+    vault_id: str = Field(..., description="Vault ID to list items from")
+    item_type: Optional[str] = Field(
+        default=None, description="Optional filter by item type: MEDIA, NOTE, TASK, EVENT"
+    )
+    page_size: int = Field(default=50, ge=1, le=100, description="Number of items per page")
+    next_token: Optional[str] = Field(
+        default=None, description="Pagination token from previous response"
+    )
+    sort_order: str = Field(default="desc", description="Sort order: 'asc' or 'desc'")
+
+    @field_validator("sort_order")
+    @classmethod
+    def validate_sort_order(cls, v: str) -> str:
+        """Validate sort order value."""
+        if v not in ["asc", "desc"]:
+            raise ValueError("sort_order must be 'asc' or 'desc'")
+        return v
+
+    @field_validator("item_type")
+    @classmethod
+    def validate_item_type(cls, v: Optional[str]) -> Optional[str]:
+        """Validate item type value."""
+        if v is not None and v not in [
+            ItemType.MEDIA,
+            ItemType.NOTE,
+            ItemType.TASK,
+            ItemType.EVENT,
+        ]:
+            raise ValueError("item_type must be MEDIA, NOTE, TASK, or EVENT")
+        return v
+
+
 class ListMediaRequest(BaseModel):
     """Request model for listing media files."""
 
@@ -123,6 +158,50 @@ class ListMediaRequest(BaseModel):
         if v not in ["asc", "desc"]:
             raise ValueError("sort_order must be 'asc' or 'desc'")
         return v
+
+
+class ItemMetadata(BaseModel):
+    """Model for an item with encrypted metadata."""
+
+    item_id: str = Field(..., description="Unique item identifier")
+    item_type: str = Field(..., description="Item type: MEDIA, NOTE, TASK, EVENT")
+    vault_id: str = Field(..., description="Vault ID")
+    user_id: str = Field(..., description="Owner user ID")
+    encrypted_content: Optional[bytes] = Field(
+        default=None, description="Encrypted content (for NOTE, TASK, EVENT)"
+    )
+    encrypted_metadata: bytes = Field(..., description="Encrypted item metadata")
+    encrypted_tags: Optional[List[bytes]] = Field(default=None, description="Encrypted tags")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    size_bytes: Optional[int] = Field(default=None, description="File size (for MEDIA items)")
+    s3_key: Optional[str] = Field(default=None, description="S3 object key (for MEDIA items)")
+
+
+class ListItemsResponse(BaseModel):
+    """Response model for item listing."""
+
+    items: List[ItemMetadata] = Field(..., description="List of items")
+    next_token: Optional[str] = Field(
+        default=None, description="Token for next page (if more results available)"
+    )
+
+
+class GetItemResponse(BaseModel):
+    """Response model for getting a single item."""
+
+    item_id: str = Field(..., description="Item identifier")
+    item_type: str = Field(..., description="Item type: MEDIA, NOTE, TASK, EVENT")
+    vault_id: str = Field(..., description="Vault ID")
+    encrypted_content: Optional[bytes] = Field(
+        default=None, description="Encrypted content (for NOTE, TASK, EVENT)"
+    )
+    encrypted_metadata: bytes = Field(..., description="Encrypted metadata")
+    encrypted_tags: Optional[List[bytes]] = Field(default=None, description="Encrypted tags")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    size_bytes: Optional[int] = Field(default=None, description="File size (for MEDIA items)")
+    s3_key: Optional[str] = Field(default=None, description="S3 object key (for MEDIA items)")
 
 
 class MediaItem(BaseModel):
@@ -161,6 +240,8 @@ class GetDownloadUrlResponse(BaseModel):
     download_url: str = Field(..., description="Presigned S3 download URL")
     expires_at: datetime = Field(..., description="URL expiration timestamp")
     encrypted_metadata: bytes = Field(..., description="Encrypted file metadata")
+    item_id: str = Field(..., description="Item identifier")
+    s3_key: str = Field(..., description="S3 object key")
 
 
 class DeleteMediaRequest(BaseModel):
