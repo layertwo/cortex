@@ -15,7 +15,8 @@ from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.item_service import ItemService
-from src.shared.auth import get_user_from_context
+from src.api.services.vault_service import VaultService
+from src.shared.auth import get_user_from_context, require_vault_access
 from src.shared.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -315,9 +316,10 @@ class CompleteUploadRoute(BaseRoute):
 class ListItemsRoute(BaseRoute):
     """Handle item listing with filters."""
 
-    def __init__(self, item_service: ItemService):
+    def __init__(self, item_service: ItemService, vault_service: VaultService):
         """Initialize the list items route."""
         self.item_service = item_service
+        self.vault_service = vault_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.get("/v1/items")
@@ -352,6 +354,21 @@ class ListItemsRoute(BaseRoute):
                             "error": {
                                 "code": "INVALID_REQUEST",
                                 "message": "vault_id is required",
+                            }
+                        },
+                    )
+
+                # Verify vault ownership
+                try:
+                    require_vault_access(self.vault_service, user_id, vault_id, "list_items")
+                except AuthorizationError as e:
+                    return Response(
+                        status_code=403,
+                        content_type="application/json",
+                        body={
+                            "error": {
+                                "code": "AUTHORIZATION_FAILED",
+                                "message": str(e),
                             }
                         },
                     )
@@ -482,9 +499,10 @@ class ListItemsRoute(BaseRoute):
 class GetItemRoute(BaseRoute):
     """Handle single item retrieval."""
 
-    def __init__(self, item_service: ItemService):
+    def __init__(self, item_service: ItemService, vault_service: VaultService):
         """Initialize the get item route."""
         self.item_service = item_service
+        self.vault_service = vault_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.get("/v1/items/<item_id>")
@@ -517,6 +535,21 @@ class GetItemRoute(BaseRoute):
                             "error": {
                                 "code": "INVALID_REQUEST",
                                 "message": "vault_id is required",
+                            }
+                        },
+                    )
+
+                # Verify vault ownership
+                try:
+                    require_vault_access(self.vault_service, user_id, vault_id, "get_item")
+                except AuthorizationError as e:
+                    return Response(
+                        status_code=403,
+                        content_type="application/json",
+                        body={
+                            "error": {
+                                "code": "AUTHORIZATION_FAILED",
+                                "message": str(e),
                             }
                         },
                     )
@@ -623,27 +656,121 @@ class UpdateItemRoute(BaseRoute):
 class DeleteItemRoute(BaseRoute):
     """Handle item deletion."""
 
+    def __init__(self, item_service: ItemService, vault_service: VaultService):
+        """Initialize the delete item route."""
+        self.item_service = item_service
+        self.vault_service = vault_service
+
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.delete("/v1/items/<item_id>")
         def handle(item_id: str):
             """
             Delete item.
 
+            This endpoint deletes an item and its associated resources.
+            For MEDIA items, deletes both S3 object and DynamoDB metadata.
+            For other items (NOTE, TASK, EVENT), deletes DynamoDB record only.
+
             Args:
                 item_id: Item identifier
 
-            This endpoint will be implemented in task 13.1.
+            Requirements: 5.1, 24.2
             """
-            logger.info("Delete item endpoint called", extra={"item_id": item_id})
-            return {"message": "Delete item endpoint - to be implemented in task 13.1"}
+            try:
+                # Extract user identity from context
+                user_id = get_user_from_context(app.current_event)
+
+                # Get query parameters
+                query_params = app.current_event.query_string_parameters or {}
+                vault_id = query_params.get("vault_id")
+
+                # Validate required parameters
+                if not vault_id:
+                    return Response(
+                        status_code=400,
+                        content_type="application/json",
+                        body={
+                            "error": {
+                                "code": "INVALID_REQUEST",
+                                "message": "vault_id is required",
+                            }
+                        },
+                    )
+
+                # Verify vault ownership (CRITICAL: Prevents OWASP A01:2021 - Broken Access Control)
+                try:
+                    require_vault_access(self.vault_service, user_id, vault_id, "delete_item")
+                except AuthorizationError as e:
+                    return Response(
+                        status_code=403,
+                        content_type="application/json",
+                        body={
+                            "error": {
+                                "code": "AUTHORIZATION_FAILED",
+                                "message": str(e),
+                            }
+                        },
+                    )
+
+                # Delete item
+                self.item_service.delete_item(user_id, vault_id, item_id)
+
+                logger.info(
+                    "Item deleted successfully",
+                    extra={
+                        "user_id": user_id,
+                        "vault_id": vault_id,
+                        "item_id": item_id,
+                    },
+                )
+
+                return {"message": "Item deleted successfully", "item_id": item_id}
+
+            except AuthenticationError as e:
+                logger.warning("Authentication failed", extra={"error": str(e)})
+                return {
+                    "statusCode": 401,
+                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
+                }
+
+            except AuthorizationError as e:
+                logger.warning("Authorization failed", extra={"error": str(e)})
+                return {
+                    "statusCode": 403,
+                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
+                }
+
+            except ResourceNotFoundError as e:
+                logger.warning("Resource not found", extra={"error": str(e)})
+                return {
+                    "statusCode": 404,
+                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
+                }
+
+            except StorageError as e:
+                logger.error("Storage error", extra={"error": str(e)})
+                return {
+                    "statusCode": 500,
+                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
+                }
+
+            except Exception as e:
+                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
+                return {
+                    "statusCode": 500,
+                    "body": {
+                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
+                    },
+                }
 
 
 class DownloadItemRoute(BaseRoute):
     """Handle item download URL generation."""
 
-    def __init__(self, item_service: ItemService):
+    def __init__(self, item_service: ItemService, vault_service: VaultService):
         """Initialize the download item route."""
         self.item_service = item_service
+        self.vault_service = vault_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.get("/v1/items/<item_id>/download")
@@ -676,6 +803,21 @@ class DownloadItemRoute(BaseRoute):
                             "error": {
                                 "code": "INVALID_REQUEST",
                                 "message": "vault_id is required",
+                            }
+                        },
+                    )
+
+                # Verify vault ownership
+                try:
+                    require_vault_access(self.vault_service, user_id, vault_id, "download_item")
+                except AuthorizationError as e:
+                    return Response(
+                        status_code=403,
+                        content_type="application/json",
+                        body={
+                            "error": {
+                                "code": "AUTHORIZATION_FAILED",
+                                "message": str(e),
                             }
                         },
                     )

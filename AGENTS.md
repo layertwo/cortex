@@ -707,6 +707,29 @@ def handle():
 - Validate all inputs at API Gateway and Lambda layers
 - Sanitize error messages to prevent information leakage
 
+**Authorization Pattern (CRITICAL - OWASP A01:2021):**
+All endpoints that accept `vault_id` as a parameter MUST verify vault ownership before processing:
+```python
+# REQUIRED: Verify vault ownership before any vault operations
+if not self.vault_service.vault_exists(user_id, vault_id):
+    logger.warning(
+        "Vault access denied - user does not own vault",
+        extra={"user_id": user_id, "vault_id": vault_id, "operation": "operation_name"}
+    )
+    return Response(
+        status_code=403,
+        content_type="application/json",
+        body={
+            "error": {
+                "code": "AUTHORIZATION_FAILED",
+                "message": "Access denied to vault",
+            }
+        },
+    )
+```
+
+This prevents broken access control vulnerabilities where users could access or modify data in vaults they don't own. The check must happen at the route layer before calling service methods.
+
 **User-Aware Logging Pattern:**
 ```python
 logger.info("File uploaded", extra={
@@ -749,7 +772,7 @@ logger.info("File uploaded", extra={
 - `GET /v1/items` - List items (filter by type, tags, date buckets)
 - `GET /v1/items/{id}` - Get item metadata
 - `PUT /v1/items/{id}` - Update item
-- `DELETE /v1/items/{id}` - Delete item
+- `DELETE /v1/items/{id}` - Delete item (MEDIA: deletes S3 + DynamoDB; NOTE/TASK/EVENT: deletes DynamoDB only)
 - `GET /v1/items/{id}/download` - Get presigned download URL (for MEDIA items)
 
 **Collections:**
@@ -927,6 +950,55 @@ if s3_metadata.get("version_id"):
 - Detect race conditions by re-checking resource existence on conditional update failure
 - Clean up orphaned metadata when race conditions are detected
 - Prevents OWASP A04:2021 - Insecure Design vulnerabilities
+
+**Item Deletion Pattern (Atomic Multi-Resource Cleanup):**
+```python
+# Deletion pattern for MEDIA items (S3 + DynamoDB)
+# 1. Verify user ownership
+# 2. Handle pending uploads (abort multipart if needed)
+# 3. Delete S3 object first
+# 4. Delete DynamoDB metadata
+# 5. Log orphaned S3 objects if DynamoDB deletion fails
+
+def delete_media_item(user_id, vault_id, item_id, item, item_key):
+    s3_key = item.get("s3_key")
+    
+    # Handle pending uploads
+    if item.get("upload_status") == "PENDING":
+        if upload_id := item.get("upload_id"):
+            self.s3_repo.abort_multipart_upload(s3_key, upload_id)
+        self.items_repo.delete_item(item_key)
+        return
+    
+    # Delete S3 object first
+    try:
+        self.s3_repo.delete_object(s3_key)
+    except StorageError:
+        raise StorageError("Failed to delete media file")
+    
+    # Delete DynamoDB metadata
+    try:
+        self.items_repo.delete_item(item_key)
+    except StorageError:
+        # Log orphaned S3 object for manual cleanup
+        logger.warning(
+            "DynamoDB deletion failed after S3 deletion - orphaned S3 object",
+            extra={"s3_key": s3_key, "action": "manual_cleanup_required"}
+        )
+        raise StorageError("Failed to delete item metadata - S3 object deleted but metadata remains")
+
+# For NOTE/TASK/EVENT items: Delete DynamoDB only (no S3 object)
+def delete_inline_item(user_id, vault_id, item_id, item_key):
+    self.items_repo.delete_item(item_key)
+```
+
+**Key Points:**
+- Delete S3 object before DynamoDB metadata (fail fast if S3 fails)
+- Handle pending uploads by aborting multipart uploads
+- Log orphaned S3 objects when DynamoDB deletion fails (enables manual cleanup)
+- Different deletion paths for MEDIA vs inline items (NOTE/TASK/EVENT)
+- Verify user ownership before any deletion operations
+- Comprehensive error handling and logging for debugging
 
 ## Testing Requirements
 

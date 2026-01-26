@@ -1206,3 +1206,390 @@ class TestGetDownloadUrl:
 
         with pytest.raises(StorageError, match="Item file not found in storage"):
             item_service.get_download_url("user-123", "vault-123", "item-1")
+
+
+class TestDeleteItem:
+    """Test suite for delete_item method."""
+
+    def test_delete_media_item_success(self, item_service, dynamodb_stubber, s3_stubber):
+        """Test successful deletion of MEDIA item with S3 object."""
+        # Configure DynamoDB stubber - get_item for MEDIA type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure S3 stubber - delete_object
+        s3_stubber.add_response(
+            "delete_object",
+            {},
+            {
+                "Bucket": "test-bucket",
+                "Key": "vaults/vault-123/files/item-1/file.jpg",
+            },
+        )
+
+        # Configure DynamoDB stubber - delete_item
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Should not raise any exceptions
+        item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_note_item_success(self, item_service, dynamodb_stubber):
+        """Test successful deletion of NOTE item (no S3 object)."""
+        # Configure DynamoDB stubber - get_item returns None for MEDIA
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure DynamoDB stubber - get_item for NOTE type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#NOTE#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "NOTE"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_content": {"B": b"encrypted-content"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure DynamoDB stubber - delete_item
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Should not raise any exceptions
+        item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_item_not_found(self, item_service, dynamodb_stubber):
+        """Test deletion when item doesn't exist."""
+        # Configure DynamoDB stubber - get_item returns None for all types
+        for _ in range(4):  # MEDIA, NOTE, TASK, EVENT
+            dynamodb_stubber.add_response(
+                "get_item",
+                {},
+                {
+                    "TableName": "test-items-table",
+                    "Key": ANY,
+                },
+            )
+
+        with pytest.raises(ResourceNotFoundError, match="Item not found"):
+            item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_item_unauthorized(self, item_service, dynamodb_stubber):
+        """Test deletion when user doesn't own the item."""
+        # Configure DynamoDB stubber - get_item for MEDIA type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "other-user"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        with pytest.raises(AuthorizationError, match="Access denied to item"):
+            item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_media_item_pending_upload(self, item_service, dynamodb_stubber, s3_stubber):
+        """Test deletion of MEDIA item with pending multipart upload."""
+        # Configure DynamoDB stubber - get_item for MEDIA type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "PENDING"},
+                    "upload_id": {"S": "test-upload-id"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure S3 stubber - abort_multipart_upload
+        s3_stubber.add_response(
+            "abort_multipart_upload",
+            {},
+            {
+                "Bucket": "test-bucket",
+                "Key": "vaults/vault-123/files/item-1/file.jpg",
+                "UploadId": "test-upload-id",
+            },
+        )
+
+        # Configure DynamoDB stubber - delete_item
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Should not raise any exceptions
+        item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_media_item_s3_failure(self, item_service, dynamodb_stubber, s3_stubber):
+        """Test deletion when S3 delete fails."""
+        # Configure DynamoDB stubber - get_item for MEDIA type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure S3 stubber - delete_object fails
+        s3_stubber.add_client_error(
+            "delete_object",
+            service_error_code="InternalError",
+            service_message="S3 error",
+        )
+
+        with pytest.raises(StorageError, match="Failed to delete media file"):
+            item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_media_item_dynamodb_failure(self, item_service, dynamodb_stubber, s3_stubber):
+        """Test deletion when DynamoDB delete fails after S3 delete succeeds."""
+        # Configure DynamoDB stubber - get_item for MEDIA type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#MEDIA#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure S3 stubber - delete_object succeeds
+        s3_stubber.add_response(
+            "delete_object",
+            {},
+            {
+                "Bucket": "test-bucket",
+                "Key": "vaults/vault-123/files/item-1/file.jpg",
+            },
+        )
+
+        # Configure DynamoDB stubber - delete_item fails
+        dynamodb_stubber.add_client_error(
+            "delete_item",
+            service_error_code="InternalError",
+            service_message="DynamoDB error",
+        )
+
+        with pytest.raises(
+            StorageError,
+            match="Failed to delete item metadata - S3 object deleted but metadata remains",
+        ):
+            item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_task_item_success(self, item_service, dynamodb_stubber):
+        """Test successful deletion of TASK item."""
+        # Configure DynamoDB stubber - get_item returns None for MEDIA and NOTE
+        for _ in range(2):
+            dynamodb_stubber.add_response(
+                "get_item",
+                {},
+                {
+                    "TableName": "test-items-table",
+                    "Key": ANY,
+                },
+            )
+
+        # Configure DynamoDB stubber - get_item for TASK type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#TASK#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "TASK"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_content": {"B": b"encrypted-content"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure DynamoDB stubber - delete_item
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Should not raise any exceptions
+        item_service.delete_item("user-123", "vault-123", "item-1")
+
+    def test_delete_event_item_success(self, item_service, dynamodb_stubber):
+        """Test successful deletion of EVENT item."""
+        # Configure DynamoDB stubber - get_item returns None for MEDIA, NOTE, TASK
+        for _ in range(3):
+            dynamodb_stubber.add_response(
+                "get_item",
+                {},
+                {
+                    "TableName": "test-items-table",
+                    "Key": ANY,
+                },
+            )
+
+        # Configure DynamoDB stubber - get_item for EVENT type
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "VAULT#vault-123"},
+                    "SK": {"S": "ITEM#EVENT#item-1"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "EVENT"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_content": {"B": b"encrypted-content"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Configure DynamoDB stubber - delete_item
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+            },
+        )
+
+        # Should not raise any exceptions
+        item_service.delete_item("user-123", "vault-123", "item-1")

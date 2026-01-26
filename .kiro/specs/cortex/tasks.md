@@ -370,14 +370,14 @@
   - **Property 4: Vault data isolation**
   - **Validates: Requirements 2.4, 3.3, 4.3, 5.1**
 
-- [ ] 13. Implement item deletion routes and services
-- [ ] 13.1 Create item deletion route handler
+- [x] 13. Implement item deletion routes and services
+- [x] 13.1 Create item deletion route handler
   - Implement DELETE /v1/items/{id} route
   - Extract user identity from context
   - Support all item types (MEDIA, NOTE, TASK, EVENT)
   - _Requirements: 5.1, 24.2_
 
-- [ ] 13.2 Create item deletion service layer
+- [x] 13.2 Create item deletion service layer
   - Verify user ownership before deletion
   - For MEDIA items: Delete S3 object and DynamoDB metadata atomically
   - For NOTE/TASK/EVENT items: Delete DynamoDB record only

@@ -223,3 +223,43 @@ def require_authentication(event: Dict[str, Any]) -> str:
         raise AuthenticationError("Authentication required")
 
     return user_id
+
+
+def require_vault_access(
+    vault_service, user_id: str, vault_id: str, operation: str = "access"
+) -> None:
+    """
+    Require vault ownership authorization.
+
+    This is a critical security check that prevents OWASP A01:2021 - Broken Access Control.
+    All endpoints that accept vault_id as a parameter MUST call this function before
+    processing the request.
+
+    Args:
+        vault_service: VaultService instance for checking vault ownership
+        user_id: Authenticated user ID
+        vault_id: Vault ID the user is trying to access
+        operation: Operation name for logging (e.g., "delete_item", "list_items")
+
+    Raises:
+        AuthorizationError: If user doesn't own the vault
+
+    Example:
+        ```python
+        user_id = get_user_from_context(app.current_event)
+        vault_id = query_params.get("vault_id")
+        require_vault_access(self.vault_service, user_id, vault_id, "delete_item")
+        ```
+
+    Security: CRITICAL - This prevents users from accessing vaults they don't own
+    """
+    if not vault_service.vault_exists(user_id, vault_id):
+        logger.warning(
+            "Vault access denied - user does not own vault",
+            extra={
+                "user_id": user_id,
+                "vault_id": vault_id,
+                "operation": operation,
+            },
+        )
+        raise AuthorizationError("Access denied to vault")
