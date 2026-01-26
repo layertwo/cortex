@@ -4,8 +4,6 @@ Unit tests for shared/models.py module.
 Tests Pydantic models for request/response validation.
 """
 
-from datetime import datetime
-
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
@@ -84,9 +82,8 @@ class TestInitiateUploadRequest:
 class TestInitiateUploadResponse:
     """Tests for InitiateUploadResponse model."""
 
-    def test_valid_response(self):
+    def test_valid_response(self, now):
         """Should create valid response."""
-        now = datetime.utcnow()
         response = InitiateUploadResponse(
             item_id="item-123",
             upload_url="https://s3.amazonaws.com/bucket/key",
@@ -100,12 +97,12 @@ class TestInitiateUploadResponse:
         assert response.s3_key == "vaults/v1/files/f1/123"
         assert response.upload_id is None
 
-    def test_with_upload_id(self):
+    def test_with_upload_id(self, now):
         """Should accept upload_id for multipart."""
         response = InitiateUploadResponse(
             item_id="item-123",
             upload_url="https://s3.amazonaws.com/bucket/key",
-            expires_at=datetime.utcnow(),
+            expires_at=now,
             s3_key="key",
             upload_id="multipart-upload-id",
         )
@@ -158,9 +155,8 @@ class TestListMediaRequest:
 class TestMediaItem:
     """Tests for MediaItem model."""
 
-    def test_valid_item(self):
+    def test_valid_item(self, now):
         """Should create valid media item."""
-        now = datetime.utcnow()
         item = MediaItem(
             file_id="file-123",
             vault_id="vault-456",
@@ -214,12 +210,11 @@ class TestCreateShareRequest:
         assert request.expires_at is None
         assert request.is_password_protected is False
 
-    def test_with_expiration(self):
+    def test_with_expiration(self, now):
         """Should accept expiration timestamp."""
-        expires = datetime.utcnow()
-        request = CreateShareRequest(file_id="file-123", vault_id="vault-456", expires_at=expires)
+        request = CreateShareRequest(file_id="file-123", vault_id="vault-456", expires_at=now)
 
-        assert request.expires_at == expires
+        assert request.expires_at == now
 
     def test_with_password_protection(self):
         """Should accept password protection flag."""
@@ -419,9 +414,8 @@ class TestCreateCollectionRequest:
 class TestCollectionItem:
     """Tests for CollectionItem model."""
 
-    def test_valid_item(self):
+    def test_valid_item(self, now):
         """Should create valid collection item."""
-        now = datetime.utcnow()
         item = CollectionItem(
             collection_id="col-123",
             vault_id="vault-456",
@@ -434,9 +428,8 @@ class TestCollectionItem:
         assert item.collection_id == "col-123"
         assert item.item_count == 0
 
-    def test_with_item_count(self):
+    def test_with_item_count(self, now):
         """Should accept item count."""
-        now = datetime.utcnow()
         item = CollectionItem(
             collection_id="col-123",
             vault_id="vault-456",
@@ -466,9 +459,8 @@ class TestSearchByTagRequest:
 class TestGenerateRecoveryCodesResponse:
     """Tests for GenerateRecoveryCodesResponse model."""
 
-    def test_valid_response(self):
+    def test_valid_response(self, now):
         """Should create valid response."""
-        now = datetime.utcnow()
         response = GenerateRecoveryCodesResponse(
             recovery_codes=["CODE-1", "CODE-2", "CODE-3"], generated_at=now
         )
