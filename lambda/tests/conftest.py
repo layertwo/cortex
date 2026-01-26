@@ -2,10 +2,17 @@
 Pytest configuration and shared fixtures for Cortex tests.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from src.environment.service_provider import ServiceProvider
 from tests.fixtures.boto import *  # noqa: F403,F401
+
+
+@pytest.fixture
+def now():
+    return datetime.now(tz=timezone.utc)
 
 
 @pytest.fixture

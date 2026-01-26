@@ -7,7 +7,7 @@ error response formatting, and request ID tracking.
 Requirements: 3.5, 8.3
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
 
@@ -213,7 +213,7 @@ def format_error_response(
             "code": code,
             "message": message,
             "requestId": request_id,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
     }
 

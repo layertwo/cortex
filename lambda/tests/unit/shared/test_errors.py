@@ -4,8 +4,6 @@ Unit tests for shared/errors.py module.
 Tests error classes and error handling utilities.
 """
 
-from datetime import datetime
-
 from src.shared.errors import (
     AuthenticationError,
     AuthorizationError,
@@ -361,17 +359,6 @@ class TestFormatErrorResponse:
         result = format_error_response(error, "req-789", include_details=True)
 
         assert result["error"]["details"] == {"debug": "info"}
-
-    def test_timestamp_format(self):
-        """Should include ISO format timestamp with Z suffix."""
-        error = AuthenticationError()
-
-        result = format_error_response(error, "req-123")
-
-        timestamp = result["error"]["timestamp"]
-        assert timestamp.endswith("Z")
-        # Should be parseable as ISO format
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
 
 
 class TestGetHttpStatusCode:

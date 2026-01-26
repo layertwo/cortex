@@ -10,7 +10,7 @@ Requirements: 1.4, 1.5, 4.1, 7.1, 7.2
 import base64
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 import boto3
@@ -588,7 +588,7 @@ def build_s3_key(vault_id: str, file_id: str) -> str:
         S3 object key
     """
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d%H%M%S")
     random_suffix = str(uuid.uuid4())[:8]
 
     return f"vaults/{vault_id}/files/{file_id}/{timestamp}-{random_suffix}"
@@ -612,10 +612,7 @@ def parse_pagination_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
 
         # Prevent DoS via oversized tokens (limit to 1KB of decoded data)
         if len(decoded) > 1024:
-            logger.warning(
-                "Pagination token too large",
-                extra={"decoded_size": len(decoded)}
-            )
+            logger.warning("Pagination token too large", extra={"decoded_size": len(decoded)})
             return None
 
         return json.loads(decoded)
