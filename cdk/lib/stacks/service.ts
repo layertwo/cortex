@@ -287,17 +287,16 @@ export class ServiceStack extends Stack {
         // Requirements: 19.1, 19.2 - Security requirement for account recovery
         const recoveryResource = api.root.addResource("recovery");
         const validateCodeResource = recoveryResource.addResource("validate");
-
-        validateCodeResource.addMethod("POST", lambdaIntegration, {
+        const validateCodeMethod = validateCodeResource.addMethod("POST", lambdaIntegration, {
             // No authorizer - this is used during account recovery
             authorizationType: AuthorizationType.NONE,
             // Strict rate limiting: 10 requests/second, 20 burst
             // This prevents brute force attacks on recovery codes
             methodResponses: [
-                { statusCode: "200" },
-                { statusCode: "400" },
-                { statusCode: "429" }, // Too Many Requests
-                { statusCode: "500" },
+                {statusCode: "200"},
+                {statusCode: "400"},
+                {statusCode: "429"}, // Too Many Requests
+                {statusCode: "500"},
             ],
         });
 
@@ -349,7 +348,7 @@ export class ServiceStack extends Stack {
             stage: api.deploymentStage,
             throttle: [
                 {
-                    method: validateCodeResource.getMethod("POST"),
+                    method: validateCodeMethod,
                     throttle: {
                         rateLimit: 10,
                         burstLimit: 20,

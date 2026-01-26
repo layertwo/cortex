@@ -2,10 +2,18 @@ name: cdk-build
 
 on:
   push:
-    paths: ['cdk/**', '.github/workflows/cdk-build.yml']
-    branches: [ "mainline" ]
+    paths:
+      - '.github/workflows/cdk-build.yml'
+      - 'smithy/**'
+      - 'lambda/**'
+      - 'cdk/**'
+      - 'packages/**'
+      - 'package.*'
   pull_request:
-    paths: ['cdk/**', '.github/workflows/cdk-build.yml']
+    paths:
+      - '.github/workflows/cdk-build.yml'
+      - 'smithy/**'
+      - 'cdk/**'
     branches: [ "mainline" ]
   workflow_dispatch:
 
