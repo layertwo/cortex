@@ -826,3 +826,89 @@ class TestS3RepositoryErrors:
 
         with pytest.raises(StorageError):
             s3_repository.abort_multipart_upload("key", "upload-id")
+
+
+class TestUpdateItemConditionalWithAttributeNames:
+    """Test update_item_conditional with expression attribute names."""
+
+    def test_update_item_conditional_with_attribute_names(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should support expression attribute names in conditional update."""
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"status": {"S": "ACTIVE"}}},
+            {
+                "Key": {"PK": "test", "SK": "test"},
+                "UpdateExpression": "SET #s = :val",
+                "ConditionExpression": "#s = :old",
+                "ExpressionAttributeNames": {"#s": "status"},
+                "ExpressionAttributeValues": {":val": "ACTIVE", ":old": "PENDING"},
+                "ReturnValues": "ALL_NEW",
+                "TableName": dynamodb_table_name,
+            },
+        )
+
+        result = dynamodb_repository.update_item_conditional(
+            key={"PK": "test", "SK": "test"},
+            update_expression="SET #s = :val",
+            condition_expression="#s = :old",
+            expression_attribute_values={":val": "ACTIVE", ":old": "PENDING"},
+            expression_attribute_names={"#s": "status"},
+        )
+
+        assert result["status"] == "ACTIVE"
+
+    def test_update_item_conditional_without_attribute_names(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should work without expression attribute names."""
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"count": {"N": "5"}}},
+            {
+                "Key": {"PK": "test", "SK": "test"},
+                "UpdateExpression": "SET count = :val",
+                "ConditionExpression": "count = :old",
+                "ExpressionAttributeValues": {":val": 5, ":old": 4},
+                "ReturnValues": "ALL_NEW",
+                "TableName": dynamodb_table_name,
+            },
+        )
+
+        result = dynamodb_repository.update_item_conditional(
+            key={"PK": "test", "SK": "test"},
+            update_expression="SET count = :val",
+            condition_expression="count = :old",
+            expression_attribute_values={":val": 5, ":old": 4},
+        )
+
+        assert result["count"] == 5
+
+
+class TestQueryWithAttributeNames:
+    """Test query with expression attribute names."""
+
+    def test_query_with_expression_attribute_names(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should support expression attribute names in query."""
+        dynamodb_stubber.add_response(
+            "query",
+            {"Items": [{"PK": {"S": "test"}, "SK": {"S": "test"}}]},
+            {
+                "ExpressionAttributeNames": {"#pk": "PK"},
+                "ExpressionAttributeValues": {":pk": "test"},
+                "KeyConditionExpression": "#pk = :pk",
+                "ScanIndexForward": True,
+                "TableName": dynamodb_table_name,
+            },
+        )
+
+        result = dynamodb_repository.query(
+            key_condition_expression="#pk = :pk",
+            expression_attribute_values={":pk": "test"},
+            expression_attribute_names={"#pk": "PK"},
+        )
+
+        assert len(result["Items"]) == 1

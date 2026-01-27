@@ -13,6 +13,7 @@ Cortex is a privacy-first backup system where all encryption happens client-side
 - **Two-Password Model**: Separate account password (authentication) and vault password (encryption)
 - **Account Recovery**: 10 one-time recovery codes for account password reset
 - **Multi-Device Support**: Access encrypted data from any device using vault password
+- **Collections**: Organize items into collections with many-to-many relationships
 - **Encrypted Search**: Tag-based organization with deterministic encryption
 - **Secure Sharing**: Share files with unique share keys and optional password protection
 - **Automatic Key Rotation**: Keys rotate every 90 days with background re-encryption
@@ -96,6 +97,25 @@ npm test
 **Recovery Options:**
 - **Account Recovery**: Use one of 10 recovery codes to reset account password (codes are hashed with SHA-256 and invalidated after use)
 - **Vault Recovery**: 24-word BIP39 mnemonic enables vault password reset without re-encrypting data
+
+## Implementation Status
+
+### ✅ Completed Features
+
+- **Infrastructure**: CDK stacks for S3, DynamoDB, Cognito, API Gateway, Lambda
+- **Authentication**: Account password authentication, recovery codes, vault salt management
+- **Item Management**: Create, upload, list, retrieve, update, delete items (MEDIA, NOTE, TASK, EVENT types)
+- **Collection Management**: Create, list, retrieve, update, delete collections with many-to-many item associations
+- **Encryption Library**: ChaCha20-Poly1305 encryption, Argon2id key derivation, password validation
+- **API Layer**: Single Lambda function with APIGatewayRestResolver handling all routes
+- **Testing**: Unit tests with botocore Stubber, property-based tests with Hypothesis
+
+### 🚧 In Progress
+
+- Tag search functionality
+- File sharing system
+- React web application
+- Automatic key rotation
 
 ## Development
 

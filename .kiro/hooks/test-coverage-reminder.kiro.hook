@@ -8,7 +8,7 @@
   },
   "then": {
     "type": "askAgent",
-    "prompt": "A code file was just modified. Please ensure there are corresponding unit tests that cover the new or updated code. If tests don't exist, create them. If they exist but don't cover the changes, update them. Follow the project's testing patterns: use pytest for Python (lambda/tests/unit/), jest for TypeScript encryption library (packages/encryption/tests/unit/), and vitest for React components (packages/web/tests/). Aim for >80% code coverage and include property-based tests where applicable using Hypothesis (Python) or fast-check (TypeScript)."
+    "prompt": "Ensue there are corresponding unit tests that cover the new or updated code. If tests don't exist, create them. If they exist but don't cover the changes, update them. Follow the project's testing patterns: use pytest for Python (lambda/tests/unit/), jest for TypeScript encryption library (packages/encryption/tests/unit/), and vitest for React components (packages/web/tests/). Aim for >80% code coverage and include property-based tests where applicable using Hypothesis (Python) or fast-check (TypeScript).\n\nFor Python, lintinting and sorting are done using black, isort, and flake8. These MUST pass.\n\nAll unit tests existing and impemented MUST pass and cannot FAIL."
   },
   "workspaceFolderName": "cortex",
   "shortName": "test-coverage-reminder"

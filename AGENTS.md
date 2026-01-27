@@ -943,12 +943,39 @@ if s3_metadata.get("version_id"):
     expression_attribute_values[":version_id"] = s3_metadata["version_id"]
 ```
 
+**Example 2: Collection Item Count Race Condition:**
+```python
+# Prevent duplicate count increments when adding items to collections
+# Use conditional write to ensure atomicity between association creation and count increment
+
+try:
+    # Only create association if it doesn't already exist
+    self.collections_repo.put_item(
+        association,
+        condition_expression="attribute_not_exists(PK)",
+    )
+    
+    # Only increment count if put succeeded (new association created)
+    self.collections_repo.update_item(
+        key=collection_key,
+        update_expression="ADD item_count :inc",
+        expression_attribute_values={":inc": 1},
+    )
+    
+except ConditionalCheckFailedError:
+    # Association already exists - idempotent, don't increment
+    logger.info("Item already in collection (idempotent operation)")
+    return success_response
+```
+
 **Key Points:**
 - Use DynamoDB conditional expressions to prevent concurrent modifications
 - Verify external resources (S3) before and after critical operations
 - Store version IDs when available for stronger referential integrity
 - Detect race conditions by re-checking resource existence on conditional update failure
 - Clean up orphaned metadata when race conditions are detected
+- Use `attribute_not_exists()` to prevent duplicate association creation
+- Only increment aggregate counts when new records are created
 - Prevents OWASP A04:2021 - Insecure Design vulnerabilities
 
 **Item Deletion Pattern (Atomic Multi-Resource Cleanup):**
@@ -1013,6 +1040,96 @@ def delete_inline_item(user_id, vault_id, item_id, item_key):
 - Set up CloudWatch alarm if metric > 0 in 24 hours
 - Query logs with filter: `"manual_cleanup_required"`
 - Manual cleanup: Delete DynamoDB item using PK/SK from logs
+
+**Batch Deletion Pattern (Atomic Multi-Item Cleanup):**
+```python
+# CRITICAL: Never delete items in a loop - use batch operations
+# Prevents orphaned data from Lambda timeouts or partial failures
+
+# BAD - Non-atomic loop deletion (vulnerable to timeouts)
+for association in associations:
+    self.repo.delete_item({"PK": association["PK"], "SK": association["SK"]})
+
+# GOOD - Batch deletion with automatic retries
+batch_size = 25  # DynamoDB batch_write_item limit
+total_deleted = 0
+
+for i in range(0, len(associations), batch_size):
+    batch = associations[i:i + batch_size]
+    
+    with self.repo.table.batch_writer() as writer:
+        for association in batch:
+            writer.delete_item(
+                Key={
+                    "PK": association["PK"],
+                    "SK": association["SK"],
+                }
+            )
+            total_deleted += 1
+
+logger.info(
+    "Deleted associations",
+    extra={"count": total_deleted}
+)
+```
+
+**Key Points:**
+- Use `batch_writer()` context manager for atomic batch operations
+- DynamoDB supports up to 25 items per batch_write_item request
+- `batch_writer()` automatically handles retries for failed items
+- Prevents data inconsistency from Lambda timeouts or interruptions
+- Better performance by reducing API calls
+- Track total deleted count for logging and monitoring
+- Prevents OWASP A04:2021 - Insecure Design vulnerabilities
+
+**Paginated Batch Deletion (Large Datasets):**
+```python
+# For large datasets (1000+ items), combine pagination with batch deletion
+# Prevents Lambda timeouts and memory exhaustion
+
+batch_size = 25  # DynamoDB batch_write_item limit
+total_deleted = 0
+exclusive_start_key = None
+
+while True:
+    # Query in pages of 100 items
+    query_params = {
+        "key_condition_expression": "PK = :pk",
+        "expression_attribute_values": {":pk": f"COLLECTION#{collection_id}"},
+        "limit": 100,
+    }
+    
+    if exclusive_start_key:
+        query_params["exclusive_start_key"] = exclusive_start_key
+    
+    result = self.repo.query(**query_params)
+    associations = result["Items"]
+    
+    # Delete in batches of 25
+    for i in range(0, len(associations), batch_size):
+        batch = associations[i:i + batch_size]
+        
+        with self.repo.table.batch_writer() as writer:
+            for association in batch:
+                writer.delete_item(
+                    Key={"PK": association["PK"], "SK": association["SK"]}
+                )
+                total_deleted += 1
+    
+    # Check for more pages
+    if not result.get("LastEvaluatedKey"):
+        break
+    
+    exclusive_start_key = result["LastEvaluatedKey"]
+
+logger.info("Deleted associations", extra={"count": total_deleted})
+```
+
+**Paginated Deletion Benefits:**
+- Constant memory usage (~100 items at a time)
+- No Lambda timeouts regardless of dataset size
+- Lower DynamoDB costs (spreads reads across queries)
+- Consistent performance for any collection size
 
 ## Testing Requirements
 
