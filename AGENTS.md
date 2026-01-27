@@ -958,7 +958,7 @@ if s3_metadata.get("version_id"):
 # 2. Handle pending uploads (abort multipart if needed)
 # 3. Delete S3 object first
 # 4. Delete DynamoDB metadata
-# 5. Log orphaned S3 objects if DynamoDB deletion fails
+# 5. Emit metric and log if DynamoDB deletion fails
 
 def delete_media_item(user_id, vault_id, item_id, item, item_key):
     s3_key = item.get("s3_key")
@@ -980,9 +980,16 @@ def delete_media_item(user_id, vault_id, item_id, item, item_key):
     try:
         self.items_repo.delete_item(item_key)
     except StorageError:
-        # Log orphaned S3 object for manual cleanup
+        # Emit metric for monitoring/alerting
+        metrics.add_metric(
+            name="OrphanedMetadata",
+            unit=MetricUnit.Count,
+            value=1,
+        )
+        
+        # Log orphaned metadata for manual cleanup
         logger.warning(
-            "DynamoDB deletion failed after S3 deletion - orphaned S3 object",
+            "DynamoDB deletion failed after S3 deletion - orphaned metadata",
             extra={"s3_key": s3_key, "action": "manual_cleanup_required"}
         )
         raise StorageError("Failed to delete item metadata - S3 object deleted but metadata remains")
@@ -995,10 +1002,17 @@ def delete_inline_item(user_id, vault_id, item_id, item_key):
 **Key Points:**
 - Delete S3 object before DynamoDB metadata (fail fast if S3 fails)
 - Handle pending uploads by aborting multipart uploads
-- Log orphaned S3 objects when DynamoDB deletion fails (enables manual cleanup)
+- Emit CloudWatch metric (`OrphanedMetadata`) when DynamoDB deletion fails
+- Log orphaned metadata for manual cleanup (enables CloudWatch Insights queries)
 - Different deletion paths for MEDIA vs inline items (NOTE/TASK/EVENT)
 - Verify user ownership before any deletion operations
 - Comprehensive error handling and logging for debugging
+
+**Monitoring Orphaned Metadata:**
+- Metric: `Cortex/OrphanedMetadata` (Count)
+- Set up CloudWatch alarm if metric > 0 in 24 hours
+- Query logs with filter: `"manual_cleanup_required"`
+- Manual cleanup: Delete DynamoDB item using PK/SK from logs
 
 ## Testing Requirements
 
