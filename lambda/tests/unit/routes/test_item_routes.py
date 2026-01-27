@@ -141,9 +141,9 @@ class TestListItemsRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [200, 401]
+        # Should return 401 (authentication), 403 (vault ownership), or 200 (success)
+        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
+        assert response["statusCode"] in [200, 401, 403]
 
 
 class TestGetItemRoute:
@@ -191,9 +191,9 @@ class TestGetItemRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 or 404 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [200, 401, 404]
+        # Should return 401 (authentication), 403 (vault ownership), 404 (not found), or 200 (success)
+        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
+        assert response["statusCode"] in [200, 401, 403, 404]
 
 
 class TestUpdateItemRoute:
@@ -222,8 +222,32 @@ class TestUpdateItemRoute:
 class TestDeleteItemRoute:
     """Test suite for DeleteItemRoute through lambda handler."""
 
-    def test_delete_item_route_handler(self, mock_service_provider):
-        """Test delete item route handler returns expected response."""
+    def test_delete_item_route_handler_with_vault_id(self, mock_service_provider):
+        """Test delete item route handler with vault_id parameter."""
+        item_id = "test-item-123"
+        vault_id = "test-vault-456"
+
+        event = {
+            "resource": "/v1/items/{item_id}",
+            "path": f"/v1/items/{item_id}",
+            "httpMethod": "DELETE",
+            "headers": {"Content-Type": "application/json"},
+            "pathParameters": {"item_id": item_id},
+            "queryStringParameters": {"vault_id": vault_id},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": "test-user-123"}},
+            },
+        }
+
+        response = lambda_handler(event, {}, mock_service_provider)
+
+        # Should return 401 (authentication), 403 (vault ownership), or 200 (success)
+        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
+        assert response["statusCode"] in [200, 401, 403]
+
+    def test_delete_item_route_handler_missing_vault_id(self, mock_service_provider):
+        """Test delete item route handler returns error when vault_id is missing."""
         item_id = "test-item-123"
         event = {
             "resource": "/v1/items/{item_id}",
@@ -231,14 +255,77 @@ class TestDeleteItemRoute:
             "httpMethod": "DELETE",
             "headers": {"Content-Type": "application/json"},
             "pathParameters": {"item_id": item_id},
-            "requestContext": {"requestId": "test-request-id"},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": "test-user-123"}},
+            },
         }
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
-        assert "Delete item endpoint" in body["message"]
+        # Should return 401 because authentication is not fully mocked
+        # This is expected behavior - the route requires proper authentication
+        assert response["statusCode"] in [400, 401]
+
+    def test_delete_item_route_enforces_vault_authorization(
+        self, mock_service_provider, monkeypatch
+    ):
+        """
+        Test that delete item route enforces vault ownership authorization.
+
+        This test verifies the security fix for OWASP A01:2021 - Broken Access Control.
+        It ensures that users cannot delete items from vaults they don't own.
+
+        Security: CRITICAL - Prevents unauthorized access to other users' vaults
+        """
+        from unittest.mock import MagicMock
+
+        item_id = "test-item-123"
+        vault_id = "test-vault-456"
+        user_id = "test-user-123"
+
+        # Mock vault_service.vault_exists to return False (user doesn't own vault)
+        mock_vault_service = MagicMock()
+        mock_vault_service.vault_exists.return_value = False
+
+        # Replace the vault_service in the service provider
+        monkeypatch.setattr(mock_service_provider, "vault_service", mock_vault_service)
+
+        # Mock get_user_from_context to return a user_id
+        def mock_get_user(event):
+            return user_id
+
+        monkeypatch.setattr("src.api.routes.items.get_user_from_context", mock_get_user)
+
+        event = {
+            "resource": "/v1/items/{item_id}",
+            "path": f"/v1/items/{item_id}",
+            "httpMethod": "DELETE",
+            "headers": {"Content-Type": "application/json"},
+            "pathParameters": {"item_id": item_id},
+            "queryStringParameters": {"vault_id": vault_id},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": user_id}},
+            },
+        }
+
+        response = lambda_handler(event, {}, mock_service_provider)
+
+        # Verify vault ownership check was called
+        mock_vault_service.vault_exists.assert_called_once_with(user_id, vault_id)
+
+        # Verify 403 Forbidden is returned when user doesn't own vault
+        assert response["statusCode"] == 403
+
+        # Verify error message indicates authorization failure
+        body = (
+            json.loads(response["body"])
+            if isinstance(response.get("body"), str)
+            else response.get("body", {})
+        )
+        assert body.get("error", {}).get("code") == "AUTHORIZATION_FAILED"
+        assert "vault" in body.get("error", {}).get("message", "").lower()
 
 
 class TestDownloadItemRoute:
@@ -286,9 +373,9 @@ class TestDownloadItemRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 or 404 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [200, 401, 404]
+        # Should return 401 (authentication), 403 (vault ownership), 404 (not found), or 200 (success)
+        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
+        assert response["statusCode"] in [200, 401, 403, 404]
 
 
 class TestSearchItemRoute:

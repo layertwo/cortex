@@ -9,6 +9,7 @@ on:
       - 'cdk/**'
       - 'packages/**'
       - 'package.*'
+    branches: [ "mainline" ]
   pull_request:
     paths:
       - '.github/workflows/cdk-build.yml'
