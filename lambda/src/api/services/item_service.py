@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import boto3
-from aws_lambda_powertools import Logger
+from aws_lambda_powertools import Logger, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
 
 from src.shared.errors import AuthorizationError, ResourceNotFoundError, StorageError
 from src.shared.models import (
@@ -27,6 +28,7 @@ from src.shared.models import (
 from src.shared.repository import DynamoDBRepository, S3Repository, build_s3_key
 
 logger = Logger(child=True)
+metrics = Metrics(namespace="Cortex")
 
 # Multipart upload threshold: 100MB
 MULTIPART_THRESHOLD_BYTES = 100 * 1024 * 1024
@@ -866,10 +868,17 @@ class ItemService:
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
 
+            # Emit metric for monitoring/alerting
+            metrics.add_metric(
+                name="OrphanedMetadata",
+                unit=MetricUnit.Count,
+                value=1,
+            )
+
             # Attempt rollback: This is best-effort since S3 delete succeeded
             # In production, consider using S3 versioning to enable true rollback
             logger.warning(
-                "DynamoDB deletion failed after S3 deletion - orphaned S3 object",
+                "DynamoDB deletion failed after S3 deletion - orphaned metadata",
                 extra={
                     "user_id": user_id,
                     "item_id": item_id,
