@@ -11,6 +11,7 @@ from src.shared.models import (
     CollectionItem,
     CompleteUploadRequest,
     CreateCollectionRequest,
+    CreateItemRequest,
     CreateShareRequest,
     CreateVaultRequest,
     DynamoDBFileItem,
@@ -480,3 +481,158 @@ class TestValidateRecoveryCodeRequest:
 
         assert request.user_id == "user-123"
         assert request.recovery_code == "XXXX-XXXX-XXXX-XXXX"
+
+
+class TestListMediaRequestValidators:
+    """Tests for ListMediaRequest validators."""
+
+    def test_invalid_sort_order(self):
+        """Should reject invalid sort_order."""
+        with pytest.raises(PydanticValidationError) as exc_info:
+            ListMediaRequest(vault_id="vault-123", sort_order="invalid")
+
+        assert "sort_order must be 'asc' or 'desc'" in str(exc_info.value)
+
+    def test_valid_sort_order_asc(self):
+        """Should accept 'asc' sort_order."""
+        request = ListMediaRequest(vault_id="vault-123", sort_order="asc")
+        assert request.sort_order == "asc"
+
+    def test_valid_sort_order_desc(self):
+        """Should accept 'desc' sort_order."""
+        request = ListMediaRequest(vault_id="vault-123", sort_order="desc")
+        assert request.sort_order == "desc"
+
+    def test_default_values(self):
+        """Should use default values when not specified."""
+        request = ListMediaRequest(vault_id="vault-123")
+        assert request.sort_order == "desc"
+        assert request.page_size == 50
+        assert request.next_token is None
+
+
+class TestCreateItemRequest:
+    """Tests for CreateItemRequest model."""
+
+    def test_valid_request_with_all_fields(self):
+        """Should create valid request with all fields."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type="NOTE",
+            encrypted_content=b"encrypted-note-content",
+            encrypted_metadata=b"encrypted-metadata",
+            encrypted_tags=[b"tag1", b"tag2"],
+        )
+
+        assert request.vault_id == "vault-123"
+        assert request.item_type == "NOTE"
+        assert request.encrypted_content == b"encrypted-note-content"
+        assert request.encrypted_metadata == b"encrypted-metadata"
+        assert request.encrypted_tags == [b"tag1", b"tag2"]
+
+
+class TestCreateItemRequestValidation:
+    """Tests for CreateItemRequest validation."""
+
+    def test_create_item_with_minimal_fields(self):
+        """Should create item with minimal required fields."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type="NOTE",
+            encrypted_content=b"content",
+            encrypted_metadata=b"metadata",
+        )
+
+        assert request.vault_id == "vault-123"
+        assert request.item_type == "NOTE"
+        assert request.encrypted_content == b"content"
+        assert request.encrypted_metadata == b"metadata"
+        assert request.encrypted_tags is None
+
+    def test_create_item_with_empty_tags_list(self):
+        """Should accept empty tags list."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type="TASK",
+            encrypted_content=b"task-content",
+            encrypted_metadata=b"metadata",
+            encrypted_tags=[],
+        )
+
+        assert request.encrypted_tags == []
+
+
+class TestListItemsRequestValidators:
+    """Tests for ListItemsRequest validators."""
+
+    def test_item_type_none_passes_validation(self):
+        """Should accept None for item_type (covers the v is None branch)."""
+        from src.shared.models import ListItemsRequest
+
+        request = ListItemsRequest(vault_id="vault-123", item_type=None)
+        assert request.item_type is None
+
+    def test_item_type_valid_media(self):
+        """Should accept valid MEDIA item_type."""
+        from src.shared.models import ItemType, ListItemsRequest
+
+        request = ListItemsRequest(vault_id="vault-123", item_type=ItemType.MEDIA)
+        assert request.item_type == ItemType.MEDIA
+
+    def test_item_type_valid_note(self):
+        """Should accept valid NOTE item_type."""
+        from src.shared.models import ItemType, ListItemsRequest
+
+        request = ListItemsRequest(vault_id="vault-123", item_type=ItemType.NOTE)
+        assert request.item_type == ItemType.NOTE
+
+    def test_item_type_valid_task(self):
+        """Should accept valid TASK item_type."""
+        from src.shared.models import ItemType, ListItemsRequest
+
+        request = ListItemsRequest(vault_id="vault-123", item_type=ItemType.TASK)
+        assert request.item_type == ItemType.TASK
+
+    def test_item_type_valid_event(self):
+        """Should accept valid EVENT item_type."""
+        from src.shared.models import ItemType, ListItemsRequest
+
+        request = ListItemsRequest(vault_id="vault-123", item_type=ItemType.EVENT)
+        assert request.item_type == ItemType.EVENT
+
+
+class TestCompleteUploadRequestValidation:
+    """Tests for CompleteUploadRequest validation."""
+
+    def test_complete_upload_with_required_fields(self):
+        """Should create request with required fields."""
+        request = CompleteUploadRequest(item_id="item-123", vault_id="vault-123")
+
+        assert request.item_id == "item-123"
+        assert request.vault_id == "vault-123"
+
+
+class TestCreateItemRequestItemTypeValidation:
+    """Tests for CreateItemRequest item_type validation."""
+
+    def test_create_item_invalid_item_type_media(self):
+        """Should reject MEDIA type for inline content (CreateItemRequest)."""
+        with pytest.raises(PydanticValidationError) as exc_info:
+            CreateItemRequest(
+                vault_id="vault-123",
+                item_type="MEDIA",
+                encrypted_content=b"content",
+                encrypted_metadata=b"metadata",
+            )
+
+        assert "item_type must be NOTE, TASK, or EVENT" in str(exc_info.value)
+
+    def test_create_item_valid_note_type(self):
+        """Should accept NOTE type."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type="NOTE",
+            encrypted_content=b"content",
+            encrypted_metadata=b"metadata",
+        )
+        assert request.item_type == "NOTE"

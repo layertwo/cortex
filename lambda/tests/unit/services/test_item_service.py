@@ -1593,3 +1593,38 @@ class TestDeleteItem:
 
         # Should not raise any exceptions
         item_service.delete_item("user-123", "vault-123", "item-1")
+
+
+class TestDeleteItemErrorHandling:
+    """Test error handling in delete_item."""
+
+    def test_delete_item_s3_error_raises_storage_error(self, boto_session):
+        """Test that S3 deletion errors are properly raised."""
+        from unittest.mock import MagicMock
+
+        service = ItemService(
+            session=boto_session,
+            items_table_name="test-items",
+            s3_bucket_name="test-bucket",
+        )
+
+        # Mock get_item to return a MEDIA item
+        service.items_repo.get_item = MagicMock(
+            return_value={
+                "item_id": "item-123",
+                "item_type": "MEDIA",
+                "vault_id": "vault-123",
+                "user_id": "user-123",
+                "s3_key": "test-key",
+                "upload_status": "COMPLETE",
+            }
+        )
+
+        # Mock S3 delete to raise an error
+        from src.shared.errors import StorageError
+
+        service.s3_repo.delete_object = MagicMock(side_effect=StorageError("S3 delete failed"))
+
+        # Should raise StorageError
+        with pytest.raises(StorageError, match="Failed to delete media file"):
+            service.delete_item("user-123", "vault-123", "item-123")

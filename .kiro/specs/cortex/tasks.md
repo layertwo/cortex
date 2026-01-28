@@ -389,8 +389,8 @@
   - **Property 8: Deletion maintains referential integrity**
   - **Validates: Requirements 5.2, 5.3, 5.4**
 
-- [ ] 14. Implement collection management routes and services
-- [ ] 14.1 Create collection CRUD route handlers
+- [x] 14. Implement collection management routes and services
+- [x] 14.1 Create collection CRUD route handlers
   - Implement POST /v1/collections route (create)
   - Implement GET /v1/collections route (list)
   - Implement GET /v1/collections/{id} route (get details)
@@ -398,7 +398,7 @@
   - Implement DELETE /v1/collections/{id} route (delete)
   - _Requirements: 12.1, 12.2, 13.1, 13.3, 13.4, 13.5_
 
-- [ ] 14.2 Create collection service layer
+- [x] 14.2 Create collection service layer
   - Create collection with encrypted metadata
   - List user's collections with item counts
   - Update collection metadata
@@ -406,13 +406,13 @@
   - Enforce user isolation for all operations
   - _Requirements: 12.1, 12.2, 13.1, 13.3, 13.4, 13.5_
 
-- [ ] 14.3 Create item-collection association route handlers
+- [x] 14.3 Create item-collection association route handlers
   - Implement POST /v1/collections/{id}/items route (add items)
   - Implement DELETE /v1/collections/{id}/items/{itemId} route (remove items)
   - Support all item types (MEDIA, NOTE, TASK, EVENT)
   - _Requirements: 12.3, 12.5, 13.2_
 
-- [ ] 14.4 Create item-collection association service layer
+- [x] 14.4 Create item-collection association service layer
   - Add items to collections (many-to-many support)
   - Remove items from collections (preserve items)
   - Query collections by item ID (using GSI)

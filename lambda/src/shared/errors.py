@@ -112,8 +112,16 @@ class RateLimitError(CortexError):
 class StorageError(CortexError):
     """Raised when S3 or DynamoDB operation fails."""
 
-    def __init__(self, message: str = "Storage operation failed"):
+    def __init__(self, message: str = "Storage operation failed", error_code: Optional[str] = None):
         super().__init__(code=ErrorCode.STORAGE_ERROR, message=message, status_code=500)
+        self.error_code = error_code  # Preserve original AWS error code
+
+
+class ConditionalCheckFailedError(StorageError):
+    """Raised when DynamoDB conditional check fails (item already exists or condition not met)."""
+
+    def __init__(self, message: str = "Conditional check failed"):
+        super().__init__(message=message, error_code="ConditionalCheckFailedException")
 
 
 class ShareExpiredError(CortexError):

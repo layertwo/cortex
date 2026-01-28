@@ -17,7 +17,7 @@ import boto3
 from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
 
-from src.shared.errors import StorageError
+from src.shared.errors import ConditionalCheckFailedError, StorageError
 
 logger = Logger(child=True)
 
@@ -79,6 +79,16 @@ class DynamoDBRepository:
             self.table.put_item(**kwargs)
 
         except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code")
+
+            # Preserve ConditionalCheckFailedException for idempotency handling
+            if error_code == "ConditionalCheckFailedException":
+                logger.info(
+                    "DynamoDB conditional check failed",
+                    extra={"table": self.table_name, "condition": condition_expression},
+                )
+                raise ConditionalCheckFailedError(f"Conditional check failed in {self.table_name}")
+
             logger.error(
                 "DynamoDB put_item failed", extra={"error": str(e), "table": self.table_name}
             )

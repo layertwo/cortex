@@ -159,6 +159,17 @@ class ServiceProvider:
             s3_bucket_name=self.files_bucket_name,
         )
 
+    @cached_property
+    def collection_service(self):
+        """Create collection service."""
+        from src.api.services.collection_service import CollectionService
+
+        return CollectionService(
+            session=self.session,
+            collections_table_name=self.collections_table_name,
+            items_table_name=self.items_table_name,
+        )
+
     # API Router with all routes
     @cached_property
     def api_router(self):
@@ -188,13 +199,27 @@ class ServiceProvider:
                 DownloadItemRoute(item_service=self.item_service, vault_service=self.vault_service),
                 SearchItemsRoute(),
                 # Collection routes
-                CreateCollectionRoute(),
-                ListCollectionsRoute(),
-                GetCollectionRoute(),
-                UpdateCollectionRoute(),
-                DeleteCollectionRoute(),
-                AddItemToCollectionRoute(),
-                RemoveItemFromCollectionRoute(),
+                CreateCollectionRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
+                ListCollectionsRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
+                GetCollectionRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
+                UpdateCollectionRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
+                DeleteCollectionRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
+                AddItemToCollectionRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
+                RemoveItemFromCollectionRoute(
+                    collection_service=self.collection_service, vault_service=self.vault_service
+                ),
                 # Tag routes
                 SearchTagsRoute(),
                 # Share routes

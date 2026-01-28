@@ -20,6 +20,16 @@ def recovery_table_name():
     return "test-recovery-table"
 
 
+@pytest.fixture
+def collections_table_name():
+    return "test-collections-table"
+
+
+@pytest.fixture
+def items_table_name():
+    return "test-items-table"
+
+
 @pytest.fixture(autouse=True)
 def setup_environment(
     monkeypatch,
