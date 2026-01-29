@@ -21,6 +21,11 @@ def recovery_table_name():
 
 
 @pytest.fixture
+def vaults_table_name():
+    return "test-vaults-table"
+
+
+@pytest.fixture
 def collections_table_name():
     return "test-collections-table"
 

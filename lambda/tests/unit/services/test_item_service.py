@@ -6,13 +6,18 @@ and completing uploads for all item types.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    ForbiddenError,
+    InternalServerError,
+    NotFoundError,
+)
 from botocore.stub import ANY
 
 from src.api.services.item_service import ItemService
-from src.shared.errors import AuthorizationError, ResourceNotFoundError, StorageError
 from src.shared.models import (
     CompleteUploadRequest,
     CreateItemRequest,
@@ -262,7 +267,7 @@ class TestCompleteUpload:
             {
                 "Attributes": {
                     "upload_status": {"S": "COMPLETE"},
-                    "updated_at": {"N": str(int(datetime.utcnow().timestamp()))},
+                    "updated_at": {"N": str(int(datetime.now(tz=timezone.utc).timestamp()))},
                 }
             },
             {
@@ -303,7 +308,7 @@ class TestCompleteUpload:
             },
         )
 
-        with pytest.raises(ResourceNotFoundError):
+        with pytest.raises(NotFoundError):
             item_service.complete_upload("user-123", request)
 
     def test_complete_upload_unauthorized(self, item_service, dynamodb_stubber):
@@ -333,7 +338,7 @@ class TestCompleteUpload:
             },
         )
 
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ForbiddenError):
             item_service.complete_upload("user-123", request)
 
     def test_complete_upload_s3_object_missing(self, item_service, dynamodb_stubber, s3_stubber):
@@ -379,7 +384,7 @@ class TestCompleteUpload:
             },
         )
 
-        with pytest.raises(StorageError, match="Upload verification failed"):
+        with pytest.raises(InternalServerError, match="Upload verification failed"):
             item_service.complete_upload("user-123", request)
 
     def test_complete_upload_s3_object_missing_with_multipart(
@@ -440,7 +445,7 @@ class TestCompleteUpload:
             },
         )
 
-        with pytest.raises(StorageError, match="Upload verification failed"):
+        with pytest.raises(InternalServerError, match="Upload verification failed"):
             item_service.complete_upload("user-123", request)
 
     def test_complete_upload_toctou_race_condition(
@@ -524,7 +529,7 @@ class TestCompleteUpload:
             },
         )
 
-        with pytest.raises(StorageError, match="object was deleted during completion"):
+        with pytest.raises(InternalServerError, match="object was deleted during completion"):
             item_service.complete_upload("user-123", request)
 
     def test_complete_upload_with_version_id(self, item_service, dynamodb_stubber, s3_stubber):
@@ -578,7 +583,7 @@ class TestCompleteUpload:
             {
                 "Attributes": {
                     "upload_status": {"S": "COMPLETE"},
-                    "updated_at": {"N": str(int(datetime.utcnow().timestamp()))},
+                    "updated_at": {"N": str(int(datetime.now(tz=timezone.utc).timestamp()))},
                     "s3_version_id": {"S": "version-abc123"},
                 }
             },
@@ -977,7 +982,7 @@ class TestGetItem:
             },
         )
 
-        with pytest.raises(AuthorizationError, match="Access denied to item"):
+        with pytest.raises(ForbiddenError, match="Access denied to item"):
             item_service.get_item("user-123", "vault-123", "item-1")
 
     def test_get_item_filters_pending(self, item_service, dynamodb_stubber):
@@ -1075,7 +1080,7 @@ class TestGetDownloadUrl:
             },
         )
 
-        with pytest.raises(ResourceNotFoundError, match="Item not found"):
+        with pytest.raises(NotFoundError, match="Item not found"):
             item_service.get_download_url("user-123", "vault-123", "nonexistent")
 
     def test_get_download_url_unauthorized(self, item_service, dynamodb_stubber):
@@ -1104,13 +1109,11 @@ class TestGetDownloadUrl:
             },
         )
 
-        with pytest.raises(AuthorizationError, match="Access denied to item"):
+        with pytest.raises(ForbiddenError, match="Access denied to item"):
             item_service.get_download_url("user-123", "vault-123", "item-1")
 
     def test_get_download_url_not_media_type(self, item_service, dynamodb_stubber):
         """Test download URL for non-MEDIA item type."""
-        from src.shared.errors import ValidationError
-
         # Configure stubber - item is NOTE type
         dynamodb_stubber.add_response(
             "get_item",
@@ -1134,13 +1137,11 @@ class TestGetDownloadUrl:
             },
         )
 
-        with pytest.raises(ValidationError, match="Download URL only available for MEDIA items"):
+        with pytest.raises(BadRequestError, match="Download URL only available for MEDIA items"):
             item_service.get_download_url("user-123", "vault-123", "item-1")
 
     def test_get_download_url_pending_upload(self, item_service, dynamodb_stubber):
         """Test download URL when upload is still pending."""
-        from src.shared.errors import ValidationError
-
         # Configure stubber - item upload is PENDING
         dynamodb_stubber.add_response(
             "get_item",
@@ -1166,7 +1167,7 @@ class TestGetDownloadUrl:
             },
         )
 
-        with pytest.raises(ValidationError, match="Item upload not yet complete"):
+        with pytest.raises(BadRequestError, match="Item upload not yet complete"):
             item_service.get_download_url("user-123", "vault-123", "item-1")
 
     def test_get_download_url_s3_object_missing(self, item_service, dynamodb_stubber, s3_stubber):
@@ -1204,7 +1205,7 @@ class TestGetDownloadUrl:
             http_status_code=404,
         )
 
-        with pytest.raises(StorageError, match="Item file not found in storage"):
+        with pytest.raises(InternalServerError, match="Item file not found in storage"):
             item_service.get_download_url("user-123", "vault-123", "item-1")
 
 
@@ -1323,7 +1324,7 @@ class TestDeleteItem:
                 },
             )
 
-        with pytest.raises(ResourceNotFoundError, match="Item not found"):
+        with pytest.raises(NotFoundError, match="Item not found"):
             item_service.delete_item("user-123", "vault-123", "item-1")
 
     def test_delete_item_unauthorized(self, item_service, dynamodb_stubber):
@@ -1352,7 +1353,7 @@ class TestDeleteItem:
             },
         )
 
-        with pytest.raises(AuthorizationError, match="Access denied to item"):
+        with pytest.raises(ForbiddenError, match="Access denied to item"):
             item_service.delete_item("user-123", "vault-123", "item-1")
 
     def test_delete_media_item_pending_upload(self, item_service, dynamodb_stubber, s3_stubber):
@@ -1441,7 +1442,7 @@ class TestDeleteItem:
             service_message="S3 error",
         )
 
-        with pytest.raises(StorageError, match="Failed to delete media file"):
+        with pytest.raises(InternalServerError, match="Failed to delete media file"):
             item_service.delete_item("user-123", "vault-123", "item-1")
 
     def test_delete_media_item_dynamodb_failure(self, item_service, dynamodb_stubber, s3_stubber):
@@ -1489,7 +1490,7 @@ class TestDeleteItem:
         )
 
         with pytest.raises(
-            StorageError,
+            InternalServerError,
             match="Failed to delete item metadata - S3 object deleted but metadata remains",
         ):
             item_service.delete_item("user-123", "vault-123", "item-1")
@@ -1621,10 +1622,10 @@ class TestDeleteItemErrorHandling:
         )
 
         # Mock S3 delete to raise an error
-        from src.shared.errors import StorageError
+        service.s3_repo.delete_object = MagicMock(
+            side_effect=InternalServerError("S3 delete failed")
+        )
 
-        service.s3_repo.delete_object = MagicMock(side_effect=StorageError("S3 delete failed"))
-
-        # Should raise StorageError
-        with pytest.raises(StorageError, match="Failed to delete media file"):
+        # Should raise InternalServerError
+        with pytest.raises(InternalServerError, match="Failed to delete media file"):
             service.delete_item("user-123", "vault-123", "item-123")

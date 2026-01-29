@@ -13,11 +13,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from aws_lambda_powertools import Logger
-
-from src.shared.errors import (
-    RecoveryCodeInvalidError,
-    ValidationError,
-)
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError, UnauthorizedError
 
 logger = Logger(child=True)
 
@@ -67,7 +63,7 @@ class AuthService:
             AuthenticationError: If credentials are invalid
         """
         if not email or not password:
-            raise ValidationError("Email and password are required")
+            raise BadRequestError("Email and password are required")
 
         # In production, this would call Cognito's InitiateAuth
         # For now, we return a placeholder indicating the flow
@@ -96,7 +92,7 @@ class AuthService:
             AuthenticationError: If refresh token is invalid
         """
         if not refresh_token:
-            raise ValidationError("Refresh token is required")
+            raise BadRequestError("Refresh token is required")
 
         logger.info("Token refresh requested")
 
@@ -125,7 +121,7 @@ class AuthService:
             AuthenticationError: If user not found
         """
         if not email or not recovery_code:
-            raise ValidationError("Email and recovery code are required")
+            raise BadRequestError("Email and recovery code are required")
 
         logger.info(
             "Account recovery initiated",
@@ -161,7 +157,7 @@ class AuthService:
         Requirements: 19.1
         """
         if not user_id:
-            raise ValidationError("User ID is required")
+            raise BadRequestError("User ID is required")
 
         logger.info("Generating recovery codes", extra={"user_id": user_id})
 
@@ -196,7 +192,7 @@ class AuthService:
         Requirements: 19.2, 19.3
         """
         if not user_id or not recovery_code:
-            raise ValidationError("User ID and recovery code are required")
+            raise BadRequestError("User ID and recovery code are required")
 
         # Normalize and hash the code
         normalized_code = self._normalize_recovery_code(recovery_code)
@@ -214,7 +210,7 @@ class AuthService:
                     "Recovery code not found",
                     extra={"user_id": user_id},
                 )
-                raise RecoveryCodeInvalidError()
+                raise UnauthorizedError("Recovery code is invalid or already used")
 
             # Defense-in-depth: verify hash match using constant-time comparison
             # to prevent timing attacks even though DynamoDB already did the lookup
@@ -224,7 +220,7 @@ class AuthService:
                     "Recovery code hash mismatch",
                     extra={"user_id": user_id},
                 )
-                raise RecoveryCodeInvalidError()
+                raise UnauthorizedError("Recovery code is invalid or already used")
 
             # Check if code is still valid (not used)
             if not item.get("is_valid", False):
@@ -232,7 +228,7 @@ class AuthService:
                     "Recovery code already used",
                     extra={"user_id": user_id},
                 )
-                raise RecoveryCodeInvalidError("Recovery code has already been used")
+                raise UnauthorizedError("Recovery code has already been used")
 
             # Mark code as used
             self._invalidate_recovery_code(user_id, code_hash)
@@ -244,14 +240,14 @@ class AuthService:
 
             return True
 
-        except RecoveryCodeInvalidError:
+        except UnauthorizedError:
             raise
         except Exception as e:
             logger.error(
                 "Error validating recovery code",
                 extra={"user_id": user_id, "error": str(e)},
             )
-            raise RecoveryCodeInvalidError()
+            raise UnauthorizedError("Recovery code is invalid or already used")
 
     def _generate_recovery_code(self) -> str:
         """

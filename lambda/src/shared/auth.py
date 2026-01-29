@@ -10,8 +10,7 @@ Requirements: 3.1, 3.2, 3.4
 from typing import Any, Dict, Optional
 
 from aws_lambda_powertools import Logger
-
-from src.shared.errors import AuthenticationError, AuthorizationError
+from aws_lambda_powertools.event_handler.exceptions import ForbiddenError, UnauthorizedError
 
 logger = Logger(child=True)
 
@@ -50,7 +49,7 @@ def get_user_from_context(event: Dict[str, Any]) -> str:
             logger.warning(
                 "User ID not found in request context", extra={"request_context": request_context}
             )
-            raise AuthenticationError("User identity not found in request")
+            raise UnauthorizedError("User identity not found in request")
 
         logger.debug("Extracted user ID from context", extra={"user_id": user_id})
 
@@ -61,7 +60,7 @@ def get_user_from_context(event: Dict[str, Any]) -> str:
             "Failed to extract user from context",
             extra={"error": str(e), "event_keys": list(event.keys())},
         )
-        raise AuthenticationError("Invalid authentication context")
+        raise UnauthorizedError("Invalid authentication context")
 
 
 def get_user_email_from_context(event: Dict[str, Any]) -> Optional[str]:
@@ -109,7 +108,7 @@ def verify_user_owns_vault(user_id: str, vault_id: str, item_vault_id: str) -> N
                 "item_vault_id": item_vault_id,
             },
         )
-        raise AuthorizationError("Access denied to vault")
+        raise ForbiddenError("Access denied to vault")
 
 
 def verify_user_owns_resource(user_id: str, resource_user_id: str) -> None:
@@ -131,7 +130,7 @@ def verify_user_owns_resource(user_id: str, resource_user_id: str) -> None:
             "Resource ownership verification failed",
             extra={"user_id": user_id, "resource_user_id": resource_user_id},
         )
-        raise AuthorizationError("Access denied to resource")
+        raise ForbiddenError("Access denied to resource")
 
 
 def extract_bearer_token(event: Dict[str, Any]) -> Optional[str]:
@@ -220,7 +219,7 @@ def require_authentication(event: Dict[str, Any]) -> str:
     user_id = get_user_from_context(event)
 
     if not user_id:
-        raise AuthenticationError("Authentication required")
+        raise UnauthorizedError("Authentication required")
 
     return user_id
 
@@ -242,7 +241,7 @@ def require_vault_access(
         operation: Operation name for logging (e.g., "delete_item", "list_items")
 
     Raises:
-        AuthorizationError: If user doesn't own the vault
+        ForbiddenError: If user doesn't own the vault
 
     Example:
         ```python
@@ -262,4 +261,4 @@ def require_vault_access(
                 "operation": operation,
             },
         )
-        raise AuthorizationError("Access denied to vault")
+        raise ForbiddenError("Access denied to vault")

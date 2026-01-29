@@ -3,9 +3,9 @@
 from unittest.mock import MagicMock
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError, UnauthorizedError
 
 from src.api.services.auth_service import RECOVERY_CODE_COUNT, AuthService
-from src.shared.errors import RecoveryCodeInvalidError, ValidationError
 
 
 class TestAuthServiceInit:
@@ -31,7 +31,7 @@ class TestValidateLogin:
 
     def test_validate_login_empty_email(self):
         service = AuthService(recovery_table=MagicMock())
-        with pytest.raises(ValidationError):
+        with pytest.raises(BadRequestError):
             service.validate_login("", "password123")
 
 
@@ -43,7 +43,7 @@ class TestRefreshToken:
 
     def test_refresh_token_empty(self):
         service = AuthService(recovery_table=MagicMock())
-        with pytest.raises(ValidationError, match="Refresh token is required"):
+        with pytest.raises(BadRequestError, match="Refresh token is required"):
             service.refresh_token("")
 
 
@@ -57,7 +57,7 @@ class TestGenerateRecoveryCodes:
     def test_generate_recovery_codes_empty_user_id(self):
         mock_table = MagicMock()
         service = AuthService(recovery_table=mock_table)
-        with pytest.raises(ValidationError, match="User ID is required"):
+        with pytest.raises(BadRequestError, match="User ID is required"):
             service.generate_recovery_codes("")
 
     def test_generate_recovery_codes_stores_hashed(self):
@@ -84,7 +84,7 @@ class TestValidateRecoveryCode:
         mock_table = MagicMock()
         mock_table.get_item.return_value = {}
         service = AuthService(recovery_table=mock_table)
-        with pytest.raises(RecoveryCodeInvalidError):
+        with pytest.raises(UnauthorizedError):
             service.validate_recovery_code("user-123", "ABCD-EFGH-IJKL-MNOP")
 
 
@@ -106,7 +106,7 @@ class TestValidateRecoveryCodeEdgeCases:
             }
         }
 
-        with pytest.raises(RecoveryCodeInvalidError):
+        with pytest.raises(UnauthorizedError):
             service.validate_recovery_code("user-123", "AAAA-BBBB-CCCC-DDDD")
 
     def test_validate_recovery_code_already_used(self):
@@ -130,7 +130,7 @@ class TestValidateRecoveryCodeEdgeCases:
             }
         }
 
-        with pytest.raises(RecoveryCodeInvalidError, match="already been used"):
+        with pytest.raises(UnauthorizedError, match="already been used"):
             service.validate_recovery_code("user-123", code)
 
 
@@ -140,13 +140,13 @@ class TestValidateRecoveryCodeValidation:
     def test_validate_recovery_code_empty_user_id(self):
         mock_table = MagicMock()
         service = AuthService(recovery_table=mock_table)
-        with pytest.raises(ValidationError, match="User ID and recovery code are required"):
+        with pytest.raises(BadRequestError, match="User ID and recovery code are required"):
             service.validate_recovery_code("", "AAAA-BBBB-CCCC-DDDD")
 
     def test_validate_recovery_code_empty_code(self):
         mock_table = MagicMock()
         service = AuthService(recovery_table=mock_table)
-        with pytest.raises(ValidationError, match="User ID and recovery code are required"):
+        with pytest.raises(BadRequestError, match="User ID and recovery code are required"):
             service.validate_recovery_code("user-123", "")
 
 
@@ -156,13 +156,13 @@ class TestInitiateRecoveryValidation:
     def test_initiate_recovery_empty_email(self):
         mock_table = MagicMock()
         service = AuthService(recovery_table=mock_table)
-        with pytest.raises(ValidationError, match="Email and recovery code are required"):
+        with pytest.raises(BadRequestError, match="Email and recovery code are required"):
             service.initiate_recovery("", "AAAA-BBBB-CCCC-DDDD")
 
     def test_initiate_recovery_empty_code(self):
         mock_table = MagicMock()
         service = AuthService(recovery_table=mock_table)
-        with pytest.raises(ValidationError, match="Email and recovery code are required"):
+        with pytest.raises(BadRequestError, match="Email and recovery code are required"):
             service.initiate_recovery("test@example.com", "")
 
 
@@ -171,7 +171,7 @@ class TestValidateLoginValidation:
 
     def test_validate_login_empty_password(self):
         service = AuthService(recovery_table=MagicMock())
-        with pytest.raises(ValidationError):
+        with pytest.raises(BadRequestError):
             service.validate_login("test@example.com", "")
 
 
@@ -201,7 +201,7 @@ class TestValidateRecoveryCodeExceptionHandling:
         # Mock get_item to raise a generic exception
         mock_table.get_item.side_effect = Exception("Database error")
 
-        with pytest.raises(RecoveryCodeInvalidError):
+        with pytest.raises(UnauthorizedError):
             service.validate_recovery_code("user-123", "AAAA-BBBB-CCCC-DDDD")
 
 
@@ -211,11 +211,11 @@ class TestValidateLoginEdgeCases:
     def test_validate_login_empty_email(self):
         """Test validation with empty email."""
         service = AuthService(recovery_table=MagicMock())
-        with pytest.raises(ValidationError, match="Email and password are required"):
+        with pytest.raises(BadRequestError, match="Email and password are required"):
             service.validate_login("", "password123")
 
     def test_validate_login_both_empty(self):
         """Test validation with both fields empty."""
         service = AuthService(recovery_table=MagicMock())
-        with pytest.raises(ValidationError, match="Email and password are required"):
+        with pytest.raises(BadRequestError, match="Email and password are required"):
             service.validate_login("", "")

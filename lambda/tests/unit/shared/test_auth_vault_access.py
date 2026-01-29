@@ -8,9 +8,9 @@ and prevents OWASP A01:2021 - Broken Access Control vulnerabilities.
 from unittest.mock import MagicMock
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import ForbiddenError
 
 from src.shared.auth import require_vault_access
-from src.shared.errors import AuthorizationError
 
 
 class TestRequireVaultAccess:
@@ -44,12 +44,12 @@ class TestRequireVaultAccess:
         user_id = "user-123"
         vault_id = "vault-456"
 
-        # Should raise AuthorizationError
-        with pytest.raises(AuthorizationError) as exc_info:
+        # Should raise ForbiddenError
+        with pytest.raises(ForbiddenError) as exc_info:
             require_vault_access(mock_vault_service, user_id, vault_id, "test_operation")
 
         # Verify error message
-        assert "Access denied to vault" in str(exc_info.value)
+        assert "Access denied to vault" in str(exc_info.value.msg)
 
         # Verify vault_exists was called
         mock_vault_service.vault_exists.assert_called_once_with(user_id, vault_id)
@@ -84,11 +84,11 @@ class TestRequireVaultAccess:
         require_vault_access(mock_vault_service, "user-1", "vault-1", "test")
 
         # User 2 cannot access vault-1
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ForbiddenError):
             require_vault_access(mock_vault_service, "user-2", "vault-1", "test")
 
         # User 1 cannot access vault-2
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ForbiddenError):
             require_vault_access(mock_vault_service, "user-1", "vault-2", "test")
 
     def test_require_vault_access_default_operation_name(self):

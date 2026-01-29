@@ -8,13 +8,13 @@ Requirements: 3.1, 3.2, 19.2
 """
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError
 from pydantic import BaseModel, Field
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.auth_service import AuthService
-from src.shared.errors import ValidationError
 
 logger = Logger(child=True)
 
@@ -95,42 +95,26 @@ class LoginRoute(BaseRoute):
 
             Requirements: 3.1, 3.2
             """
+            # Pydantic validation
             try:
                 body = app.current_event.json_body or {}
                 request = LoginRequest(**body)
-
-                logger.info(
-                    "Login request received",
-                    extra={
-                        "email_domain": (
-                            request.email.split("@")[-1] if "@" in request.email else "unknown"
-                        )
-                    },
-                )
-
-                result = self.auth_service.validate_login(request.email, request.password)
-
-                return LoginResponse(**result).model_dump()
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except ValidationError as e:
-                logger.warning("Login validation failed", extra={"error": str(e)})
-                raise
-            except Exception as e:
-                logger.error("Login failed", extra={"error": str(e)})
-                raise
+            logger.info(
+                "Login request received",
+                extra={
+                    "email_domain": (
+                        request.email.split("@")[-1] if "@" in request.email else "unknown"
+                    )
+                },
+            )
+
+            result = self.auth_service.validate_login(request.email, request.password)
+
+            return LoginResponse(**result).model_dump()
 
 
 class RefreshRoute(BaseRoute):
@@ -163,35 +147,19 @@ class RefreshRoute(BaseRoute):
 
             Requirements: 3.1, 3.2
             """
+            # Pydantic validation
             try:
                 body = app.current_event.json_body or {}
                 request = RefreshRequest(**body)
-
-                logger.info("Token refresh request received")
-
-                result = self.auth_service.refresh_token(request.refresh_token)
-
-                return RefreshResponse(**result).model_dump()
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except ValidationError as e:
-                logger.warning("Refresh validation failed", extra={"error": str(e)})
-                raise
-            except Exception as e:
-                logger.error("Token refresh failed", extra={"error": str(e)})
-                raise
+            logger.info("Token refresh request received")
+
+            result = self.auth_service.refresh_token(request.refresh_token)
+
+            return RefreshResponse(**result).model_dump()
 
 
 class RecoverRoute(BaseRoute):
@@ -226,39 +194,23 @@ class RecoverRoute(BaseRoute):
 
             Requirements: 19.2
             """
+            # Pydantic validation
             try:
                 body = app.current_event.json_body or {}
                 request = RecoverRequest(**body)
-
-                logger.info(
-                    "Account recovery request received",
-                    extra={
-                        "email_domain": (
-                            request.email.split("@")[-1] if "@" in request.email else "unknown"
-                        )
-                    },
-                )
-
-                result = self.auth_service.initiate_recovery(request.email, request.recovery_code)
-
-                return RecoverResponse(**result).model_dump()
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except ValidationError as e:
-                logger.warning("Recovery validation failed", extra={"error": str(e)})
-                raise
-            except Exception as e:
-                logger.error("Account recovery failed", extra={"error": str(e)})
-                raise
+            logger.info(
+                "Account recovery request received",
+                extra={
+                    "email_domain": (
+                        request.email.split("@")[-1] if "@" in request.email else "unknown"
+                    )
+                },
+            )
+
+            result = self.auth_service.initiate_recovery(request.email, request.recovery_code)
+
+            return RecoverResponse(**result).model_dump()

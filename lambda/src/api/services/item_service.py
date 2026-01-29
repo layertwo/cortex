@@ -13,9 +13,14 @@ from typing import Optional
 
 import boto3
 from aws_lambda_powertools import Logger, Metrics
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    ForbiddenError,
+    InternalServerError,
+    NotFoundError,
+)
 from aws_lambda_powertools.metrics import MetricUnit
 
-from src.shared.errors import AuthorizationError, ResourceNotFoundError, StorageError
 from src.shared.models import (
     CompleteUploadRequest,
     CompleteUploadResponse,
@@ -283,7 +288,7 @@ class ItemService:
                 "Item not found for upload completion",
                 extra={"user_id": user_id, "item_id": request.item_id},
             )
-            raise ResourceNotFoundError("Item not found")
+            raise NotFoundError("Item not found")
 
         # Verify user owns the item
         if item["user_id"] != user_id:
@@ -295,7 +300,7 @@ class ItemService:
                     "item_user_id": item["user_id"],
                 },
             )
-            raise AuthorizationError("Access denied to item")
+            raise ForbiddenError("Access denied to item")
 
         # Verify S3 object exists and get metadata (including version if available)
         s3_key = item["s3_key"]
@@ -324,7 +329,7 @@ class ItemService:
 
             # Clean up DynamoDB entry
             self.items_repo.delete_item(key)
-            raise StorageError("Upload verification failed - object not found in S3")
+            raise InternalServerError("Upload verification failed - object not found in S3")
 
         # Update item status to COMPLETE with conditional expression
         # Condition ensures item is still in PENDING state (prevents double completion)
@@ -355,7 +360,7 @@ class ItemService:
                 expression_attribute_values=expression_attribute_values,
                 expression_attribute_names=expression_attribute_names,
             )
-        except StorageError:
+        except InternalServerError:
             # Conditional update failed - verify S3 object still exists
             if not self.s3_repo.object_exists(s3_key):
                 logger.error(
@@ -368,7 +373,7 @@ class ItemService:
                 )
                 # Clean up orphaned metadata
                 self.items_repo.delete_item(key)
-                raise StorageError(
+                raise InternalServerError(
                     "Upload verification failed - object was deleted during completion"
                 )
 
@@ -579,7 +584,7 @@ class ItemService:
                             "item_user_id": item["user_id"],
                         },
                     )
-                    raise AuthorizationError("Access denied to item")
+                    raise ForbiddenError("Access denied to item")
 
                 # Filter out PENDING uploads
                 if item.get("upload_status") == "PENDING":
@@ -628,8 +633,6 @@ class ItemService:
             ValidationError: If item is not a MEDIA type
             StorageError: If DynamoDB or S3 operation fails
         """
-        from src.shared.errors import ValidationError
-
         # Retrieve item from DynamoDB
         key = {
             "PK": f"VAULT#{vault_id}",
@@ -643,7 +646,7 @@ class ItemService:
                 "Item not found for download",
                 extra={"user_id": user_id, "item_id": item_id},
             )
-            raise ResourceNotFoundError("Item not found")
+            raise NotFoundError("Item not found")
 
         # Verify user owns the item
         if item["user_id"] != user_id:
@@ -655,7 +658,7 @@ class ItemService:
                     "item_user_id": item["user_id"],
                 },
             )
-            raise AuthorizationError("Access denied to item")
+            raise ForbiddenError("Access denied to item")
 
         # Verify item type is MEDIA
         if item["item_type"] != ItemType.MEDIA:
@@ -667,7 +670,7 @@ class ItemService:
                     "item_type": item["item_type"],
                 },
             )
-            raise ValidationError("Download URL only available for MEDIA items")
+            raise BadRequestError("Download URL only available for MEDIA items")
 
         # Verify upload is complete
         if item.get("upload_status") == "PENDING":
@@ -675,7 +678,7 @@ class ItemService:
                 "Item upload not complete",
                 extra={"user_id": user_id, "item_id": item_id},
             )
-            raise ValidationError("Item upload not yet complete")
+            raise BadRequestError("Item upload not yet complete")
 
         # Get S3 key
         s3_key = item["s3_key"]
@@ -686,7 +689,7 @@ class ItemService:
                 "S3 object not found for item",
                 extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
-            raise StorageError("Item file not found in storage")
+            raise InternalServerError("Item file not found in storage")
 
         # Generate presigned download URL
         download_url = self.s3_repo.generate_download_url(s3_key, PRESIGNED_URL_EXPIRATION)
@@ -751,7 +754,7 @@ class ItemService:
                 "Item not found for deletion",
                 extra={"user_id": user_id, "vault_id": vault_id, "item_id": item_id},
             )
-            raise ResourceNotFoundError("Item not found")
+            raise NotFoundError("Item not found")
 
         # Verify user owns the item
         if item["user_id"] != user_id:
@@ -763,7 +766,7 @@ class ItemService:
                     "item_user_id": item["user_id"],
                 },
             )
-            raise AuthorizationError("Access denied to item")
+            raise ForbiddenError("Access denied to item")
 
         # Handle deletion based on item type
         if item["item_type"] == ItemType.MEDIA:
@@ -848,12 +851,12 @@ class ItemService:
                 "Deleted S3 object",
                 extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
-        except StorageError as e:
+        except InternalServerError as e:
             logger.error(
                 "Failed to delete S3 object",
                 extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key, "error": str(e)},
             )
-            raise StorageError(f"Failed to delete media file: {str(e)}")
+            raise InternalServerError(f"Failed to delete media file: {str(e)}")
 
         # Delete DynamoDB metadata
         try:
@@ -862,7 +865,7 @@ class ItemService:
                 "Deleted DynamoDB metadata",
                 extra={"user_id": user_id, "item_id": item_id},
             )
-        except StorageError as e:
+        except InternalServerError as e:
             logger.error(
                 "Failed to delete DynamoDB metadata after S3 deletion",
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
@@ -887,7 +890,7 @@ class ItemService:
                 },
             )
 
-            raise StorageError(
+            raise InternalServerError(
                 "Failed to delete item metadata - S3 object deleted but metadata remains"
             )
 
@@ -912,9 +915,9 @@ class ItemService:
                 "Deleted inline item from DynamoDB",
                 extra={"user_id": user_id, "vault_id": vault_id, "item_id": item_id},
             )
-        except StorageError as e:
+        except InternalServerError as e:
             logger.error(
                 "Failed to delete inline item",
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
-            raise StorageError(f"Failed to delete item: {str(e)}")
+            raise InternalServerError(f"Failed to delete item: {str(e)}")

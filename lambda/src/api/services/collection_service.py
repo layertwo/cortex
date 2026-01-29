@@ -13,11 +13,15 @@ from typing import Optional
 
 import boto3
 from aws_lambda_powertools import Logger
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+)
 
-from src.shared.errors import AuthorizationError, ConditionalCheckFailedError, ResourceNotFoundError
 from src.shared.models import (
-    AddMediaToCollectionRequest,
-    AddMediaToCollectionResponse,
+    AddItemToCollectionRequest,
+    AddItemToCollectionResponse,
     CreateCollectionRequest,
     CreateCollectionResponse,
     UpdateCollectionRequest,
@@ -210,7 +214,7 @@ class CollectionService:
                     "collection_user_id": collection["user_id"],
                 },
             )
-            raise AuthorizationError("Access denied to collection")
+            raise ForbiddenError("Access denied to collection")
 
         logger.info(
             "Retrieved collection",
@@ -248,7 +252,7 @@ class CollectionService:
         collection = self.get_collection(user_id, request.vault_id, request.collection_id)
 
         if not collection:
-            raise ResourceNotFoundError("Collection not found")
+            raise NotFoundError("Collection not found")
 
         # Update collection metadata
         now = datetime.now(tz=timezone.utc)
@@ -305,7 +309,7 @@ class CollectionService:
         collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
-            raise ResourceNotFoundError("Collection not found")
+            raise NotFoundError("Collection not found")
 
         # Delete all item-collection associations using paginated batch operations
         # Process in batches to prevent Lambda timeouts on large collections
@@ -379,8 +383,8 @@ class CollectionService:
         )
 
     def add_item_to_collection(
-        self, user_id: str, request: AddMediaToCollectionRequest
-    ) -> AddMediaToCollectionResponse:
+        self, user_id: str, request: AddItemToCollectionRequest
+    ) -> AddItemToCollectionResponse:
         """
         Add item to collection (many-to-many support).
 
@@ -403,27 +407,32 @@ class CollectionService:
         collection = self.get_collection(user_id, request.vault_id, request.collection_id)
 
         if not collection:
-            raise ResourceNotFoundError("Collection not found")
+            raise NotFoundError("Collection not found")
 
         # Verify item exists and user owns it
-        # Try to find the item across all item types
-        item = None
-        from src.shared.models import ItemType
+        # Query by vault to find item across all types (single query with begins_with)
+        key_condition_expression = "PK = :pk AND begins_with(SK, :sk_prefix)"
+        expression_attribute_values = {
+            ":pk": f"VAULT#{request.vault_id}",
+            ":sk_prefix": "ITEM#",
+        }
 
-        for item_type in [ItemType.MEDIA, ItemType.NOTE, ItemType.TASK, ItemType.EVENT]:
-            item_key = {
-                "PK": f"VAULT#{request.vault_id}",
-                "SK": f"ITEM#{item_type}#{request.file_id}",
-            }
+        # Add filter to match exact item_id
+        filter_expression = "item_id = :item_id"
+        expression_attribute_values[":item_id"] = request.item_id
 
-            found_item = self.items_repo.get_item(item_key)
+        result = self.items_repo.query(
+            key_condition_expression=key_condition_expression,
+            expression_attribute_values=expression_attribute_values,
+            filter_expression=filter_expression,
+            limit=1,
+        )
 
-            if found_item:
-                item = found_item
-                break
+        items = result.get("Items", [])
+        if not items:
+            raise NotFoundError("Item not found")
 
-        if not item:
-            raise ResourceNotFoundError("Item not found")
+        item = items[0]
 
         # Verify user owns the item
         if item["user_id"] != user_id:
@@ -431,25 +440,26 @@ class CollectionService:
                 "User does not own item",
                 extra={
                     "user_id": user_id,
-                    "item_id": request.file_id,
+                    "item_id": request.item_id,
                     "item_user_id": item["user_id"],
                 },
             )
-            raise AuthorizationError("Access denied to item")
+            raise ForbiddenError("Access denied to item")
 
         # Create item-collection association
         now = datetime.now(tz=timezone.utc)
 
         association = {
             "PK": f"COLLECTION#{request.collection_id}",
-            "SK": f"ITEM#{request.file_id}",
+            "SK": f"ITEM#{request.item_id}",
             "collection_id": request.collection_id,
-            "item_id": request.file_id,
+            "item_id": request.item_id,
+            "item_type": item["item_type"],  # Store item type for efficient lookups
             "vault_id": request.vault_id,
             "user_id": user_id,
             "added_at": int(now.timestamp()),
             # GSI for reverse lookup (find collections by item)
-            "GSI1PK": f"ITEM#{request.file_id}",
+            "GSI1PK": f"ITEM#{request.item_id}",
             "GSI1SK": f"COLLECTION#{request.collection_id}",
         }
 
@@ -478,7 +488,7 @@ class CollectionService:
                 update_expression=update_expression,
                 expression_attribute_values=expression_attribute_values,
             )
-        except ConditionalCheckFailedError:
+        except BadRequestError:
             # Association already exists - this is idempotent, don't increment
             logger.info(
                 "Item already in collection (idempotent operation)",
@@ -486,13 +496,13 @@ class CollectionService:
                     "user_id": user_id,
                     "vault_id": request.vault_id,
                     "collection_id": request.collection_id,
-                    "item_id": request.file_id,
+                    "item_id": request.item_id,
                 },
             )
             # Return success response without incrementing count
-            return AddMediaToCollectionResponse(
+            return AddItemToCollectionResponse(
                 collection_id=request.collection_id,
-                file_id=request.file_id,
+                item_id=request.item_id,
                 added_at=datetime.fromtimestamp(association["added_at"], tz=timezone.utc),
             )
 
@@ -502,13 +512,13 @@ class CollectionService:
                 "user_id": user_id,
                 "vault_id": request.vault_id,
                 "collection_id": request.collection_id,
-                "item_id": request.file_id,
+                "item_id": request.item_id,
             },
         )
 
-        return AddMediaToCollectionResponse(
+        return AddItemToCollectionResponse(
             collection_id=request.collection_id,
-            file_id=request.file_id,
+            item_id=request.item_id,
             added_at=now,
         )
 
@@ -536,7 +546,7 @@ class CollectionService:
         collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
-            raise ResourceNotFoundError("Collection not found")
+            raise NotFoundError("Collection not found")
 
         # Check if association exists
         assoc_key = {
@@ -547,7 +557,7 @@ class CollectionService:
         association = self.collections_repo.get_item(assoc_key)
 
         if not association:
-            raise ResourceNotFoundError("Item not in collection")
+            raise NotFoundError("Item not in collection")
 
         # Delete association
         self.collections_repo.delete_item(assoc_key)
@@ -613,7 +623,7 @@ class CollectionService:
         collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
-            raise ResourceNotFoundError("Collection not found")
+            raise NotFoundError("Collection not found")
 
         # Parse pagination token
         exclusive_start_key = parse_pagination_token(next_token)

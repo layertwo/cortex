@@ -39,10 +39,11 @@ class TestPydanticValidationErrorHandling:
         # Should return 400 with sanitized error message
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert body["error"]["message"] == "Invalid request format"
+        # Powertools format: {"statusCode": 400, "message": "..."}
+        assert body["statusCode"] == 400
+        assert body["message"] == "Invalid request format"
         # Should NOT expose Pydantic's internal error structure
-        assert "validation_error" not in body["error"]["message"].lower()
+        assert "validation_error" not in body["message"].lower()
 
     def test_create_item_missing_required_field(self, mock_service_provider):
         """Test that missing required field returns sanitized error."""
@@ -68,8 +69,9 @@ class TestPydanticValidationErrorHandling:
         # Should return 400 with sanitized error message
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert body["error"]["message"] == "Invalid request format"
+        # Powertools format: {"statusCode": 400, "message": "..."}
+        assert body["statusCode"] == 400
+        assert body["message"] == "Invalid request format"
 
     def test_initiate_upload_invalid_size(self, mock_service_provider):
         """Test that invalid size_bytes type returns sanitized error."""
@@ -97,8 +99,9 @@ class TestPydanticValidationErrorHandling:
         # Should return 400 with sanitized error message
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert body["error"]["message"] == "Invalid request format"
+        # Powertools format: {"statusCode": 400, "message": "..."}
+        assert body["statusCode"] == 400
+        assert body["message"] == "Invalid request format"
 
     def test_create_vault_invalid_salt(self, mock_service_provider):
         """Test that invalid vault_salt returns sanitized error."""
@@ -123,8 +126,9 @@ class TestPydanticValidationErrorHandling:
         # Should return 400 with sanitized error message
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert body["error"]["message"] == "Invalid request format"
+        # Powertools format: {"statusCode": 400, "message": "..."}
+        assert body["statusCode"] == 400
+        assert body["message"] == "Invalid request format"
 
     def test_login_missing_password(self, mock_service_provider):
         """Test that missing password in login returns sanitized error."""
@@ -147,8 +151,9 @@ class TestPydanticValidationErrorHandling:
         # Should return 400 with sanitized error message
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert body["error"]["message"] == "Invalid request format"
+        # Powertools format: {"statusCode": 400, "message": "..."}
+        assert body["statusCode"] == 400
+        assert body["message"] == "Invalid request format"
 
     def test_validate_recovery_code_missing_code(self, mock_service_provider):
         """Test that missing recovery_code returns sanitized error."""
@@ -173,5 +178,6 @@ class TestPydanticValidationErrorHandling:
         # Should return 400 with sanitized error message
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert body["error"]["message"] == "Invalid request format"
+        # Powertools format: {"statusCode": 400, "message": "..."}
+        assert body["statusCode"] == 400
+        assert body["message"] == "Invalid request format"

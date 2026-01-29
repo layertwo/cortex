@@ -10,10 +10,14 @@ Uses botocore Stubber for AWS service testing (not mocking).
 import secrets
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    InternalServerError,
+    NotFoundError,
+)
 from botocore.stub import ANY
 
 from src.api.services.vault_service import VaultService
-from src.shared.errors import ResourceNotFoundError, StorageError, ValidationError
 
 
 class TestVaultService:
@@ -82,11 +86,11 @@ class TestVaultService:
         user_id = "test-user-123"
 
         # Test with salt too short
-        with pytest.raises(ValidationError, match="Vault salt must be exactly 16 bytes"):
+        with pytest.raises(BadRequestError, match="Vault salt must be exactly 16 bytes"):
             vault_service.create_vault(user_id=user_id, vault_salt=b"short")
 
         # Test with salt too long
-        with pytest.raises(ValidationError, match="Vault salt must be exactly 16 bytes"):
+        with pytest.raises(BadRequestError, match="Vault salt must be exactly 16 bytes"):
             vault_service.create_vault(user_id=user_id, vault_salt=b"x" * 32)
 
     def test_create_vault_rejects_non_bytes_salt(self, vault_service):
@@ -94,7 +98,7 @@ class TestVaultService:
         user_id = "test-user-123"
 
         # Test with string instead of bytes
-        with pytest.raises(ValidationError, match="Vault salt must be exactly 16 bytes"):
+        with pytest.raises(BadRequestError, match="Vault salt must be exactly 16 bytes"):
             vault_service.create_vault(user_id=user_id, vault_salt="not-bytes-value")
 
     def test_create_vault_handles_dynamodb_error(
@@ -110,7 +114,7 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        with pytest.raises(StorageError, match="Failed to create vault"):
+        with pytest.raises(InternalServerError, match="Failed to create vault"):
             vault_service.create_vault(user_id=user_id)
 
     def test_create_vault_handles_collision(self, vault_service, vaults_table, dynamodb_stubber):
@@ -191,7 +195,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(ResourceNotFoundError, match=f"Vault {vault_id} not found"):
+        with pytest.raises(NotFoundError, match=f"Vault {vault_id} not found"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_raises_error_on_missing_salt(
@@ -220,7 +224,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(StorageError, match="Vault salt not found in vault record"):
+        with pytest.raises(InternalServerError, match="Vault salt not found in vault record"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_validates_salt_format(
@@ -249,7 +253,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(StorageError, match="Invalid vault salt format"):
+        with pytest.raises(InternalServerError, match="Invalid vault salt format"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_handles_dynamodb_error(
@@ -266,7 +270,7 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        with pytest.raises(StorageError, match="Failed to retrieve vault salt"):
+        with pytest.raises(InternalServerError, match="Failed to retrieve vault salt"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_vault_exists_returns_true_when_exists(
@@ -419,7 +423,7 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        with pytest.raises(StorageError, match="Failed to list vaults"):
+        with pytest.raises(InternalServerError, match="Failed to list vaults"):
             vault_service.list_user_vaults(user_id=user_id)
 
     def test_generated_salts_are_unique(self, vault_service, vaults_table, dynamodb_stubber):

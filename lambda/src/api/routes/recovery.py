@@ -8,14 +8,14 @@ Requirements: 19.1, 19.2, 19.3, 19.5
 """
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError
 from pydantic import BaseModel, Field
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.auth_service import AuthService
 from src.shared.auth import get_user_from_context
-from src.shared.errors import ValidationError
 
 logger = Logger(child=True)
 
@@ -74,32 +74,22 @@ class GenerateRecoveryCodesRoute(BaseRoute):
 
             Requirements: 19.1
             """
-            try:
-                # Extract user ID from API Gateway context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user ID from API Gateway context
+            user_id = get_user_from_context(app.current_event)
 
-                logger.info("Generating recovery codes", extra={"user_id": user_id})
+            logger.info("Generating recovery codes", extra={"user_id": user_id})
 
-                # Generate recovery codes
-                codes, timestamp = self.auth_service.generate_recovery_codes(user_id)
+            # Generate recovery codes
+            codes, timestamp = self.auth_service.generate_recovery_codes(user_id)
 
-                logger.info(
-                    "Recovery codes generated successfully",
-                    extra={"user_id": user_id, "code_count": len(codes)},
-                )
+            logger.info(
+                "Recovery codes generated successfully",
+                extra={"user_id": user_id, "code_count": len(codes)},
+            )
 
-                return GenerateRecoveryCodesResponse(
-                    recovery_codes=codes, generated_at=timestamp
-                ).model_dump()
-
-            except ValidationError as e:
-                logger.warning(
-                    "Recovery code generation validation failed", extra={"error": str(e)}
-                )
-                raise
-            except Exception as e:
-                logger.error("Recovery code generation failed", extra={"error": str(e)})
-                raise
+            return GenerateRecoveryCodesResponse(
+                recovery_codes=codes, generated_at=timestamp
+            ).model_dump()
 
 
 class ValidateRecoveryCodeRoute(BaseRoute):
@@ -132,41 +122,25 @@ class ValidateRecoveryCodeRoute(BaseRoute):
 
             Requirements: 19.2, 19.3, 19.5
             """
+            # Pydantic validation
             try:
-                # Extract user ID from API Gateway context
-                user_id = get_user_from_context(app.current_event)
-
                 body = app.current_event.json_body or {}
                 request = ValidateRecoveryCodeRequest(**body)
-
-                logger.info("Validating recovery code", extra={"user_id": user_id})
-
-                # Validate recovery code (marks as used if valid)
-                is_valid = self.auth_service.validate_recovery_code(user_id, request.recovery_code)
-
-                logger.info(
-                    "Recovery code validation completed",
-                    extra={"user_id": user_id, "valid": is_valid},
-                )
-
-                return ValidateRecoveryCodeResponse(valid=is_valid, user_id=user_id).model_dump()
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except ValidationError as e:
-                logger.warning("Recovery code validation failed", extra={"error": str(e)})
-                raise
-            except Exception as e:
-                logger.error("Recovery code validation error", extra={"error": str(e)})
-                raise
+            # Extract user ID from API Gateway context
+            user_id = get_user_from_context(app.current_event)
+
+            logger.info("Validating recovery code", extra={"user_id": user_id})
+
+            # Validate recovery code (marks as used if valid)
+            is_valid = self.auth_service.validate_recovery_code(user_id, request.recovery_code)
+
+            logger.info(
+                "Recovery code validation completed",
+                extra={"user_id": user_id, "valid": is_valid},
+            )
+
+            return ValidateRecoveryCodeResponse(valid=is_valid, user_id=user_id).model_dump()

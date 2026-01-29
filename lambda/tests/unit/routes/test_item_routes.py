@@ -5,6 +5,11 @@ Tests verify that item routes work correctly through the lambda handler entrypoi
 """
 
 import json
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
+import pytest
+from botocore.stub import ANY
 
 from src.entrypoint.api import lambda_handler
 
@@ -12,8 +17,21 @@ from src.entrypoint.api import lambda_handler
 class TestCreateItemRoute:
     """Test suite for CreateItemRoute through lambda handler."""
 
-    def test_create_item_route_handler(self, mock_service_provider):
+    def test_create_item_route_handler(self, mock_service_provider, dynamodb_stubber):
         """Test create item route handler returns expected response."""
+        user_id = "test-user-123"
+        vault_id = "test-vault-456"
+
+        # Stub DynamoDB put_item call
+        dynamodb_stubber.add_response(
+            "put_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Item": ANY,
+            },
+        )
+
         event = {
             "resource": "/v1/items",
             "path": "/v1/items",
@@ -21,30 +39,59 @@ class TestCreateItemRoute:
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps(
                 {
-                    "vault_id": "vault-123",
+                    "vault_id": vault_id,
                     "item_type": "NOTE",
-                    "encrypted_content": "ZW5jcnlwdGVkLWNvbnRlbnQ=",  # base64 encoded
-                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",  # base64 encoded
+                    "encrypted_content": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
+                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
                 }
             ),
             "requestContext": {
                 "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+                "authorizer": {"claims": {"sub": user_id}},
             },
         }
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [200, 401]
+        # Verify the response
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+
+        # Validate response structure
+        assert "item_id" in body, "Response should include item_id"
+        assert "item_type" in body, "Response should include item_type"
+        assert "created_at" in body, "Response should include created_at"
+
+        # Validate response values
+        assert isinstance(body["item_id"], str), "item_id should be a string"
+        assert len(body["item_id"]) > 0, "item_id should not be empty"
+        assert body["item_type"] == "NOTE", f"item_type should be NOTE, got {body['item_type']}"
+
+        # Validate created_at is ISO format datetime string
+        try:
+            datetime.fromisoformat(body["created_at"])
+        except ValueError:
+            pytest.fail(f"created_at should be ISO format datetime, got {body['created_at']}")
 
 
 class TestInitiateUploadRoute:
     """Test suite for InitiateUploadRoute through lambda handler."""
 
-    def test_initiate_upload_route_handler(self, mock_service_provider):
+    def test_initiate_upload_route_handler(self, mock_service_provider, dynamodb_stubber):
         """Test initiate upload route handler returns expected response."""
+        user_id = "test-user-123"
+        vault_id = "test-vault-456"
+
+        # Stub DynamoDB put_item call (creates item metadata)
+        dynamodb_stubber.add_response(
+            "put_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Item": ANY,
+            },
+        )
+
         event = {
             "resource": "/v1/items/upload/init",
             "path": "/v1/items/upload/init",
@@ -52,30 +99,123 @@ class TestInitiateUploadRoute:
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps(
                 {
-                    "vault_id": "vault-123",
+                    "vault_id": vault_id,
                     "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
-                    "size_bytes": 1024,
+                    "size_bytes": 50 * 1024 * 1024,  # 50MB - small file
                     "content_type": "image/jpeg",
                 }
             ),
             "requestContext": {
                 "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+                "authorizer": {"claims": {"sub": user_id}},
             },
         }
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [200, 401]
+        # Verify the response
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+
+        # Validate response structure
+        assert "item_id" in body, "Response should include item_id"
+        assert "upload_url" in body, "Response should include upload_url"
+        assert "expires_at" in body, "Response should include expires_at"
+        assert "s3_key" in body, "Response should include s3_key"
+        assert "upload_id" in body, "Response should include upload_id"
+
+        # Validate response values
+        assert isinstance(body["item_id"], str), "item_id should be a string"
+        assert len(body["item_id"]) > 0, "item_id should not be empty"
+
+        assert isinstance(body["upload_url"], str), "upload_url should be a string"
+        assert body["upload_url"].startswith("https://"), "upload_url should be HTTPS"
+
+        assert isinstance(body["s3_key"], str), "s3_key should be a string"
+        assert vault_id in body["s3_key"], f"s3_key should contain vault_id {vault_id}"
+        assert body["item_id"] in body["s3_key"], "s3_key should contain item_id"
+
+        # Validate expires_at is ISO format datetime string
+        try:
+            datetime.fromisoformat(body["expires_at"])
+        except ValueError:
+            pytest.fail(f"expires_at should be ISO format datetime, got {body['expires_at']}")
+
+        # For small files (<100MB), upload_id should be None (no multipart)
+        assert body["upload_id"] is None, "upload_id should be None for small files"
 
 
 class TestCompleteUploadRoute:
     """Test suite for CompleteUploadRoute through lambda handler."""
 
-    def test_complete_upload_route_handler(self, mock_service_provider):
+    def test_complete_upload_route_handler(
+        self, mock_service_provider, dynamodb_stubber, s3_stubber
+    ):
         """Test complete upload route handler returns expected response."""
+        user_id = "test-user-123"
+        vault_id = "test-vault-456"
+        item_id = "test-item-789"
+        s3_key = f"vaults/{vault_id}/files/{item_id}/test"
+
+        # Stub DynamoDB get_item call (retrieve item metadata)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"VAULT#{vault_id}"},
+                    "SK": {"S": f"ITEM#MEDIA#{item_id}"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": user_id},
+                    "s3_key": {"S": s3_key},
+                    "upload_status": {"S": "PENDING"},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": {
+                    "PK": f"VAULT#{vault_id}",
+                    "SK": f"ITEM#MEDIA#{item_id}",
+                },
+            },
+        )
+
+        # Stub S3 head_object call (verify file exists)
+        s3_stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 1000,
+                "ContentType": "image/jpeg",
+            },
+            {
+                "Bucket": "test-files-bucket",
+                "Key": s3_key,
+            },
+        )
+
+        # Stub DynamoDB update_item call (mark upload complete)
+        now_timestamp = int(datetime.now(tz=timezone.utc).timestamp())
+        dynamodb_stubber.add_response(
+            "update_item",
+            {
+                "Attributes": {
+                    "upload_status": {"S": "COMPLETE"},
+                    "updated_at": {"N": str(now_timestamp)},
+                }
+            },
+            {
+                "TableName": "test-items-table",
+                "Key": {
+                    "PK": f"VAULT#{vault_id}",
+                    "SK": f"ITEM#MEDIA#{item_id}",
+                },
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
         event = {
             "resource": "/v1/items/upload/complete",
             "path": "/v1/items/upload/complete",
@@ -83,21 +223,40 @@ class TestCompleteUploadRoute:
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps(
                 {
-                    "item_id": "item-123",
-                    "vault_id": "vault-123",
+                    "item_id": item_id,
+                    "vault_id": vault_id,
                 }
             ),
             "requestContext": {
                 "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+                "authorizer": {"claims": {"sub": user_id}},
             },
         }
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [200, 401]
+        # Verify the response
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+
+        # Validate response structure
+        assert "item_id" in body, "Response should include item_id"
+        assert "uploaded_at" in body, "Response should include uploaded_at"
+
+        # Validate response values
+        assert body["item_id"] == item_id, f"item_id should be {item_id}, got {body['item_id']}"
+
+        # Validate uploaded_at is ISO format datetime string
+        try:
+            uploaded_at = datetime.fromisoformat(body["uploaded_at"])
+            # Ensure the timestamp is recent (within last minute)
+            now = datetime.now(tz=timezone.utc)
+            time_diff = abs((now - uploaded_at.replace(tzinfo=timezone.utc)).total_seconds())
+            assert (
+                time_diff < 60
+            ), f"uploaded_at timestamp should be recent, got {body['uploaded_at']}"
+        except ValueError:
+            pytest.fail(f"uploaded_at should be ISO format datetime, got {body['uploaded_at']}")
 
 
 class TestListItemsRoute:
@@ -122,8 +281,9 @@ class TestListItemsRoute:
         # Should return 400 because vault_id is required
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert "vault_id is required" in body["error"]["message"]
+        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
+        assert body["statusCode"] == 400
+        assert "vault_id is required" in body["message"]
 
     def test_list_items_route_handler_with_vault_id(self, mock_service_provider):
         """Test list items route handler with vault_id."""
@@ -170,8 +330,9 @@ class TestGetItemRoute:
         # Should return 400 because vault_id is required
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert "vault_id is required" in body["error"]["message"]
+        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
+        assert body["statusCode"] == 400
+        assert "vault_id is required" in body["message"]
 
     def test_get_item_route_handler_with_vault_id(self, mock_service_provider):
         """Test get item route handler with vault_id."""
@@ -278,7 +439,6 @@ class TestDeleteItemRoute:
 
         Security: CRITICAL - Prevents unauthorized access to other users' vaults
         """
-        from unittest.mock import MagicMock
 
         item_id = "test-item-123"
         vault_id = "test-vault-456"
@@ -324,8 +484,9 @@ class TestDeleteItemRoute:
             if isinstance(response.get("body"), str)
             else response.get("body", {})
         )
-        assert body.get("error", {}).get("code") == "AUTHORIZATION_FAILED"
-        assert "vault" in body.get("error", {}).get("message", "").lower()
+        # Powertools format: {"statusCode": 403, "message": "Access denied to vault"}
+        assert body.get("statusCode") == 403
+        assert "vault" in body.get("message", "").lower()
 
 
 class TestDownloadItemRoute:
@@ -352,8 +513,9 @@ class TestDownloadItemRoute:
         # Should return 400 because vault_id is required
         assert response["statusCode"] == 400
         body = json.loads(response["body"])
-        assert body["error"]["code"] == "INVALID_REQUEST"
-        assert "vault_id is required" in body["error"]["message"]
+        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
+        assert body["statusCode"] == 400
+        assert "vault_id is required" in body["message"]
 
     def test_download_item_route_handler_with_vault_id(self, mock_service_provider):
         """Test download item route handler with vault_id."""

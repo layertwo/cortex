@@ -10,22 +10,16 @@ Requirements: 12.1, 12.2, 12.3, 12.5, 13.1, 13.2, 13.3, 13.4, 13.5
 from datetime import datetime, timezone
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.collection_service import CollectionService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_user_from_context, require_vault_access
-from src.shared.errors import (
-    AuthenticationError,
-    AuthorizationError,
-    ResourceNotFoundError,
-    StorageError,
-    ValidationError,
-)
 from src.shared.models import (
-    AddMediaToCollectionRequest,
+    AddItemToCollectionRequest,
     CreateCollectionRequest,
     UpdateCollectionRequest,
 )
@@ -52,90 +46,36 @@ class CreateCollectionRoute(BaseRoute):
 
             Requirements: 12.1, 13.1
             """
+            # Pydantic validation
             try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse and validate request
                 body = app.current_event.json_body
                 request = CreateCollectionRequest(**body)
-
-                # Verify vault ownership
-                try:
-                    require_vault_access(
-                        self.vault_service, user_id, request.vault_id, "create_collection"
-                    )
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
-
-                # Create collection
-                response = self.collection_service.create_collection(user_id, request)
-
-                logger.info(
-                    "Collection created successfully",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": request.vault_id,
-                        "collection_id": response.collection_id,
-                    },
-                )
-
-                return {
-                    "collection_id": response.collection_id,
-                    "created_at": response.created_at.isoformat(),
-                }
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, request.vault_id, "create_collection")
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
+            # Create collection
+            response = self.collection_service.create_collection(user_id, request)
 
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            logger.info(
+                "Collection created successfully",
+                extra={
+                    "user_id": user_id,
+                    "vault_id": request.vault_id,
+                    "collection_id": response.collection_id,
+                },
+            )
+
+            return {
+                "collection_id": response.collection_id,
+                "created_at": response.created_at.isoformat(),
+            }
 
 
 class ListCollectionsRoute(BaseRoute):
@@ -157,121 +97,67 @@ class ListCollectionsRoute(BaseRoute):
 
             Requirements: 12.2, 13.5
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
-                page_size = int(query_params.get("page_size", "50"))
-                next_token = query_params.get("next_token")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
+            page_size = int(query_params.get("page_size", "50"))
+            next_token = query_params.get("next_token")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "list_collections")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, vault_id, "list_collections")
 
-                # Validate page_size
-                if page_size < 1 or page_size > 100:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "page_size must be between 1 and 100",
-                            }
-                        },
-                    )
+            # Validate page_size
+            if page_size < 1 or page_size > 100:
+                raise BadRequestError("page_size must be between 1 and 100")
 
-                # List collections
-                collections, next_page_token = self.collection_service.list_collections(
-                    user_id=user_id,
-                    vault_id=vault_id,
-                    page_size=page_size,
-                    next_token=next_token,
-                )
+            # List collections
+            collections, next_page_token = self.collection_service.list_collections(
+                user_id=user_id,
+                vault_id=vault_id,
+                page_size=page_size,
+                next_token=next_token,
+            )
 
-                # Convert collections to response format
-                response_collections = []
-                for collection in collections:
-                    response_item = {
-                        "collection_id": collection["collection_id"],
-                        "vault_id": collection["vault_id"],
-                        "user_id": collection["user_id"],
-                        "encrypted_metadata": collection["encrypted_metadata"],
-                        "created_at": datetime.fromtimestamp(
-                            collection["created_at"], tz=timezone.utc
-                        ).isoformat(),
-                        "updated_at": datetime.fromtimestamp(
-                            collection["updated_at"], tz=timezone.utc
-                        ).isoformat(),
-                        "item_count": collection.get("item_count", 0),
-                    }
-
-                    response_collections.append(response_item)
-
-                logger.info(
-                    "Listed collections successfully",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "count": len(response_collections),
-                    },
-                )
-
-                response = {"collections": response_collections}
-                if next_page_token:
-                    response["next_token"] = next_page_token
-
-                return response
-
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
+            # Convert collections to response format
+            response_collections = []
+            for collection in collections:
+                response_item = {
+                    "collection_id": collection["collection_id"],
+                    "vault_id": collection["vault_id"],
+                    "user_id": collection["user_id"],
+                    "encrypted_metadata": collection["encrypted_metadata"],
+                    "created_at": datetime.fromtimestamp(
+                        collection["created_at"], tz=timezone.utc
+                    ).isoformat(),
+                    "updated_at": datetime.fromtimestamp(
+                        collection["updated_at"], tz=timezone.utc
+                    ).isoformat(),
+                    "item_count": collection.get("item_count", 0),
                 }
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
+                response_collections.append(response_item)
 
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            logger.info(
+                "Listed collections successfully",
+                extra={
+                    "user_id": user_id,
+                    "vault_id": vault_id,
+                    "count": len(response_collections),
+                },
+            )
+
+            response = {"collections": response_collections}
+            if next_page_token:
+                response["next_token"] = next_page_token
+
+            return response
 
 
 class GetCollectionRoute(BaseRoute):
@@ -296,115 +182,53 @@ class GetCollectionRoute(BaseRoute):
 
             Requirements: 12.2, 13.1
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "get_collection")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, vault_id, "get_collection")
 
-                # Get collection
-                collection = self.collection_service.get_collection(
-                    user_id, vault_id, collection_id
+            # Get collection
+            collection = self.collection_service.get_collection(user_id, vault_id, collection_id)
+
+            if not collection:
+                logger.warning(
+                    "Collection not found",
+                    extra={"user_id": user_id, "collection_id": collection_id},
                 )
+                raise NotFoundError("Collection not found")
 
-                if not collection:
-                    logger.warning(
-                        "Collection not found",
-                        extra={"user_id": user_id, "collection_id": collection_id},
-                    )
-                    return {
-                        "statusCode": 404,
-                        "body": {
-                            "error": {
-                                "code": "RESOURCE_NOT_FOUND",
-                                "message": "Collection not found",
-                            }
-                        },
-                    }
+            # Convert collection to response format
+            response = {
+                "collection_id": collection["collection_id"],
+                "vault_id": collection["vault_id"],
+                "encrypted_metadata": collection["encrypted_metadata"],
+                "created_at": datetime.fromtimestamp(
+                    collection["created_at"], tz=timezone.utc
+                ).isoformat(),
+                "updated_at": datetime.fromtimestamp(
+                    collection["updated_at"], tz=timezone.utc
+                ).isoformat(),
+                "item_count": collection.get("item_count", 0),
+            }
 
-                # Convert collection to response format
-                response = {
-                    "collection_id": collection["collection_id"],
-                    "vault_id": collection["vault_id"],
-                    "encrypted_metadata": collection["encrypted_metadata"],
-                    "created_at": datetime.fromtimestamp(
-                        collection["created_at"], tz=timezone.utc
-                    ).isoformat(),
-                    "updated_at": datetime.fromtimestamp(
-                        collection["updated_at"], tz=timezone.utc
-                    ).isoformat(),
-                    "item_count": collection.get("item_count", 0),
-                }
+            logger.info(
+                "Retrieved collection successfully",
+                extra={
+                    "user_id": user_id,
+                    "collection_id": collection_id,
+                },
+            )
 
-                logger.info(
-                    "Retrieved collection successfully",
-                    extra={
-                        "user_id": user_id,
-                        "collection_id": collection_id,
-                    },
-                )
-
-                return response
-
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
-
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
-
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return response
 
 
 class UpdateCollectionRoute(BaseRoute):
@@ -429,103 +253,35 @@ class UpdateCollectionRoute(BaseRoute):
 
             Requirements: 13.3
             """
+            # Pydantic validation
             try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse and validate request
                 body = app.current_event.json_body
                 request = UpdateCollectionRequest(collection_id=collection_id, **body)
-
-                # Verify vault ownership
-                try:
-                    require_vault_access(
-                        self.vault_service, user_id, request.vault_id, "update_collection"
-                    )
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
-
-                # Update collection
-                response = self.collection_service.update_collection(user_id, request)
-
-                logger.info(
-                    "Collection updated successfully",
-                    extra={
-                        "user_id": user_id,
-                        "collection_id": collection_id,
-                    },
-                )
-
-                return {
-                    "collection_id": response.collection_id,
-                    "updated_at": response.updated_at.isoformat(),
-                }
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, request.vault_id, "update_collection")
 
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
+            # Update collection
+            response = self.collection_service.update_collection(user_id, request)
 
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
+            logger.info(
+                "Collection updated successfully",
+                extra={
+                    "user_id": user_id,
+                    "collection_id": collection_id,
+                },
+            )
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "collection_id": response.collection_id,
+                "updated_at": response.updated_at.isoformat(),
+            }
 
 
 class DeleteCollectionRoute(BaseRoute):
@@ -550,95 +306,36 @@ class DeleteCollectionRoute(BaseRoute):
 
             Requirements: 13.3, 13.4
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "delete_collection")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, vault_id, "delete_collection")
 
-                # Delete collection
-                self.collection_service.delete_collection(user_id, vault_id, collection_id)
+            # Delete collection
+            self.collection_service.delete_collection(user_id, vault_id, collection_id)
 
-                logger.info(
-                    "Collection deleted successfully",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "collection_id": collection_id,
-                    },
-                )
-
-                return {
-                    "message": "Collection deleted successfully",
+            logger.info(
+                "Collection deleted successfully",
+                extra={
+                    "user_id": user_id,
+                    "vault_id": vault_id,
                     "collection_id": collection_id,
-                }
+                },
+            )
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
-
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
-
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
-
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "message": "Collection deleted successfully",
+                "collection_id": collection_id,
+            }
 
 
 class AddItemToCollectionRoute(BaseRoute):
@@ -664,105 +361,39 @@ class AddItemToCollectionRoute(BaseRoute):
 
             Requirements: 12.3, 12.5
             """
+            # Pydantic validation
             try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse and validate request
                 body = app.current_event.json_body
-                request = AddMediaToCollectionRequest(collection_id=collection_id, **body)
-
-                # Verify vault ownership
-                try:
-                    require_vault_access(
-                        self.vault_service, user_id, request.vault_id, "add_item_to_collection"
-                    )
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
-
-                # Add item to collection
-                response = self.collection_service.add_item_to_collection(user_id, request)
-
-                logger.info(
-                    "Item added to collection successfully",
-                    extra={
-                        "user_id": user_id,
-                        "collection_id": collection_id,
-                        "item_id": request.file_id,
-                    },
-                )
-
-                return {
-                    "collection_id": response.collection_id,
-                    "item_id": response.file_id,
-                    "added_at": response.added_at.isoformat(),
-                }
-
+                request = AddItemToCollectionRequest(collection_id=collection_id, **body)
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
+            # Verify vault ownership
+            require_vault_access(
+                self.vault_service, user_id, request.vault_id, "add_item_to_collection"
+            )
 
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
+            # Add item to collection
+            response = self.collection_service.add_item_to_collection(user_id, request)
 
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
+            logger.info(
+                "Item added to collection successfully",
+                extra={
+                    "user_id": user_id,
+                    "collection_id": collection_id,
+                    "item_id": request.item_id,
+                },
+            )
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "collection_id": response.collection_id,
+                "item_id": response.item_id,
+                "added_at": response.added_at.isoformat(),
+            }
 
 
 class RemoveItemFromCollectionRoute(BaseRoute):
@@ -788,98 +419,39 @@ class RemoveItemFromCollectionRoute(BaseRoute):
 
             Requirements: 13.2
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(
-                        self.vault_service, user_id, vault_id, "remove_item_from_collection"
-                    )
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(
+                self.vault_service, user_id, vault_id, "remove_item_from_collection"
+            )
 
-                # Remove item from collection
-                self.collection_service.remove_item_from_collection(
-                    user_id, vault_id, collection_id, item_id
-                )
+            # Remove item from collection
+            self.collection_service.remove_item_from_collection(
+                user_id, vault_id, collection_id, item_id
+            )
 
-                logger.info(
-                    "Item removed from collection successfully",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "collection_id": collection_id,
-                        "item_id": item_id,
-                    },
-                )
-
-                return {
-                    "message": "Item removed from collection successfully",
+            logger.info(
+                "Item removed from collection successfully",
+                extra={
+                    "user_id": user_id,
+                    "vault_id": vault_id,
                     "collection_id": collection_id,
                     "item_id": item_id,
-                }
+                },
+            )
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
-
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
-
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
-
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "message": "Item removed from collection successfully",
+                "collection_id": collection_id,
+                "item_id": item_id,
+            }
