@@ -10,13 +10,13 @@ Requirements: 14.4, 22.1, 22.2, 22.3
 from datetime import datetime
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_user_from_context
-from src.shared.errors import ResourceNotFoundError, ValidationError
 from src.shared.models import CreateVaultRequest, CreateVaultResponse, GetVaultSaltResponse
 
 logger = Logger(child=True)
@@ -53,52 +53,33 @@ class CreateVaultRoute(BaseRoute):
 
             Requirements: 14.4, 22.1, 22.2, 22.3
             """
+            # Pydantic validation
             try:
-                # Extract user ID from API Gateway context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse request body
                 body = app.current_event.json_body or {}
                 request = CreateVaultRequest(**body)
-
-                logger.info("Creating vault", extra={"user_id": user_id})
-
-                result = self.vault_service.create_vault(
-                    user_id=user_id, vault_salt=request.vault_salt
-                )
-
-                # Build response
-                response = CreateVaultResponse(
-                    vault_id=result["vault_id"],
-                    created_at=datetime.fromtimestamp(result["created_at"]),
-                )
-
-                logger.info(
-                    "Vault created successfully",
-                    extra={"user_id": user_id, "vault_id": result["vault_id"]},
-                )
-
-                return response.model_dump(mode="json")
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except ValidationError as e:
-                logger.warning("Vault creation validation failed", extra={"error": str(e)})
-                raise
-            except Exception as e:
-                logger.error("Vault creation failed", extra={"error": str(e)})
-                raise
+            # Extract user ID from API Gateway context
+            user_id = get_user_from_context(app.current_event)
+
+            logger.info("Creating vault", extra={"user_id": user_id})
+
+            result = self.vault_service.create_vault(user_id=user_id, vault_salt=request.vault_salt)
+
+            # Build response
+            response = CreateVaultResponse(
+                vault_id=result["vault_id"],
+                created_at=datetime.fromtimestamp(result["created_at"]),
+            )
+
+            logger.info(
+                "Vault created successfully",
+                extra={"user_id": user_id, "vault_id": result["vault_id"]},
+            )
+
+            return response.model_dump(mode="json")
 
 
 class GetVaultSaltRoute(BaseRoute):
@@ -132,31 +113,19 @@ class GetVaultSaltRoute(BaseRoute):
 
             Requirements: 14.4, 22.3, 22.5
             """
-            try:
-                # Extract user ID from API Gateway context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user ID from API Gateway context
+            user_id = get_user_from_context(app.current_event)
 
-                logger.info(
-                    "Retrieving vault salt", extra={"user_id": user_id, "vault_id": vault_id}
-                )
+            logger.info("Retrieving vault salt", extra={"user_id": user_id, "vault_id": vault_id})
 
-                vault_salt = self.vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
+            vault_salt = self.vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
-                # Build response
-                response = GetVaultSaltResponse(vault_id=vault_id, vault_salt=vault_salt)
+            # Build response
+            response = GetVaultSaltResponse(vault_id=vault_id, vault_salt=vault_salt)
 
-                logger.info(
-                    "Vault salt retrieved successfully",
-                    extra={"user_id": user_id, "vault_id": vault_id},
-                )
+            logger.info(
+                "Vault salt retrieved successfully",
+                extra={"user_id": user_id, "vault_id": vault_id},
+            )
 
-                return response.model_dump(mode="json")
-
-            except ResourceNotFoundError as e:
-                logger.warning("Vault not found", extra={"vault_id": vault_id, "error": str(e)})
-                raise
-            except Exception as e:
-                logger.error(
-                    "Vault salt retrieval failed", extra={"vault_id": vault_id, "error": str(e)}
-                )
-                raise
+            return response.model_dump(mode="json")

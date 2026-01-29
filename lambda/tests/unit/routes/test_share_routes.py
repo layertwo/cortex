@@ -2,6 +2,10 @@
 Unit tests for share route handlers.
 
 Tests verify that share routes work correctly through the lambda handler entrypoint.
+
+Note: These endpoints are placeholder implementations pending task 17.2.
+Once implemented, these tests should be updated to validate actual response structures
+including share_id, share_url, expires_at, encrypted content, etc.
 """
 
 import json
@@ -13,7 +17,7 @@ class TestCreateShareRoute:
     """Test suite for CreateShareRoute through lambda handler."""
 
     def test_create_share_route_handler(self, mock_service_provider):
-        """Test create share route handler returns expected response."""
+        """Test create share route handler returns expected placeholder response."""
         event = {
             "resource": "/v1/shares",
             "path": "/v1/shares",
@@ -25,16 +29,24 @@ class TestCreateShareRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
+        # Verify status code
         assert response["statusCode"] == 200
+
+        # Verify response payload structure
         body = json.loads(response["body"])
-        assert "Create share endpoint" in body["message"]
+        assert "message" in body, "Response should include message"
+
+        # Verify placeholder message
+        assert isinstance(body["message"], str), "message should be a string"
+        assert "Create share endpoint" in body["message"], "Should contain placeholder text"
+        assert "to be implemented" in body["message"], "Should indicate implementation pending"
 
 
 class TestGetShareRoute:
     """Test suite for GetShareRoute through lambda handler."""
 
     def test_get_share_route_handler(self, mock_service_provider):
-        """Test get share route handler returns expected response."""
+        """Test get share route handler returns expected placeholder response."""
         share_id = "test-share-123"
         event = {
             "resource": "/v1/shares/{share_id}",
@@ -47,16 +59,24 @@ class TestGetShareRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
+        # Verify status code
         assert response["statusCode"] == 200
+
+        # Verify response payload structure
         body = json.loads(response["body"])
-        assert "Get share endpoint" in body["message"]
+        assert "message" in body, "Response should include message"
+
+        # Verify placeholder message
+        assert isinstance(body["message"], str), "message should be a string"
+        assert "Get share endpoint" in body["message"], "Should contain placeholder text"
+        assert "to be implemented" in body["message"], "Should indicate implementation pending"
 
 
 class TestRevokeShareRoute:
     """Test suite for RevokeShareRoute through lambda handler."""
 
     def test_revoke_share_route_handler(self, mock_service_provider):
-        """Test revoke share route handler returns expected response."""
+        """Test revoke share route handler returns expected placeholder response."""
         share_id = "test-share-123"
         event = {
             "resource": "/v1/shares/{share_id}",
@@ -69,6 +89,14 @@ class TestRevokeShareRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
+        # Verify status code
         assert response["statusCode"] == 200
+
+        # Verify response payload structure
         body = json.loads(response["body"])
-        assert "Revoke share endpoint" in body["message"]
+        assert "message" in body, "Response should include message"
+
+        # Verify placeholder message
+        assert isinstance(body["message"], str), "message should be a string"
+        assert "Revoke share endpoint" in body["message"], "Should contain placeholder text"
+        assert "to be implemented" in body["message"], "Should indicate implementation pending"

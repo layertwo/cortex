@@ -5,6 +5,7 @@ Tests authentication and authorization utilities.
 """
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import ForbiddenError, UnauthorizedError
 
 from src.shared.auth import (
     extract_bearer_token,
@@ -16,7 +17,6 @@ from src.shared.auth import (
     verify_user_owns_resource,
     verify_user_owns_vault,
 )
-from src.shared.errors import AuthenticationError, AuthorizationError
 
 
 class TestGetUserFromContext:
@@ -42,28 +42,28 @@ class TestGetUserFromContext:
         """Should raise AuthenticationError when user ID not found."""
         event = {"requestContext": {"authorizer": {}}}
 
-        with pytest.raises(AuthenticationError) as exc_info:
+        with pytest.raises(UnauthorizedError) as exc_info:
             get_user_from_context(event)
 
-        assert "User identity not found" in str(exc_info.value)
+        assert "User identity not found" in str(exc_info.value.msg)
 
     def test_raises_error_when_no_authorizer(self):
         """Should raise AuthenticationError when authorizer missing."""
         event = {"requestContext": {}}
 
-        with pytest.raises(AuthenticationError) as exc_info:
+        with pytest.raises(UnauthorizedError) as exc_info:
             get_user_from_context(event)
 
-        assert "User identity not found" in str(exc_info.value)
+        assert "User identity not found" in str(exc_info.value.msg)
 
     def test_raises_error_when_no_request_context(self):
         """Should raise AuthenticationError when requestContext missing."""
         event = {}
 
-        with pytest.raises(AuthenticationError) as exc_info:
+        with pytest.raises(UnauthorizedError) as exc_info:
             get_user_from_context(event)
 
-        assert "User identity not found" in str(exc_info.value)
+        assert "User identity not found" in str(exc_info.value.msg)
 
     def test_prefers_claims_sub_over_principal_id(self):
         """Should prefer claims.sub over principalId."""
@@ -132,10 +132,10 @@ class TestVerifyUserOwnsVault:
 
     def test_raises_when_vault_ids_differ(self):
         """Should raise AuthorizationError when vault IDs differ."""
-        with pytest.raises(AuthorizationError) as exc_info:
+        with pytest.raises(ForbiddenError) as exc_info:
             verify_user_owns_vault("user-123", "vault-abc", "vault-xyz")
 
-        assert "Access denied to vault" in str(exc_info.value)
+        assert "Access denied to vault" in str(exc_info.value.msg)
 
 
 class TestVerifyUserOwnsResource:
@@ -148,10 +148,10 @@ class TestVerifyUserOwnsResource:
 
     def test_raises_when_user_ids_differ(self):
         """Should raise AuthorizationError when user IDs differ."""
-        with pytest.raises(AuthorizationError) as exc_info:
+        with pytest.raises(ForbiddenError) as exc_info:
             verify_user_owns_resource("user-123", "user-456")
 
-        assert "Access denied to resource" in str(exc_info.value)
+        assert "Access denied to resource" in str(exc_info.value.msg)
 
 
 class TestExtractBearerToken:
@@ -321,5 +321,5 @@ class TestRequireAuthentication:
         """Should raise AuthenticationError when not authenticated."""
         event = {"requestContext": {"authorizer": {}}}
 
-        with pytest.raises(AuthenticationError):
+        with pytest.raises(UnauthorizedError):
             require_authentication(event)

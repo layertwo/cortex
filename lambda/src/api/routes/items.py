@@ -10,20 +10,14 @@ Requirements: 1.4, 1.5, 2.3, 4.1, 5.1, 7.1, 7.2, 10.1, 10.2, 24.1, 24.2
 from datetime import datetime, timezone
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_user_from_context, require_vault_access
-from src.shared.errors import (
-    AuthenticationError,
-    AuthorizationError,
-    ResourceNotFoundError,
-    StorageError,
-    ValidationError,
-)
 from src.shared.models import (
     CompleteUploadRequest,
     CreateItemRequest,
@@ -52,74 +46,34 @@ class CreateItemRoute(BaseRoute):
 
             Requirements: 1.4, 2.1, 2.2, 24.1, 24.2, 24.3
             """
+            # Pydantic validation
             try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse and validate request
                 body = app.current_event.json_body
                 request = CreateItemRequest(**body)
-
-                # Create item
-                response = self.item_service.create_item(user_id, request)
-
-                logger.info(
-                    "Item created successfully",
-                    extra={
-                        "user_id": user_id,
-                        "item_id": response.item_id,
-                        "item_type": response.item_type,
-                    },
-                )
-
-                return {
-                    "item_id": response.item_id,
-                    "item_type": response.item_type,
-                    "created_at": response.created_at.isoformat(),
-                }
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
+            # Create item
+            response = self.item_service.create_item(user_id, request)
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
+            logger.info(
+                "Item created successfully",
+                extra={
+                    "user_id": user_id,
+                    "item_id": response.item_id,
+                    "item_type": response.item_type,
+                },
+            )
 
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "item_id": response.item_id,
+                "item_type": response.item_type,
+                "created_at": response.created_at.isoformat(),
+            }
 
 
 class InitiateUploadRoute(BaseRoute):
@@ -140,77 +94,37 @@ class InitiateUploadRoute(BaseRoute):
 
             Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2
             """
+            # Pydantic validation
             try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse and validate request
                 body = app.current_event.json_body
                 request = InitiateUploadRequest(**body)
-
-                # Initiate upload
-                response = self.item_service.initiate_upload(user_id, request)
-
-                logger.info(
-                    "Upload initiated successfully",
-                    extra={
-                        "user_id": user_id,
-                        "item_id": response.item_id,
-                        "size_bytes": request.size_bytes,
-                        "multipart": response.upload_id is not None,
-                    },
-                )
-
-                return {
-                    "item_id": response.item_id,
-                    "upload_url": response.upload_url,
-                    "expires_at": response.expires_at.isoformat(),
-                    "s3_key": response.s3_key,
-                    "upload_id": response.upload_id,
-                }
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
+            # Initiate upload
+            response = self.item_service.initiate_upload(user_id, request)
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
+            logger.info(
+                "Upload initiated successfully",
+                extra={
+                    "user_id": user_id,
+                    "item_id": response.item_id,
+                    "size_bytes": request.size_bytes,
+                    "multipart": response.upload_id is not None,
+                },
+            )
 
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "item_id": response.item_id,
+                "upload_url": response.upload_url,
+                "expires_at": response.expires_at.isoformat(),
+                "s3_key": response.s3_key,
+                "upload_id": response.upload_id,
+            }
 
 
 class CompleteUploadRoute(BaseRoute):
@@ -231,86 +145,32 @@ class CompleteUploadRoute(BaseRoute):
 
             Requirements: 1.4, 2.2, 2.5, 24.2
             """
+            # Pydantic validation
             try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
-
-                # Parse and validate request
                 body = app.current_event.json_body
                 request = CompleteUploadRequest(**body)
-
-                # Complete upload
-                response = self.item_service.complete_upload(user_id, request)
-
-                logger.info(
-                    "Upload completed successfully",
-                    extra={
-                        "user_id": user_id,
-                        "item_id": response.item_id,
-                    },
-                )
-
-                return {
-                    "item_id": response.item_id,
-                    "uploaded_at": response.uploaded_at.isoformat(),
-                }
-
             except PydanticValidationError as e:
                 logger.warning("Request validation failed", extra={"errors": e.errors()})
-                return Response(
-                    status_code=400,
-                    content_type="application/json",
-                    body={
-                        "error": {
-                            "code": "INVALID_REQUEST",
-                            "message": "Invalid request format",
-                        }
-                    },
-                )
+                raise BadRequestError("Invalid request format")
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
+            # Complete upload
+            response = self.item_service.complete_upload(user_id, request)
 
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
+            logger.info(
+                "Upload completed successfully",
+                extra={
+                    "user_id": user_id,
+                    "item_id": response.item_id,
+                },
+            )
 
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
-
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "item_id": response.item_id,
+                "uploaded_at": response.uploaded_at.isoformat(),
+            }
 
 
 class ListItemsRoute(BaseRoute):
@@ -333,167 +193,95 @@ class ListItemsRoute(BaseRoute):
 
             Requirements: 2.3, 10.1, 10.2, 24.1, 24.2
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
-                item_type = query_params.get("item_type")
-                page_size = int(query_params.get("page_size", "50"))
-                next_token = query_params.get("next_token")
-                sort_order = query_params.get("sort_order", "desc")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
+            item_type = query_params.get("item_type")
+            page_size = int(query_params.get("page_size", "50"))
+            next_token = query_params.get("next_token")
+            sort_order = query_params.get("sort_order", "desc")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "list_items")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, vault_id, "list_items")
 
-                # Validate page_size
-                if page_size < 1 or page_size > 100:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "page_size must be between 1 and 100",
-                            }
-                        },
-                    )
+            # Validate page_size
+            if page_size < 1 or page_size > 100:
+                raise BadRequestError("page_size must be between 1 and 100")
 
-                # Validate sort_order
-                if sort_order not in ["asc", "desc"]:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "sort_order must be 'asc' or 'desc'",
-                            }
-                        },
-                    )
+            # Validate sort_order
+            if sort_order not in ["asc", "desc"]:
+                raise BadRequestError("sort_order must be 'asc' or 'desc'")
 
-                # Validate item_type if provided
-                if item_type and item_type not in [
-                    ItemType.MEDIA,
-                    ItemType.NOTE,
-                    ItemType.TASK,
-                    ItemType.EVENT,
-                ]:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "item_type must be MEDIA, NOTE, TASK, or EVENT",
-                            }
-                        },
-                    )
+            # Validate item_type if provided
+            if item_type and item_type not in [
+                ItemType.MEDIA,
+                ItemType.NOTE,
+                ItemType.TASK,
+                ItemType.EVENT,
+            ]:
+                raise BadRequestError("item_type must be MEDIA, NOTE, TASK, or EVENT")
 
-                # List items
-                items, next_page_token = self.item_service.list_items(
-                    user_id=user_id,
-                    vault_id=vault_id,
-                    item_type=item_type,
-                    page_size=page_size,
-                    next_token=next_token,
-                    sort_order=sort_order,
-                )
+            # List items
+            items, next_page_token = self.item_service.list_items(
+                user_id=user_id,
+                vault_id=vault_id,
+                item_type=item_type,
+                page_size=page_size,
+                next_token=next_token,
+                sort_order=sort_order,
+            )
 
-                # Convert items to response format
-                response_items = []
-                for item in items:
-                    response_item = {
-                        "item_id": item["item_id"],
-                        "item_type": item["item_type"],
-                        "vault_id": item["vault_id"],
-                        "user_id": item["user_id"],
-                        "encrypted_metadata": item["encrypted_metadata"],
-                        "created_at": datetime.fromtimestamp(
-                            item["created_at"], tz=timezone.utc
-                        ).isoformat(),
-                        "updated_at": datetime.fromtimestamp(
-                            item["updated_at"], tz=timezone.utc
-                        ).isoformat(),
-                    }
-
-                    # Add optional fields
-                    if "encrypted_content" in item:
-                        response_item["encrypted_content"] = item["encrypted_content"]
-                    if "encrypted_tags" in item:
-                        response_item["encrypted_tags"] = item["encrypted_tags"]
-                    if "size_bytes" in item:
-                        response_item["size_bytes"] = item["size_bytes"]
-                    if "s3_key" in item:
-                        response_item["s3_key"] = item["s3_key"]
-
-                    response_items.append(response_item)
-
-                logger.info(
-                    "Listed items successfully",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "item_type": item_type,
-                        "count": len(response_items),
-                    },
-                )
-
-                response = {"items": response_items}
-                if next_page_token:
-                    response["next_token"] = next_page_token
-
-                return response
-
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
+            # Convert items to response format
+            response_items = []
+            for item in items:
+                response_item = {
+                    "item_id": item["item_id"],
+                    "item_type": item["item_type"],
+                    "vault_id": item["vault_id"],
+                    "user_id": item["user_id"],
+                    "encrypted_metadata": item["encrypted_metadata"],
+                    "created_at": datetime.fromtimestamp(
+                        item["created_at"], tz=timezone.utc
+                    ).isoformat(),
+                    "updated_at": datetime.fromtimestamp(
+                        item["updated_at"], tz=timezone.utc
+                    ).isoformat(),
                 }
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
+                # Add optional fields
+                if "encrypted_content" in item:
+                    response_item["encrypted_content"] = item["encrypted_content"]
+                if "encrypted_tags" in item:
+                    response_item["encrypted_tags"] = item["encrypted_tags"]
+                if "size_bytes" in item:
+                    response_item["size_bytes"] = item["size_bytes"]
+                if "s3_key" in item:
+                    response_item["s3_key"] = item["s3_key"]
 
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+                response_items.append(response_item)
+
+            logger.info(
+                "Listed items successfully",
+                extra={
+                    "user_id": user_id,
+                    "vault_id": vault_id,
+                    "item_type": item_type,
+                    "count": len(response_items),
+                },
+            )
+
+            response = {"items": response_items}
+            if next_page_token:
+                response["next_token"] = next_page_token
+
+            return response
 
 
 class GetItemRoute(BaseRoute):
@@ -518,121 +306,64 @@ class GetItemRoute(BaseRoute):
 
             Requirements: 2.3, 10.1, 24.1, 24.2
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "get_item")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, vault_id, "get_item")
 
-                # Get item
-                item = self.item_service.get_item(user_id, vault_id, item_id)
+            # Get item
+            item = self.item_service.get_item(user_id, vault_id, item_id)
 
-                if not item:
-                    logger.warning(
-                        "Item not found",
-                        extra={"user_id": user_id, "item_id": item_id},
-                    )
-                    return {
-                        "statusCode": 404,
-                        "body": {
-                            "error": {"code": "RESOURCE_NOT_FOUND", "message": "Item not found"}
-                        },
-                    }
-
-                # Convert item to response format
-                response = {
-                    "item_id": item["item_id"],
-                    "item_type": item["item_type"],
-                    "vault_id": item["vault_id"],
-                    "encrypted_metadata": item["encrypted_metadata"],
-                    "created_at": datetime.fromtimestamp(
-                        item["created_at"], tz=timezone.utc
-                    ).isoformat(),
-                    "updated_at": datetime.fromtimestamp(
-                        item["updated_at"], tz=timezone.utc
-                    ).isoformat(),
-                }
-
-                # Add optional fields
-                if "encrypted_content" in item:
-                    response["encrypted_content"] = item["encrypted_content"]
-                if "encrypted_tags" in item:
-                    response["encrypted_tags"] = item["encrypted_tags"]
-                if "size_bytes" in item:
-                    response["size_bytes"] = item["size_bytes"]
-                if "s3_key" in item:
-                    response["s3_key"] = item["s3_key"]
-
-                logger.info(
-                    "Retrieved item successfully",
-                    extra={
-                        "user_id": user_id,
-                        "item_id": item_id,
-                        "item_type": item["item_type"],
-                    },
+            if not item:
+                logger.warning(
+                    "Item not found",
+                    extra={"user_id": user_id, "item_id": item_id},
                 )
+                raise NotFoundError("Item not found")
 
-                return response
+            # Convert item to response format
+            response = {
+                "item_id": item["item_id"],
+                "item_type": item["item_type"],
+                "vault_id": item["vault_id"],
+                "encrypted_metadata": item["encrypted_metadata"],
+                "created_at": datetime.fromtimestamp(
+                    item["created_at"], tz=timezone.utc
+                ).isoformat(),
+                "updated_at": datetime.fromtimestamp(
+                    item["updated_at"], tz=timezone.utc
+                ).isoformat(),
+            }
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
+            # Add optional fields
+            if "encrypted_content" in item:
+                response["encrypted_content"] = item["encrypted_content"]
+            if "encrypted_tags" in item:
+                response["encrypted_tags"] = item["encrypted_tags"]
+            if "size_bytes" in item:
+                response["size_bytes"] = item["size_bytes"]
+            if "s3_key" in item:
+                response["s3_key"] = item["s3_key"]
 
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
+            logger.info(
+                "Retrieved item successfully",
+                extra={
+                    "user_id": user_id,
+                    "item_id": item_id,
+                    "item_type": item["item_type"],
+                },
+            )
 
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return response
 
 
 class UpdateItemRoute(BaseRoute):
@@ -676,92 +407,33 @@ class DeleteItemRoute(BaseRoute):
 
             Requirements: 5.1, 24.2
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership (CRITICAL: Prevents OWASP A01:2021 - Broken Access Control)
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "delete_item")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership (CRITICAL: Prevents OWASP A01:2021 - Broken Access Control)
+            require_vault_access(self.vault_service, user_id, vault_id, "delete_item")
 
-                # Delete item
-                self.item_service.delete_item(user_id, vault_id, item_id)
+            # Delete item
+            self.item_service.delete_item(user_id, vault_id, item_id)
 
-                logger.info(
-                    "Item deleted successfully",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "item_id": item_id,
-                    },
-                )
+            logger.info(
+                "Item deleted successfully",
+                extra={
+                    "user_id": user_id,
+                    "vault_id": vault_id,
+                    "item_id": item_id,
+                },
+            )
 
-                return {"message": "Item deleted successfully", "item_id": item_id}
-
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
-
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
-
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
-
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {"message": "Item deleted successfully", "item_id": item_id}
 
 
 class DownloadItemRoute(BaseRoute):
@@ -786,107 +458,41 @@ class DownloadItemRoute(BaseRoute):
 
             Requirements: 4.1, 4.3, 24.2
             """
-            try:
-                # Extract user identity from context
-                user_id = get_user_from_context(app.current_event)
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
 
-                # Get query parameters
-                query_params = app.current_event.query_string_parameters or {}
-                vault_id = query_params.get("vault_id")
+            # Get query parameters
+            query_params = app.current_event.query_string_parameters or {}
+            vault_id = query_params.get("vault_id")
 
-                # Validate required parameters
-                if not vault_id:
-                    return Response(
-                        status_code=400,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "INVALID_REQUEST",
-                                "message": "vault_id is required",
-                            }
-                        },
-                    )
+            # Validate required parameters
+            if not vault_id:
+                raise BadRequestError("vault_id is required")
 
-                # Verify vault ownership
-                try:
-                    require_vault_access(self.vault_service, user_id, vault_id, "download_item")
-                except AuthorizationError as e:
-                    return Response(
-                        status_code=403,
-                        content_type="application/json",
-                        body={
-                            "error": {
-                                "code": "AUTHORIZATION_FAILED",
-                                "message": str(e),
-                            }
-                        },
-                    )
+            # Verify vault ownership
+            require_vault_access(self.vault_service, user_id, vault_id, "download_item")
 
-                # Get download URL
-                download_url, expires_at, encrypted_metadata, s3_key = (
-                    self.item_service.get_download_url(user_id, vault_id, item_id)
-                )
+            # Get download URL
+            download_url, expires_at, encrypted_metadata, s3_key = (
+                self.item_service.get_download_url(user_id, vault_id, item_id)
+            )
 
-                logger.info(
-                    "Generated download URL successfully",
-                    extra={
-                        "user_id": user_id,
-                        "item_id": item_id,
-                        "vault_id": vault_id,
-                    },
-                )
-
-                return {
-                    "download_url": download_url,
-                    "expires_at": expires_at.isoformat(),
-                    "encrypted_metadata": encrypted_metadata,
+            logger.info(
+                "Generated download URL successfully",
+                extra={
+                    "user_id": user_id,
                     "item_id": item_id,
-                    "s3_key": s3_key,
-                }
+                    "vault_id": vault_id,
+                },
+            )
 
-            except AuthenticationError as e:
-                logger.warning("Authentication failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 401,
-                    "body": {"error": {"code": "AUTHENTICATION_REQUIRED", "message": str(e)}},
-                }
-
-            except AuthorizationError as e:
-                logger.warning("Authorization failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 403,
-                    "body": {"error": {"code": "AUTHORIZATION_FAILED", "message": str(e)}},
-                }
-
-            except ResourceNotFoundError as e:
-                logger.warning("Resource not found", extra={"error": str(e)})
-                return {
-                    "statusCode": 404,
-                    "body": {"error": {"code": "RESOURCE_NOT_FOUND", "message": str(e)}},
-                }
-
-            except ValidationError as e:
-                logger.warning("Validation failed", extra={"error": str(e)})
-                return {
-                    "statusCode": 400,
-                    "body": {"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-                }
-
-            except StorageError as e:
-                logger.error("Storage error", extra={"error": str(e)})
-                return {
-                    "statusCode": 500,
-                    "body": {"error": {"code": "STORAGE_ERROR", "message": str(e)}},
-                }
-
-            except Exception as e:
-                logger.error("Unexpected error", extra={"error": str(e)}, exc_info=True)
-                return {
-                    "statusCode": 500,
-                    "body": {
-                        "error": {"code": "INTERNAL_ERROR", "message": "Internal server error"}
-                    },
-                }
+            return {
+                "download_url": download_url,
+                "expires_at": expires_at.isoformat(),
+                "encrypted_metadata": encrypted_metadata,
+                "item_id": item_id,
+                "s3_key": s3_key,
+            }
 
 
 class SearchItemsRoute(BaseRoute):

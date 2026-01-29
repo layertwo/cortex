@@ -313,19 +313,19 @@ class UpdateCollectionResponse(BaseModel):
     updated_at: datetime = Field(..., description="Update timestamp")
 
 
-class AddMediaToCollectionRequest(BaseModel):
-    """Request model for adding media to collection."""
+class AddItemToCollectionRequest(BaseModel):
+    """Request model for adding items to collection."""
 
     collection_id: str = Field(..., description="Collection identifier")
-    file_id: str = Field(..., description="File identifier")
+    item_id: str = Field(..., description="Item identifier")
     vault_id: str = Field(..., description="Vault ID")
 
 
-class AddMediaToCollectionResponse(BaseModel):
-    """Response model for adding media to collection."""
+class AddItemToCollectionResponse(BaseModel):
+    """Response model for adding items to collection."""
 
     collection_id: str = Field(..., description="Collection identifier")
-    file_id: str = Field(..., description="File identifier")
+    item_id: str = Field(..., description="Item identifier")
     added_at: datetime = Field(..., description="Addition timestamp")
 
 
@@ -362,7 +362,9 @@ class CreateVaultRequest(BaseModel):
         default=None,
         min_length=16,
         max_length=16,
-        description="Optional 16-byte vault salt for key derivation (if not provided, will be generated)",
+        description=(
+            "Optional 16-byte vault salt for key derivation " "(if not provided, will be generated)"
+        ),
     )
 
     @field_validator("vault_salt", mode="before")
@@ -587,17 +589,17 @@ class DynamoDBCollectionItem(BaseModel):
     item_count: int = Field(default=0, description="Number of items")
 
 
-class DynamoDBFileCollectionAssociation(BaseModel):
-    """DynamoDB item model for file-collection associations."""
+class DynamoDBItemCollectionAssociation(BaseModel):
+    """DynamoDB item model for item-collection associations."""
 
     PK: str = Field(..., description="Partition key: COLLECTION#{collectionId}")
-    SK: str = Field(..., description="Sort key: FILE#{fileId}")
+    SK: str = Field(..., description="Sort key: ITEM#{itemId}")
     collection_id: str = Field(..., description="Collection identifier")
-    file_id: str = Field(..., description="File identifier")
+    item_id: str = Field(..., description="Item identifier")
     vault_id: str = Field(..., description="Vault identifier")
     user_id: str = Field(..., description="User identifier")
     added_at: int = Field(..., description="Addition timestamp (Unix epoch)")
-    GSI1PK: str = Field(..., description="GSI1 PK: FILE#{fileId}")
+    GSI1PK: str = Field(..., description="GSI1 PK: ITEM#{itemId}")
     GSI1SK: str = Field(..., description="GSI1 SK: COLLECTION#{collectionId}")
 
 

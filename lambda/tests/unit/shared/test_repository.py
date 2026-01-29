@@ -8,8 +8,8 @@ import base64
 import json
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import InternalServerError
 
-from src.shared.errors import StorageError
 from src.shared.repository import (
     DynamoDBRepository,
     S3Repository,
@@ -209,7 +209,7 @@ class TestDynamoDBRepository:
             },
         )
 
-        with pytest.raises(StorageError, match="Conditional update failed"):
+        with pytest.raises(InternalServerError, match="Conditional update failed"):
             dynamodb_repository.update_item_conditional(
                 key={"PK": "VAULT#v1", "SK": "ITEM#i1"},
                 update_expression="SET #status = :complete",
@@ -538,7 +538,7 @@ class TestS3Repository:
             expected_params={"Bucket": s3_bucket_name, "Key": "test-key"},
         )
 
-        with pytest.raises(StorageError, match="Failed to get object metadata"):
+        with pytest.raises(InternalServerError, match="Failed to get object metadata"):
             s3_repository.get_object_metadata(object_key="test-key")
 
     def test_abort_multipart_upload(self, s3_repository, s3_stubber, s3_bucket_name, s3_client):
@@ -675,7 +675,7 @@ class TestDynamoDBRepositoryErrors:
             },
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             dynamodb_repository.get_item({"PK": "test", "SK": "test"})
 
     def test_put_item_raises_storage_error(
@@ -692,7 +692,7 @@ class TestDynamoDBRepositoryErrors:
             },
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             dynamodb_repository.put_item({"PK": "test", "SK": "test"})
 
     def test_update_item_raises_storage_error(
@@ -712,7 +712,7 @@ class TestDynamoDBRepositoryErrors:
             },
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             dynamodb_repository.update_item(
                 key={"PK": "test", "SK": "test"},
                 update_expression="SET #a = :v",
@@ -733,7 +733,7 @@ class TestDynamoDBRepositoryErrors:
             },
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             dynamodb_repository.delete_item({"PK": "test", "SK": "test"})
 
     def test_query_raises_storage_error(
@@ -751,7 +751,7 @@ class TestDynamoDBRepositoryErrors:
                 "TableName": dynamodb_table_name,
             },
         )
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             dynamodb_repository.query(
                 key_condition_expression="PK = :pk", expression_attribute_values={":pk": "test"}
             )
@@ -777,7 +777,7 @@ class TestS3RepositoryErrors:
             },
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             s3_repository.initiate_multipart_upload("key", "video/mp4")
 
     def test_delete_object_raises_storage_error(self, s3_repository, s3_stubber, s3_bucket_name):
@@ -789,7 +789,7 @@ class TestS3RepositoryErrors:
             expected_params={"Bucket": s3_bucket_name, "Key": "key"},
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             s3_repository.delete_object("key")
 
     def test_object_exists_raises_storage_error_on_non_404(
@@ -806,7 +806,7 @@ class TestS3RepositoryErrors:
             expected_params={"Bucket": s3_bucket_name, "Key": "key"},
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             s3_repository.object_exists("key")
 
     def test_abort_multipart_upload_raises_storage_error(
@@ -824,7 +824,7 @@ class TestS3RepositoryErrors:
             },
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             s3_repository.abort_multipart_upload("key", "upload-id")
 
 

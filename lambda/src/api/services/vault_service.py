@@ -13,10 +13,13 @@ import uuid
 from typing import Dict, Optional
 
 from aws_lambda_powertools import Logger
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    InternalServerError,
+    NotFoundError,
+)
 from boto3.dynamodb.types import Binary
 from botocore.exceptions import ClientError
-
-from src.shared.errors import ResourceNotFoundError, StorageError, ValidationError
 
 logger = Logger(child=True)
 
@@ -65,7 +68,7 @@ class VaultService:
         else:
             # Validate provided salt
             if not isinstance(vault_salt, bytes) or len(vault_salt) != 16:
-                raise ValidationError("Vault salt must be exactly 16 bytes")
+                raise BadRequestError("Vault salt must be exactly 16 bytes")
 
         # Create timestamp
         created_at = int(time.time())
@@ -111,7 +114,7 @@ class VaultService:
                 "Failed to create vault",
                 extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
-            raise StorageError("Failed to create vault")
+            raise InternalServerError("Failed to create vault")
 
     def get_vault_salt(self, user_id: str, vault_id: str) -> bytes:
         """
@@ -147,7 +150,7 @@ class VaultService:
                     "Vault not found",
                     extra={"vault_id": vault_id, "user_id": user_id, "operation": "get_salt"},
                 )
-                raise ResourceNotFoundError(f"Vault {vault_id} not found")
+                raise NotFoundError(f"Vault {vault_id} not found")
 
             vault_salt = item.get("vault_salt")
 
@@ -156,7 +159,7 @@ class VaultService:
                     "Vault salt missing from vault item",
                     extra={"vault_id": vault_id, "user_id": user_id},
                 )
-                raise StorageError("Vault salt not found in vault record")
+                raise InternalServerError("Vault salt not found in vault record")
 
             # Convert Binary type to bytes if necessary
             if isinstance(vault_salt, Binary):
@@ -173,7 +176,7 @@ class VaultService:
                         "salt_length": len(vault_salt) if isinstance(vault_salt, bytes) else None,
                     },
                 )
-                raise StorageError("Invalid vault salt format")
+                raise InternalServerError("Invalid vault salt format")
 
             logger.info(
                 "Vault salt retrieved successfully",
@@ -187,7 +190,7 @@ class VaultService:
                 "Failed to retrieve vault salt",
                 extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
-            raise StorageError("Failed to retrieve vault salt")
+            raise InternalServerError("Failed to retrieve vault salt")
 
     def vault_exists(self, user_id: str, vault_id: str) -> bool:
         """
@@ -250,4 +253,4 @@ class VaultService:
 
         except ClientError as e:
             logger.error("Failed to list user vaults", extra={"error": str(e), "user_id": user_id})
-            raise StorageError("Failed to list vaults")
+            raise InternalServerError("Failed to list vaults")

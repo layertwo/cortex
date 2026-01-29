@@ -182,8 +182,9 @@ class TestGetVaultSaltRoute:
         # Verify 404 response
         assert response["statusCode"] == 404
         body = json.loads(response["body"])
-        assert "error" in body
-        assert body["error"]["code"] == "RESOURCE_NOT_FOUND"
+        # Powertools format: {"statusCode": 404, "message": "Vault ... not found"}
+        assert body["statusCode"] == 404
+        assert "not found" in body["message"].lower()
 
 
 if __name__ == "__main__":

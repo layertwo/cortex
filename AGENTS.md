@@ -647,52 +647,68 @@ api.root.addProxy({
 - Validate inputs with Pydantic models
 - Organize routes by domain in separate modules
 
-**Pydantic Validation Error Handling Pattern:**
+**Exception Handling Pattern (Powertools-Based):**
+
+All routes use AWS Lambda Powertools exceptions exclusively. The framework automatically handles exception-to-HTTP-response conversion.
+
 ```python
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import (
+    BadRequestError,
+    UnauthorizedError,
+    ForbiddenError,
+    NotFoundError,
+    InternalServerError,
+)
 from pydantic import ValidationError as PydanticValidationError
-from src.shared.models import CreateItemRequest
-from src.shared.errors import ValidationError  # Custom validation error
 
 @app.post("/v1/items")
 def handle():
+    # Pydantic validation - only try-catch needed
     try:
-        # Parse and validate request
         body = app.current_event.json_body
         request = CreateItemRequest(**body)
-        
-        # Process request...
-        
     except PydanticValidationError as e:
-        # Catch Pydantic validation errors BEFORE custom ValidationError
         logger.warning("Request validation failed", extra={"errors": e.errors()})
-        return Response(
-            status_code=400,
-            content_type="application/json",
-            body={
-                "error": {
-                    "code": "INVALID_REQUEST",
-                    "message": "Invalid request format",
-                }
-            },
-        )
+        raise BadRequestError("Invalid request format")
     
-    except ValidationError as e:
-        # Handle custom validation errors
-        logger.warning("Validation failed", extra={"error": str(e)})
-        return Response(
-            status_code=400,
-            content_type="application/json",
-            body={"error": {"code": "INVALID_REQUEST", "message": str(e)}},
-        )
+    # Business logic - let Powertools exceptions bubble up
+    user_id = get_user_from_context(app.current_event)
+    response = service.create_item(user_id, request)
+    
+    # Return raw dict - Powertools auto-converts to JSON response
+    return {
+        "item_id": response.item_id,
+        "created_at": response.created_at.isoformat(),
+    }
 ```
 
-**Key Points:**
-- Always catch `PydanticValidationError` explicitly before custom `ValidationError`
-- Import as `from pydantic import ValidationError as PydanticValidationError` to avoid naming conflicts
-- Return sanitized error messages to prevent exposing internal validation details
-- Log full error details server-side for debugging (use `e.errors()` for structured logging)
-- Use Lambda Powertools `Response` object for consistent error formatting
+**Available Powertools Exceptions:**
+- `BadRequestError(msg)` - HTTP 400 (validation failures, invalid input)
+- `UnauthorizedError(msg)` - HTTP 401 (authentication required/failed)
+- `ForbiddenError(msg)` - HTTP 403 (insufficient permissions, access denied)
+- `NotFoundError(msg)` - HTTP 404 (resource doesn't exist)
+- `RequestTimeoutError(msg)` - HTTP 408 (request timeout)
+- `RequestEntityTooLargeError(msg)` - HTTP 413 (payload too large)
+- `ServiceError(status_code, msg)` - Custom status (e.g., 429 for rate limiting)
+- `InternalServerError(msg)` - HTTP 500 (server errors, storage failures)
+- `ServiceUnavailableError(msg)` - HTTP 503 (service unavailable)
+
+**Key Benefits:**
+- No manual try-catch blocks (except Pydantic validation)
+- No manual error response construction
+- Return raw dictionaries (Powertools handles JSON conversion)
+- Automatic HTTP status code mapping
+- Consistent error formatting across all endpoints
+- Cleaner, more maintainable code
+
+**Exception Mapping Guide:**
+- Authentication failures → `UnauthorizedError`
+- Authorization/access denied → `ForbiddenError`
+- Resource not found → `NotFoundError`
+- Validation failures → `BadRequestError`
+- Storage/DynamoDB/S3 failures → `InternalServerError`
+- Rate limiting → `ServiceError(429, "Rate limit exceeded")`
 
 ## Security Requirements
 

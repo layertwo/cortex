@@ -8,11 +8,10 @@ Lambda function invocations.
 from typing import Any, Dict, List
 
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver, Response
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from src.api.routes.base_route import BaseRoute
-from src.shared.errors import ResourceNotFoundError
 
 logger = Logger()
 
@@ -20,6 +19,10 @@ logger = Logger()
 class ApiRouter:
     """
     API Router that manages route registration and request handling.
+
+    Uses AWS Lambda Powertools APIGatewayRestResolver which automatically
+    handles all Powertools exceptions (NotFoundError, BadRequestError, etc.)
+    and converts them to proper HTTP responses.
     """
 
     def __init__(self, routes: List[BaseRoute]):
@@ -31,26 +34,7 @@ class ApiRouter:
         """
         self.app = APIGatewayRestResolver()
         self.routes = routes
-        self._register_error_handlers()
         self._register_routes()
-
-    def _register_error_handlers(self):
-        """Register custom exception handlers."""
-
-        @self.app.exception_handler(ResourceNotFoundError)
-        def handle_not_found(ex: ResourceNotFoundError):
-            """Handle ResourceNotFoundError by returning 404."""
-            logger.warning(f"Resource not found: {str(ex)}")
-            return Response(
-                status_code=404,
-                content_type="application/json",
-                body={
-                    "error": {
-                        "code": "RESOURCE_NOT_FOUND",
-                        "message": str(ex),
-                    }
-                },
-            )
 
     def _register_routes(self):
         """Register all routes with the API Gateway resolver."""

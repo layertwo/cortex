@@ -8,12 +8,16 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
+from aws_lambda_powertools.event_handler.exceptions import (
+    ForbiddenError,
+    InternalServerError,
+    NotFoundError,
+)
 from botocore.stub import ANY
 
 from src.api.services.collection_service import CollectionService
-from src.shared.errors import AuthorizationError, ResourceNotFoundError, StorageError
 from src.shared.models import (
-    AddMediaToCollectionRequest,
+    AddItemToCollectionRequest,
     CreateCollectionRequest,
     UpdateCollectionRequest,
 )
@@ -80,7 +84,7 @@ class TestCreateCollection:
             service_message="Internal error",
         )
 
-        with pytest.raises(StorageError):
+        with pytest.raises(InternalServerError):
             collection_service.create_collection(user_id, request)
 
 
@@ -225,7 +229,7 @@ class TestGetCollection:
             },
         )
 
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ForbiddenError):
             collection_service.get_collection(user_id, vault_id, collection_id)
 
 
@@ -591,9 +595,9 @@ class TestAddItemToCollection:
         collection_id = "col-789"
         item_id = "item-abc"
 
-        request = AddMediaToCollectionRequest(
+        request = AddItemToCollectionRequest(
             collection_id=collection_id,
-            file_id=item_id,
+            item_id=item_id,
             vault_id=vault_id,
         )
 
@@ -619,25 +623,32 @@ class TestAddItemToCollection:
             },
         )
 
-        # Stub get item (try MEDIA type - succeeds)
+        # Stub query to find item by ID (single query with filter)
         dynamodb_stubber.add_response(
-            "get_item",
+            "query",
             {
-                "Item": {
-                    "PK": {"S": f"VAULT#{vault_id}"},
-                    "SK": {"S": f"ITEM#MEDIA#{item_id}"},
-                    "item_id": {"S": item_id},
-                    "item_type": {"S": "MEDIA"},
-                    "vault_id": {"S": vault_id},
-                    "user_id": {"S": user_id},
-                    "encrypted_metadata": {"B": b"item-metadata"},
-                    "created_at": {"N": "1234567890"},
-                    "updated_at": {"N": "1234567890"},
-                }
+                "Items": [
+                    {
+                        "PK": {"S": f"VAULT#{vault_id}"},
+                        "SK": {"S": f"ITEM#MEDIA#{item_id}"},
+                        "item_id": {"S": item_id},
+                        "item_type": {"S": "MEDIA"},
+                        "vault_id": {"S": vault_id},
+                        "user_id": {"S": user_id},
+                        "encrypted_metadata": {"B": b"item-metadata"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                    }
+                ],
+                "Count": 1,
             },
             {
                 "TableName": items_table_name,
-                "Key": ANY,
+                "KeyConditionExpression": ANY,
+                "FilterExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "Limit": 1,
+                "ScanIndexForward": True,
             },
         )
 
@@ -668,7 +679,7 @@ class TestAddItemToCollection:
         response = collection_service.add_item_to_collection(user_id, request)
 
         assert response.collection_id == collection_id
-        assert response.file_id == item_id
+        assert response.item_id == item_id
 
     def test_add_item_to_collection_idempotent(
         self,
@@ -684,9 +695,9 @@ class TestAddItemToCollection:
         collection_id = "col-789"
         item_id = "item-abc"
 
-        request = AddMediaToCollectionRequest(
+        request = AddItemToCollectionRequest(
             collection_id=collection_id,
-            file_id=item_id,
+            item_id=item_id,
             vault_id=vault_id,
         )
 
@@ -712,25 +723,32 @@ class TestAddItemToCollection:
             },
         )
 
-        # Stub get item (try MEDIA type - succeeds)
+        # Stub query to find item by ID (single query with filter)
         dynamodb_stubber.add_response(
-            "get_item",
+            "query",
             {
-                "Item": {
-                    "PK": {"S": f"VAULT#{vault_id}"},
-                    "SK": {"S": f"ITEM#MEDIA#{item_id}"},
-                    "item_id": {"S": item_id},
-                    "item_type": {"S": "MEDIA"},
-                    "vault_id": {"S": vault_id},
-                    "user_id": {"S": user_id},
-                    "encrypted_metadata": {"B": b"item-metadata"},
-                    "created_at": {"N": "1234567890"},
-                    "updated_at": {"N": "1234567890"},
-                }
+                "Items": [
+                    {
+                        "PK": {"S": f"VAULT#{vault_id}"},
+                        "SK": {"S": f"ITEM#MEDIA#{item_id}"},
+                        "item_id": {"S": item_id},
+                        "item_type": {"S": "MEDIA"},
+                        "vault_id": {"S": vault_id},
+                        "user_id": {"S": user_id},
+                        "encrypted_metadata": {"B": b"item-metadata"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                    }
+                ],
+                "Count": 1,
             },
             {
                 "TableName": items_table_name,
-                "Key": ANY,
+                "KeyConditionExpression": ANY,
+                "FilterExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "Limit": 1,
+                "ScanIndexForward": True,
             },
         )
 
@@ -750,7 +768,7 @@ class TestAddItemToCollection:
 
         # Should return success without incrementing count
         assert response.collection_id == collection_id
-        assert response.file_id == item_id
+        assert response.item_id == item_id
 
 
 class TestRemoveItemFromCollection:
@@ -853,22 +871,28 @@ class TestAddItemToCollectionAuthorization:
             }
         )
 
-        service.items_repo.get_item = MagicMock(
+        service.items_repo.query = MagicMock(
             return_value={
-                "file_id": "item-123",
-                "vault_id": "vault-123",
-                "user_id": "different-user",  # Different user!
-                "upload_status": "COMPLETE",
+                "Items": [
+                    {
+                        "item_id": "item-123",
+                        "item_type": "MEDIA",
+                        "vault_id": "vault-123",
+                        "user_id": "different-user",  # Different user!
+                        "upload_status": "COMPLETE",
+                    }
+                ],
+                "Count": 1,
             }
         )
 
-        request = AddMediaToCollectionRequest(
+        request = AddItemToCollectionRequest(
             collection_id="collection-123",
             vault_id="vault-123",
-            file_id="item-123",
+            item_id="item-123",
         )
 
-        with pytest.raises(AuthorizationError, match="Access denied to item"):
+        with pytest.raises(ForbiddenError, match="Access denied to item"):
             service.add_item_to_collection("user-123", request)
 
 
@@ -898,7 +922,7 @@ class TestRemoveItemFromCollectionValidation:
 
         service.collections_repo.get_item = MagicMock(side_effect=mock_get_item)
 
-        with pytest.raises(ResourceNotFoundError, match="Item not in collection"):
+        with pytest.raises(NotFoundError, match="Item not in collection"):
             service.remove_item_from_collection(
                 "user-123", "vault-123", "collection-123", "item-123"
             )
@@ -911,17 +935,17 @@ class TestGetCollectionErrorHandling:
         """Test that storage errors are properly raised."""
         from unittest.mock import MagicMock
 
-        from src.shared.errors import StorageError
-
         service = CollectionService(
             session=boto_session,
             collections_table_name="test-collections",
             items_table_name="test-items",
         )
 
-        # Mock get_item to raise StorageError
-        service.collections_repo.get_item = MagicMock(side_effect=StorageError("DynamoDB error"))
+        # Mock get_item to raise InternalServerError
+        service.collections_repo.get_item = MagicMock(
+            side_effect=InternalServerError("DynamoDB error")
+        )
 
-        # Should raise StorageError
-        with pytest.raises(StorageError):
+        # Should raise InternalServerError
+        with pytest.raises(InternalServerError):
             service.get_collection("user-123", "vault-123", "collection-123")
