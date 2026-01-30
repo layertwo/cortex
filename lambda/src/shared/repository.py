@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 
 import boto3
 from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError, InternalServerError
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError
 from botocore.exceptions import ClientError
 
 logger = Logger(child=True)
@@ -57,7 +57,7 @@ class DynamoDBRepository:
                 "DynamoDB get_item failed",
                 extra={"error": str(e), "table": self.table_name, "key": key},
             )
-            raise InternalServerError(f"Failed to retrieve item from {self.table_name}")
+            raise
 
     def put_item(self, item: Dict[str, Any], condition_expression: Optional[str] = None) -> None:
         """
@@ -91,7 +91,7 @@ class DynamoDBRepository:
             logger.error(
                 "DynamoDB put_item failed", extra={"error": str(e), "table": self.table_name}
             )
-            raise InternalServerError(f"Failed to store item in {self.table_name}")
+            raise
 
     def update_item(
         self,
@@ -134,7 +134,7 @@ class DynamoDBRepository:
                 "DynamoDB update_item failed",
                 extra={"error": str(e), "table": self.table_name, "key": key},
             )
-            raise InternalServerError(f"Failed to update item in {self.table_name}")
+            raise
 
     def update_item_conditional(
         self,
@@ -186,13 +186,13 @@ class DynamoDBRepository:
                     "DynamoDB conditional update failed - condition not met",
                     extra={"table": self.table_name, "key": key},
                 )
-                raise InternalServerError("Conditional update failed - item state changed")
+                raise
 
             logger.error(
                 "DynamoDB update_item_conditional failed",
                 extra={"error": str(e), "table": self.table_name, "key": key},
             )
-            raise InternalServerError(f"Failed to update item in {self.table_name}")
+            raise
 
     def delete_item(self, key: Dict[str, Any]) -> None:
         """
@@ -212,7 +212,7 @@ class DynamoDBRepository:
                 "DynamoDB delete_item failed",
                 extra={"error": str(e), "table": self.table_name, "key": key},
             )
-            raise InternalServerError(f"Failed to delete item from {self.table_name}")
+            raise
 
     def query(
         self,
@@ -278,7 +278,7 @@ class DynamoDBRepository:
                 "DynamoDB query failed",
                 extra={"error": str(e), "table": self.table_name, "index": index_name},
             )
-            raise InternalServerError(f"Failed to query {self.table_name}")
+            raise
 
 
 class S3Repository:
@@ -332,7 +332,7 @@ class S3Repository:
                 "Failed to generate upload URL",
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
-            raise InternalServerError("Failed to generate upload URL")
+            raise
 
     def generate_download_url(self, object_key: str, expiration: int = 900) -> str:  # 15 minutes
         """
@@ -369,7 +369,7 @@ class S3Repository:
                 "Failed to generate download URL",
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
-            raise InternalServerError("Failed to generate download URL")
+            raise
 
     def generate_multipart_upload_url(
         self,
@@ -419,7 +419,7 @@ class S3Repository:
                     "part_number": part_number,
                 },
             )
-            raise InternalServerError("Failed to generate multipart upload URL")
+            raise
 
     def initiate_multipart_upload(self, object_key: str, content_type: str) -> str:
         """
@@ -457,7 +457,7 @@ class S3Repository:
                 "Failed to initiate multipart upload",
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
-            raise InternalServerError("Failed to initiate multipart upload")
+            raise
 
     def abort_multipart_upload(self, object_key: str, upload_id: str) -> None:
         """
@@ -492,7 +492,7 @@ class S3Repository:
                     "upload_id": upload_id,
                 },
             )
-            raise InternalServerError("Failed to abort multipart upload")
+            raise
 
     def delete_object(self, object_key: str) -> None:
         """
@@ -514,7 +514,7 @@ class S3Repository:
                 "Failed to delete S3 object",
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
-            raise InternalServerError("Failed to delete object from S3")
+            raise
 
     def object_exists(self, object_key: str) -> bool:
         """
@@ -538,7 +538,7 @@ class S3Repository:
                 "Failed to check object existence",
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
-            raise InternalServerError("Failed to check object existence")
+            raise
 
     def get_object_metadata(self, object_key: str) -> Optional[Dict[str, Any]]:
         """
@@ -580,7 +580,7 @@ class S3Repository:
                 "Failed to get object metadata",
                 extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
-            raise InternalServerError("Failed to get object metadata")
+            raise
 
 
 def build_s3_key(vault_id: str, file_id: str) -> str:

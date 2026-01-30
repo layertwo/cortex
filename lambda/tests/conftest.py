@@ -35,6 +35,16 @@ def items_table_name():
     return "test-items-table"
 
 
+@pytest.fixture
+def shares_table_name():
+    return "test-shares-table"
+
+
+@pytest.fixture
+def files_bucket_name():
+    return "test-files-bucket"
+
+
 @pytest.fixture(autouse=True)
 def setup_environment(
     monkeypatch,
@@ -42,20 +52,24 @@ def setup_environment(
     aws_access_key_id,
     aws_secret_access_key,
     aws_session_token,
+    vaults_table_name,
+    items_table_name,
+    collections_table_name,
+    shares_table_name,
     recovery_table_name,
+    files_bucket_name,
 ):
     """Mock environment variables for Lambda functions."""
     monkeypatch.setenv("AWS_REGION", aws_region_name)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", aws_access_key_id)
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", aws_secret_access_key)
     monkeypatch.setenv("AWS_SESSION_TOKEN", aws_session_token)
-    monkeypatch.setenv("USERS_TABLE_NAME", "test-users-table")
-    monkeypatch.setenv("VAULTS_TABLE_NAME", "test-vaults-table")
-    monkeypatch.setenv("ITEMS_TABLE_NAME", "test-items-table")
-    monkeypatch.setenv("COLLECTIONS_TABLE_NAME", "test-collections-table")
-    monkeypatch.setenv("SHARES_TABLE_NAME", "test-shares-table")
+    monkeypatch.setenv("VAULTS_TABLE_NAME", vaults_table_name)
+    monkeypatch.setenv("ITEMS_TABLE_NAME", items_table_name)
+    monkeypatch.setenv("COLLECTIONS_TABLE_NAME", collections_table_name)
+    monkeypatch.setenv("SHARES_TABLE_NAME", shares_table_name)
     monkeypatch.setenv("RECOVERY_TABLE_NAME", recovery_table_name)
-    monkeypatch.setenv("FILES_BUCKET_NAME", "test-files-bucket")
+    monkeypatch.setenv("FILES_BUCKET_NAME", files_bucket_name)
 
 
 @pytest.fixture

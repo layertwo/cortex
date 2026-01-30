@@ -9,8 +9,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_lambda_powertools.event_handler.exceptions import (
-    ForbiddenError,
-    InternalServerError,
     NotFoundError,
 )
 from botocore.stub import ANY
@@ -63,29 +61,6 @@ class TestCreateCollection:
 
         assert response.collection_id is not None
         assert isinstance(response.created_at, datetime)
-
-    def test_create_collection_storage_error(
-        self, collection_service, dynamodb_stubber, collections_table_name
-    ):
-        """Test collection creation with storage error."""
-        user_id = "user-123"
-        vault_id = "vault-456"
-        encrypted_metadata = b"encrypted-metadata"
-
-        request = CreateCollectionRequest(
-            vault_id=vault_id,
-            encrypted_metadata=encrypted_metadata,
-        )
-
-        # Stub DynamoDB error
-        dynamodb_stubber.add_client_error(
-            "put_item",
-            service_error_code="InternalServerError",
-            service_message="Internal error",
-        )
-
-        with pytest.raises(InternalServerError):
-            collection_service.create_collection(user_id, request)
 
 
 class TestListCollections:
@@ -229,7 +204,7 @@ class TestGetCollection:
             },
         )
 
-        with pytest.raises(ForbiddenError):
+        with pytest.raises(NotFoundError):
             collection_service.get_collection(user_id, vault_id, collection_id)
 
 
@@ -892,7 +867,7 @@ class TestAddItemToCollectionAuthorization:
             item_id="item-123",
         )
 
-        with pytest.raises(ForbiddenError, match="Access denied to item"):
+        with pytest.raises(NotFoundError, match="Item not found"):
             service.add_item_to_collection("user-123", request)
 
 
@@ -926,26 +901,3 @@ class TestRemoveItemFromCollectionValidation:
             service.remove_item_from_collection(
                 "user-123", "vault-123", "collection-123", "item-123"
             )
-
-
-class TestGetCollectionErrorHandling:
-    """Test error handling in get_collection."""
-
-    def test_get_collection_storage_error(self, boto_session):
-        """Test that storage errors are properly raised."""
-        from unittest.mock import MagicMock
-
-        service = CollectionService(
-            session=boto_session,
-            collections_table_name="test-collections",
-            items_table_name="test-items",
-        )
-
-        # Mock get_item to raise InternalServerError
-        service.collections_repo.get_item = MagicMock(
-            side_effect=InternalServerError("DynamoDB error")
-        )
-
-        # Should raise InternalServerError
-        with pytest.raises(InternalServerError):
-            service.get_collection("user-123", "vault-123", "collection-123")

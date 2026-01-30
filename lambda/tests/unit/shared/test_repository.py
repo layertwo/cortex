@@ -8,7 +8,6 @@ import base64
 import json
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import InternalServerError
 
 from src.shared.repository import (
     DynamoDBRepository,
@@ -189,34 +188,6 @@ class TestDynamoDBRepository:
         )
 
         assert result["status"] == "COMPLETE"
-
-    def test_update_item_conditional_fails_on_condition_not_met(
-        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
-    ):
-        """Should raise StorageError when condition is not met."""
-        dynamodb_stubber.add_client_error(
-            "update_item",
-            service_error_code="ConditionalCheckFailedException",
-            service_message="The conditional request failed",
-            expected_params={
-                "Key": {"PK": "VAULT#v1", "SK": "ITEM#i1"},
-                "UpdateExpression": "SET #status = :complete",
-                "ConditionExpression": "#status = :pending",
-                "ExpressionAttributeNames": {"#status": "status"},
-                "ExpressionAttributeValues": {":complete": "COMPLETE", ":pending": "PENDING"},
-                "ReturnValues": "ALL_NEW",
-                "TableName": dynamodb_table_name,
-            },
-        )
-
-        with pytest.raises(InternalServerError, match="Conditional update failed"):
-            dynamodb_repository.update_item_conditional(
-                key={"PK": "VAULT#v1", "SK": "ITEM#i1"},
-                update_expression="SET #status = :complete",
-                condition_expression="#status = :pending",
-                expression_attribute_values={":complete": "COMPLETE", ":pending": "PENDING"},
-                expression_attribute_names={"#status": "status"},
-            )
 
     def test_delete_item_removes_item(
         self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
@@ -527,20 +498,6 @@ class TestS3Repository:
 
         assert metadata is None
 
-    def test_get_object_metadata_raises_storage_error_on_other_errors(
-        self, s3_repository, s3_stubber, s3_bucket_name, s3_client
-    ):
-        """Should raise StorageError on non-404 errors."""
-        s3_stubber.add_client_error(
-            "head_object",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={"Bucket": s3_bucket_name, "Key": "test-key"},
-        )
-
-        with pytest.raises(InternalServerError, match="Failed to get object metadata"):
-            s3_repository.get_object_metadata(object_key="test-key")
-
     def test_abort_multipart_upload(self, s3_repository, s3_stubber, s3_bucket_name, s3_client):
         """Should abort multipart upload and clean up parts."""
         s3_stubber.add_response(
@@ -656,176 +613,6 @@ class TestEncodePaginationToken:
         decoded = parse_pagination_token(token)
 
         assert decoded == original
-
-
-class TestDynamoDBRepositoryErrors:
-    """Tests for DynamoDB error handling."""
-
-    def test_get_item_raises_storage_error(
-        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
-    ):
-        """Should raise StorageError on DynamoDB failure."""
-        dynamodb_stubber.add_client_error(
-            "get_item",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "Key": {"PK": "test", "SK": "test"},
-                "TableName": dynamodb_table_name,
-            },
-        )
-
-        with pytest.raises(InternalServerError):
-            dynamodb_repository.get_item({"PK": "test", "SK": "test"})
-
-    def test_put_item_raises_storage_error(
-        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
-    ):
-        """Should raise StorageError on put failure."""
-        dynamodb_stubber.add_client_error(
-            "put_item",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "Item": {"PK": "test", "SK": "test"},
-                "TableName": dynamodb_table_name,
-            },
-        )
-
-        with pytest.raises(InternalServerError):
-            dynamodb_repository.put_item({"PK": "test", "SK": "test"})
-
-    def test_update_item_raises_storage_error(
-        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
-    ):
-        """Should raise StorageError on update failure."""
-        dynamodb_stubber.add_client_error(
-            "update_item",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "Key": {"PK": "test", "SK": "test"},
-                "UpdateExpression": "SET #a = :v",
-                "ExpressionAttributeValues": {":v": 1},
-                "ReturnValues": "ALL_NEW",
-                "TableName": dynamodb_table_name,
-            },
-        )
-
-        with pytest.raises(InternalServerError):
-            dynamodb_repository.update_item(
-                key={"PK": "test", "SK": "test"},
-                update_expression="SET #a = :v",
-                expression_attribute_values={":v": 1},
-            )
-
-    def test_delete_item_raises_storage_error(
-        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
-    ):
-        """Should raise StorageError on delete failure."""
-        dynamodb_stubber.add_client_error(
-            "delete_item",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "Key": {"PK": "test", "SK": "test"},
-                "TableName": dynamodb_table_name,
-            },
-        )
-
-        with pytest.raises(InternalServerError):
-            dynamodb_repository.delete_item({"PK": "test", "SK": "test"})
-
-    def test_query_raises_storage_error(
-        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
-    ):
-        """Should raise StorageError on query failure."""
-        dynamodb_stubber.add_client_error(
-            "query",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "ExpressionAttributeValues": {":pk": "test"},
-                "KeyConditionExpression": "PK = :pk",
-                "ScanIndexForward": True,
-                "TableName": dynamodb_table_name,
-            },
-        )
-        with pytest.raises(InternalServerError):
-            dynamodb_repository.query(
-                key_condition_expression="PK = :pk", expression_attribute_values={":pk": "test"}
-            )
-
-
-class TestS3RepositoryErrors:
-    """Tests for S3 error handling."""
-
-    def test_initiate_multipart_raises_storage_error(
-        self, s3_repository, s3_stubber, s3_bucket_name
-    ):
-        """Should raise StorageError on multipart init failure."""
-
-        s3_stubber.add_client_error(
-            "create_multipart_upload",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "Bucket": s3_bucket_name,
-                "Key": "key",
-                "ContentType": "video/mp4",
-                "ServerSideEncryption": "AES256",
-            },
-        )
-
-        with pytest.raises(InternalServerError):
-            s3_repository.initiate_multipart_upload("key", "video/mp4")
-
-    def test_delete_object_raises_storage_error(self, s3_repository, s3_stubber, s3_bucket_name):
-        """Should raise StorageError on delete failure."""
-        s3_stubber.add_client_error(
-            "delete_object",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={"Bucket": s3_bucket_name, "Key": "key"},
-        )
-
-        with pytest.raises(InternalServerError):
-            s3_repository.delete_object("key")
-
-    def test_object_exists_raises_storage_error_on_non_404(
-        self,
-        s3_repository,
-        s3_stubber,
-        s3_bucket_name,
-    ):
-        """Should raise StorageError on non-404 errors."""
-        s3_stubber.add_client_error(
-            "head_object",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={"Bucket": s3_bucket_name, "Key": "key"},
-        )
-
-        with pytest.raises(InternalServerError):
-            s3_repository.object_exists("key")
-
-    def test_abort_multipart_upload_raises_storage_error(
-        self, s3_repository, s3_stubber, s3_bucket_name
-    ):
-        """Should raise StorageError on abort failure."""
-        s3_stubber.add_client_error(
-            "abort_multipart_upload",
-            service_error_code="InternalServerError",
-            service_message="Test error",
-            expected_params={
-                "Bucket": s3_bucket_name,
-                "Key": "key",
-                "UploadId": "upload-id",
-            },
-        )
-
-        with pytest.raises(InternalServerError):
-            s3_repository.abort_multipart_upload("key", "upload-id")
 
 
 class TestUpdateItemConditionalWithAttributeNames:

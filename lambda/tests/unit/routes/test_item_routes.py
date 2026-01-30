@@ -6,7 +6,6 @@ Tests verify that item routes work correctly through the lambda handler entrypoi
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 from botocore.stub import ANY
@@ -149,7 +148,7 @@ class TestCompleteUploadRoute:
     """Test suite for CompleteUploadRoute through lambda handler."""
 
     def test_complete_upload_route_handler(
-        self, mock_service_provider, dynamodb_stubber, s3_stubber
+        self, mock_service_provider, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test complete upload route handler returns expected response."""
         user_id = "test-user-123"
@@ -162,19 +161,19 @@ class TestCompleteUploadRoute:
             "get_item",
             {
                 "Item": {
-                    "PK": {"S": f"VAULT#{vault_id}"},
-                    "SK": {"S": f"ITEM#MEDIA#{item_id}"},
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
+                    "vault_id": {"S": vault_id},
                     "s3_key": {"S": s3_key},
                     "upload_status": {"S": "PENDING"},
                 }
             },
-            {
+            expected_params={
                 "TableName": "test-items-table",
                 "Key": {
-                    "PK": f"VAULT#{vault_id}",
-                    "SK": f"ITEM#MEDIA#{item_id}",
+                    "PK": f"ITEM#{item_id}",
                 },
             },
         )
@@ -187,7 +186,7 @@ class TestCompleteUploadRoute:
                 "ContentType": "image/jpeg",
             },
             {
-                "Bucket": "test-files-bucket",
+                "Bucket": files_bucket_name,
                 "Key": s3_key,
             },
         )
@@ -205,8 +204,7 @@ class TestCompleteUploadRoute:
             {
                 "TableName": "test-items-table",
                 "Key": {
-                    "PK": f"VAULT#{vault_id}",
-                    "SK": f"ITEM#MEDIA#{item_id}",
+                    "PK": f"ITEM#{item_id}",
                 },
                 "UpdateExpression": ANY,
                 "ConditionExpression": ANY,
@@ -285,32 +283,163 @@ class TestListItemsRoute:
         assert body["statusCode"] == 400
         assert "vault_id is required" in body["message"]
 
-    def test_list_items_route_handler_with_vault_id(self, mock_service_provider):
-        """Test list items route handler with vault_id."""
+    def test_list_items_route_handler_with_vault_id(
+        self, mock_service_provider, dynamodb_stubber, vaults_table_name, items_table_name
+    ):
+        """Test list items route handler with vault_id returns empty list for empty vault."""
+        user_id = "test-user-123"
+        vault_id = "vault-123"
+
+        # Stub DynamoDB get_item call for vault_exists check
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"USER#{user_id}"},
+                    "SK": {"S": f"VAULT#{vault_id}"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": user_id},
+                }
+            },
+            expected_params={
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        # Stub DynamoDB query call for list_items - empty vault
+        # Query uses GSI2 (listing all items without type filter)
+        dynamodb_stubber.add_response(
+            "query",
+            {"Items": []},
+            expected_params={
+                "TableName": items_table_name,
+                "IndexName": "GSI2",
+                "KeyConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
+                "ScanIndexForward": ANY,
+                "Limit": ANY,
+            },
+        )
+
         event = {
             "resource": "/v1/items",
             "path": "/v1/items",
             "httpMethod": "GET",
             "headers": {"Content-Type": "application/json"},
-            "queryStringParameters": {"vault_id": "vault-123"},
+            "queryStringParameters": {"vault_id": vault_id},
             "requestContext": {
                 "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+                "authorizer": {"claims": {"sub": user_id}},
+            },
+        }
+
+        response = lambda_handler(event, {}, mock_service_provider)
+        body = json.loads(response["body"])
+
+        # Empty vault owned by user returns empty list (valid case)
+        assert response["statusCode"] == 200
+        assert body["items"] == []
+
+    def test_list_items_returns_404_for_nonexistent_vault(
+        self, mock_service_provider, dynamodb_stubber, vaults_table_name
+    ):
+        """
+        Test that list items returns 404 when vault doesn't exist.
+
+        Security requirement: Prevents vault enumeration by returning the same
+        response for non-existent vaults as for unauthorized access.
+        """
+        user_id = "test-user-123"
+        vault_id = "nonexistent-vault"
+
+        # Stub DynamoDB get_item call for vault_exists - vault not found
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},  # Empty response means vault not found
+            expected_params={
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        event = {
+            "resource": "/v1/items",
+            "path": "/v1/items",
+            "httpMethod": "GET",
+            "headers": {"Content-Type": "application/json"},
+            "queryStringParameters": {"vault_id": vault_id},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": user_id}},
             },
         }
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 401 (authentication), 403 (vault ownership), or 200 (success)
-        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
-        assert response["statusCode"] in [200, 401, 403]
+        # Non-existent vault returns 404, NOT empty list
+        assert response["statusCode"] == 404
+        body = json.loads(response["body"])
+        assert body["statusCode"] == 404
+        assert "Vault not found" in body["message"]
+
+    def test_list_items_returns_404_for_vault_owned_by_different_user(
+        self, mock_service_provider, dynamodb_stubber, vaults_table_name
+    ):
+        """
+        Test that list items returns 404 when vault exists but belongs to different user.
+
+        Security requirement: Prevents vault enumeration by returning 404 for both
+        'vault doesn't exist' and 'vault exists but unauthorized'. Attackers cannot
+        distinguish valid vault IDs from invalid ones.
+        """
+        user_id = "test-user-123"
+        vault_id = "vault-owned-by-other-user"
+
+        # Stub DynamoDB get_item call for vault_exists - vault not found for THIS user
+        # The vault exists for different_user_id but not for user_id
+        # vault_exists queries with USER#{user_id} so vault won't be found
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},  # Empty response - vault exists but not owned by this user
+            expected_params={
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        event = {
+            "resource": "/v1/items",
+            "path": "/v1/items",
+            "httpMethod": "GET",
+            "headers": {"Content-Type": "application/json"},
+            "queryStringParameters": {"vault_id": vault_id},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": user_id}},
+            },
+        }
+
+        response = lambda_handler(event, {}, mock_service_provider)
+
+        # Vault owned by different user returns 404, NOT empty list
+        # This prevents vault enumeration attacks
+        assert response["statusCode"] == 404
+        body = json.loads(response["body"])
+        assert body["statusCode"] == 404
+        assert "Vault not found" in body["message"]
 
 
 class TestGetItemRoute:
     """Test suite for GetItemRoute through lambda handler."""
 
-    def test_get_item_route_handler_missing_vault_id(self, mock_service_provider):
-        """Test get item route handler returns error when vault_id is missing."""
+    def test_get_item_route_handler(
+        self, mock_service_provider, dynamodb_stubber, items_table_name
+    ):
+        """Test get item route handler with vault_id."""
+        user_id = "test-user-123"
+        vault_id = "vault-123"
         item_id = "test-item-123"
         event = {
             "resource": "/v1/items/{item_id}",
@@ -321,40 +450,39 @@ class TestGetItemRoute:
             "queryStringParameters": {},
             "requestContext": {
                 "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+                "authorizer": {"claims": {"sub": user_id}},
             },
         }
+        now_timestamp = str(datetime.now(tz=timezone.utc).timestamp())
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "user_id": {"S": user_id},
+                    "item_id": {"S": item_id},
+                    "item_type": {"S": "event"},
+                    "vault_id": {"S": vault_id},
+                    "encrypted_metadata": {"B": "foobar".encode()},
+                    "created_at": {"N": now_timestamp},
+                    "updated_at": {"N": now_timestamp},
+                }
+            },
+            expected_params={
+                "Key": {"PK": "ITEM#test-item-123"},
+                "TableName": items_table_name,
+            },
+        )
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Should return 400 because vault_id is required
-        assert response["statusCode"] == 400
+        assert response["statusCode"] == 200
         body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
-
-    def test_get_item_route_handler_with_vault_id(self, mock_service_provider):
-        """Test get item route handler with vault_id."""
-        item_id = "test-item-123"
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "queryStringParameters": {"vault_id": "vault-123"},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
-
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Should return 401 (authentication), 403 (vault ownership), 404 (not found), or 200 (success)
-        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
-        assert response["statusCode"] in [200, 401, 403, 404]
+        assert body["item_id"] == item_id
+        assert body["item_type"] == "event"
+        assert body["vault_id"] == vault_id
+        assert body["encrypted_metadata"] == "foobar"
+        assert "created_at" in body
+        assert "updated_at" in body
 
 
 class TestUpdateItemRoute:
@@ -383,79 +511,43 @@ class TestUpdateItemRoute:
 class TestDeleteItemRoute:
     """Test suite for DeleteItemRoute through lambda handler."""
 
-    def test_delete_item_route_handler_with_vault_id(self, mock_service_provider):
-        """Test delete item route handler with vault_id parameter."""
-        item_id = "test-item-123"
-        vault_id = "test-vault-456"
-
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "queryStringParameters": {"vault_id": vault_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
-
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Should return 401 (authentication), 403 (vault ownership), or 200 (success)
-        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
-        assert response["statusCode"] in [200, 401, 403]
-
-    def test_delete_item_route_handler_missing_vault_id(self, mock_service_provider):
-        """Test delete item route handler returns error when vault_id is missing."""
-        item_id = "test-item-123"
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
-
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Should return 401 because authentication is not fully mocked
-        # This is expected behavior - the route requires proper authentication
-        assert response["statusCode"] in [400, 401]
-
-    def test_delete_item_route_enforces_vault_authorization(
-        self, mock_service_provider, monkeypatch
+    def test_delete_item_route_handler(
+        self, mock_service_provider, dynamodb_stubber, items_table_name
     ):
-        """
-        Test that delete item route enforces vault ownership authorization.
-
-        This test verifies the security fix for OWASP A01:2021 - Broken Access Control.
-        It ensures that users cannot delete items from vaults they don't own.
-
-        Security: CRITICAL - Prevents unauthorized access to other users' vaults
-        """
-
+        """Test delete item route handler successfully deletes an item."""
+        user_id = "test-user-123"
         item_id = "test-item-123"
         vault_id = "test-vault-456"
-        user_id = "test-user-123"
 
-        # Mock vault_service.vault_exists to return False (user doesn't own vault)
-        mock_vault_service = MagicMock()
-        mock_vault_service.vault_exists.return_value = False
+        # Stub DynamoDB get_item call (retrieve item to verify ownership)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": user_id},
+                    "vault_id": {"S": vault_id},
+                    "item_type": {"S": "NOTE"},
+                    "encrypted_metadata": {"B": b"test-metadata"},
+                }
+            },
+            expected_params={
+                "TableName": items_table_name,
+                "Key": {"PK": f"ITEM#{item_id}"},
+            },
+        )
 
-        # Replace the vault_service in the service provider
-        monkeypatch.setattr(mock_service_provider, "vault_service", mock_vault_service)
-
-        # Mock get_user_from_context to return a user_id
-        def mock_get_user(event):
-            return user_id
-
-        monkeypatch.setattr("src.api.routes.items.get_user_from_context", mock_get_user)
+        # Stub DynamoDB delete_item call
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            expected_params={
+                "TableName": items_table_name,
+                "Key": {"PK": f"ITEM#{item_id}"},
+            },
+        )
 
         event = {
             "resource": "/v1/items/{item_id}",
@@ -463,7 +555,6 @@ class TestDeleteItemRoute:
             "httpMethod": "DELETE",
             "headers": {"Content-Type": "application/json"},
             "pathParameters": {"item_id": item_id},
-            "queryStringParameters": {"vault_id": vault_id},
             "requestContext": {
                 "requestId": "test-request-id",
                 "authorizer": {"claims": {"sub": user_id}},
@@ -472,72 +563,155 @@ class TestDeleteItemRoute:
 
         response = lambda_handler(event, {}, mock_service_provider)
 
-        # Verify vault ownership check was called
-        mock_vault_service.vault_exists.assert_called_once_with(user_id, vault_id)
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["message"] == "Item deleted successfully"
+        assert body["item_id"] == item_id
 
-        # Verify 403 Forbidden is returned when user doesn't own vault
-        assert response["statusCode"] == 403
+    def test_delete_item_route_enforces_user_authorization(
+        self, mock_service_provider, dynamodb_stubber, items_table_name
+    ):
+        """
+        Test that delete item route enforces user ownership authorization.
 
-        # Verify error message indicates authorization failure
-        body = (
-            json.loads(response["body"])
-            if isinstance(response.get("body"), str)
-            else response.get("body", {})
+        Returns 404 if item exists but belongs to a different user.
+        This reduces information leakage by not revealing item existence.
+        """
+        user_id = "test-user-123"
+        different_user_id = "different-user-456"
+        item_id = "test-item-123"
+        vault_id = "test-vault-456"
+
+        # Stub DynamoDB get_item call - returns item owned by different user
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": different_user_id},  # Different user owns this item
+                    "vault_id": {"S": vault_id},
+                    "item_type": {"S": "NOTE"},
+                    "encrypted_metadata": {"B": b"test-metadata"},
+                }
+            },
+            expected_params={
+                "TableName": items_table_name,
+                "Key": {"PK": f"ITEM#{item_id}"},
+            },
         )
-        # Powertools format: {"statusCode": 403, "message": "Access denied to vault"}
-        assert body.get("statusCode") == 403
-        assert "vault" in body.get("message", "").lower()
+
+        event = {
+            "resource": "/v1/items/{item_id}",
+            "path": f"/v1/items/{item_id}",
+            "httpMethod": "DELETE",
+            "headers": {"Content-Type": "application/json"},
+            "pathParameters": {"item_id": item_id},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": user_id}},
+            },
+        }
+
+        response = lambda_handler(event, {}, mock_service_provider)
+
+        assert response["statusCode"] == 404
+        body = json.loads(response["body"])
+        assert body["statusCode"] == 404
+
+    def test_delete_item_route_returns_404_for_nonexistent_item(
+        self, mock_service_provider, dynamodb_stubber, items_table_name
+    ):
+        """Test delete item route returns 404 when item doesn't exist."""
+        user_id = "test-user-123"
+        item_id = "nonexistent-item"
+
+        # Stub DynamoDB get_item call - returns empty (no item found)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},  # Empty response means item not found
+            expected_params={
+                "TableName": items_table_name,
+                "Key": {"PK": f"ITEM#{item_id}"},
+            },
+        )
+
+        event = {
+            "resource": "/v1/items/{item_id}",
+            "path": f"/v1/items/{item_id}",
+            "httpMethod": "DELETE",
+            "headers": {"Content-Type": "application/json"},
+            "pathParameters": {"item_id": item_id},
+            "requestContext": {
+                "requestId": "test-request-id",
+                "authorizer": {"claims": {"sub": user_id}},
+            },
+        }
+
+        response = lambda_handler(event, {}, mock_service_provider)
+
+        assert response["statusCode"] == 404
 
 
 class TestDownloadItemRoute:
     """Test suite for DownloadItemRoute through lambda handler."""
 
-    def test_download_item_route_handler_missing_vault_id(self, mock_service_provider):
-        """Test download item route handler returns error when vault_id is missing."""
-        item_id = "test-item-123"
-        event = {
-            "resource": "/v1/items/{item_id}/download",
-            "path": f"/v1/items/{item_id}/download",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
-
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Should return 400 because vault_id is required
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
-
-    def test_download_item_route_handler_with_vault_id(self, mock_service_provider):
+    def test_download_item_route_handler(
+        self, mock_service_provider, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
         """Test download item route handler with vault_id."""
+        user_id = "test-user-123"
         item_id = "test-item-123"
+        vault_id = "vault-123"
+        s3_key = f"vaults/{vault_id}/files/{item_id}/test"
+
         event = {
             "resource": "/v1/items/{item_id}/download",
             "path": f"/v1/items/{item_id}/download",
             "httpMethod": "GET",
             "headers": {"Content-Type": "application/json"},
             "pathParameters": {"item_id": item_id},
-            "queryStringParameters": {"vault_id": "vault-123"},
+            # TODO does this need to be a queryStringParam and instead in the request payload?
+            "queryStringParameters": {"vault_id": vault_id},
             "requestContext": {
                 "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+                "authorizer": {"claims": {"sub": user_id}},
             },
         }
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": user_id},
+                    "vault_id": {"S": f"VAULT#{vault_id}"},
+                    "s3_key": {"S": s3_key},
+                    "item_type": {"S": "MEDIA"},
+                    "upload_status": {"S": "COMPLETED"},
+                    "encrypted_metadata": {"B": "foobar".encode()},
+                }
+            },
+            expected_params={
+                "TableName": "test-items-table",
+                "Key": {
+                    "PK": f"ITEM#{item_id}",
+                },
+            },
+        )
 
-        # Should return 401 (authentication), 403 (vault ownership), 404 (not found), or 200 (success)
-        # 403 is expected when vault ownership check fails (security fix for OWASP A01:2021)
-        assert response["statusCode"] in [200, 401, 403, 404]
+        s3_stubber.add_response(
+            "head_object", {}, expected_params={"Bucket": files_bucket_name, "Key": s3_key}
+        )
+
+        response = lambda_handler(event, {}, mock_service_provider)
+        body = json.loads(response["body"])
+
+        assert response["statusCode"] == 200
+        assert body["s3_key"] == s3_key
+        assert s3_key in body["download_url"]
 
 
 class TestSearchItemRoute:

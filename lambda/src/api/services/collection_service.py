@@ -15,7 +15,6 @@ import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler.exceptions import (
     BadRequestError,
-    ForbiddenError,
     NotFoundError,
 )
 
@@ -214,7 +213,7 @@ class CollectionService:
                     "collection_user_id": collection["user_id"],
                 },
             )
-            raise ForbiddenError("Access denied to collection")
+            raise NotFoundError("Collection not found")
 
         logger.info(
             "Retrieved collection",
@@ -444,7 +443,7 @@ class CollectionService:
                     "item_user_id": item["user_id"],
                 },
             )
-            raise ForbiddenError("Access denied to item")
+            raise NotFoundError("Item not found")
 
         # Create item-collection association
         now = datetime.now(tz=timezone.utc)

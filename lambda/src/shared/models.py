@@ -505,7 +505,7 @@ class DynamoDBItemModel(BaseModel):
     """DynamoDB item model for all item types (MEDIA, NOTE, TASK, EVENT)."""
 
     PK: str = Field(..., description="Partition key: VAULT#{vaultId}")
-    SK: str = Field(..., description="Sort key: ITEM#{itemType}#{itemId}")
+    SK: str = Field(..., description="Sort key: ITEM#{itemId}")
     item_id: str = Field(..., description="Item identifier")
     item_type: str = Field(..., description="Item type: MEDIA, NOTE, TASK, EVENT")
     vault_id: str = Field(..., description="Vault identifier")

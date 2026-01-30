@@ -170,6 +170,21 @@ export class ServiceStack extends Stack {
             projectionType: ProjectionType.ALL,
         });
 
+        // GSI2: Index for listing all items in a vault (without type filter)
+        // GSI2PK: VAULT#{vaultId}, GSI2SK: ITEM#{itemId}
+        table.addGlobalSecondaryIndex({
+            indexName: "GSI2",
+            partitionKey: {
+                name: "GSI2PK",
+                type: AttributeType.STRING,
+            },
+            sortKey: {
+                name: "GSI2SK",
+                type: AttributeType.STRING,
+            },
+            projectionType: ProjectionType.ALL,
+        });
+
         return table;
     }
 

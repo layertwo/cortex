@@ -37,6 +37,7 @@ from src.api.routes.tags import SearchTagsRoute
 from src.api.routes.vaults import CreateVaultRoute, GetVaultSaltRoute
 from src.api.services.api_router import ApiRouter
 from src.api.services.auth_service import AuthService
+from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
 
@@ -55,12 +56,6 @@ class ServiceProvider:
     def session(self):  # pragma: nocover
         """Create boto3 session."""
         return boto3.Session(region_name=self.aws_region)
-
-    # Table names from environment
-    @cached_property
-    def users_table_name(self):  # pragma: nocover
-        """Get users table name from environment."""
-        return os.environ.get("USERS_TABLE_NAME", "cortex-dev-users")
 
     @cached_property
     def vaults_table_name(self):  # pragma: nocover
@@ -91,13 +86,6 @@ class ServiceProvider:
     def files_bucket_name(self):  # pragma: nocover
         """Get S3 files bucket name from environment."""
         return os.environ.get("FILES_BUCKET_NAME", "cortex-dev-files")
-
-    # DynamoDB table resources
-    @cached_property
-    def users_table(self):  # pragma: nocover
-        """Create DynamoDB users table resource."""
-        resource = self.session.resource("dynamodb")
-        return resource.Table(self.users_table_name)
 
     @cached_property
     def vaults_table(self):  # pragma: nocover
@@ -162,7 +150,6 @@ class ServiceProvider:
     @cached_property
     def collection_service(self):
         """Create collection service."""
-        from src.api.services.collection_service import CollectionService
 
         return CollectionService(
             session=self.session,

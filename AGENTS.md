@@ -446,11 +446,13 @@ Environments: `dev`, `staging`, `prod`
 - PK: `USER#{userId}`, SK: `VAULT#{vaultId}`
 - Stores: vaultId, userId, vaultSalt (binary, non-secret), timestamps
 
-**Files Table:**
-- PK: `VAULT#{vaultId}`, SK: `FILE#{fileId}`
-- Stores: fileId, vaultId, userId, s3Key, encryptedMetadata (binary), encryptedTags (list<binary>), uploadedAt, sizeBytes, upload_status (PENDING/COMPLETE), ttl (Unix epoch, for PENDING uploads only)
-- GSI1: PK: `VAULT#{vaultId}#TAG#{encryptedTag}`, SK: `FILE#{fileId}` (for tag-based queries)
+**Items Table (single-table design within Data Table):**
+- PK: `ITEM#{itemId}`, SK: `METADATA` (constant)
+- Stores: itemId, vaultId, userId, itemType (MEDIA/NOTE/TASK/EVENT), s3Key (MEDIA only), encryptedMetadata (binary), encryptedContent (non-MEDIA), encryptedTags (list<binary>), createdAt, updatedAt, sizeBytes (MEDIA), upload_status (PENDING/COMPLETE for MEDIA), ttl (Unix epoch, for PENDING uploads only), version
+- GSI1: PK: `VAULT#{vaultId}#TYPE#{itemType}`, SK: `ITEM#{itemId}` (for type-filtered queries)
+- GSI2: PK: `VAULT#{vaultId}`, SK: `ITEM#{itemId}` (for listing all items in vault without type filter)
 - TTL: Pending uploads auto-expire after 48 hours to prevent data inconsistency from failed/abandoned uploads
+- Note: vault_id is a property on the item record, not part of the primary key
 
 **Collections Table:**
 - PK: `VAULT#{vaultId}`, SK: `COLLECTION#{collectionId}`
@@ -745,6 +747,30 @@ if not self.vault_service.vault_exists(user_id, vault_id):
 ```
 
 This prevents broken access control vulnerabilities where users could access or modify data in vaults they don't own. The check must happen at the route layer before calling service methods.
+
+**Authorization Error Response Pattern (Anti-Enumeration):**
+When authorization checks fail at the service layer (user doesn't own the requested resource), return `NotFoundError` with a resource-appropriate message instead of `ForbiddenError`. This prevents resource enumeration attacks where attackers probe for valid resource IDs.
+
+```python
+# Service layer authorization check
+if item["user_id"] != user_id:
+    logger.warning(
+        "User does not own item",
+        extra={"user_id": user_id, "item_id": item_id, "item_user_id": item["user_id"]},
+    )
+    raise NotFoundError("Item not found")  # NOT ForbiddenError
+
+# For collections, use collection-specific message
+if collection["user_id"] != user_id:
+    raise NotFoundError("Collection not found")  # Match the resource type
+```
+
+**Key Points:**
+- Return HTTP 404 (NotFoundError) for both "doesn't exist" and "exists but unauthorized"
+- Attackers cannot distinguish valid IDs from invalid ones
+- Error messages must match the resource type being accessed (Item, Collection, Vault, etc.)
+- Log the actual authorization failure for debugging (never expose in response)
+- This pattern applies to service layer checks, not route layer vault ownership checks
 
 **User-Aware Logging Pattern:**
 ```python

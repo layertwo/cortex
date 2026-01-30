@@ -12,12 +12,13 @@ from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
+from boto3.dynamodb.types import Binary
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
-from src.shared.auth import get_user_from_context, require_vault_access
+from src.shared.auth import get_user_from_context
 from src.shared.models import (
     CompleteUploadRequest,
     CreateItemRequest,
@@ -26,6 +27,23 @@ from src.shared.models import (
 )
 
 logger = Logger(child=True)
+
+
+def _decode_binary(value: bytes | Binary) -> str:
+    """
+    Decode binary data to base64 string.
+
+    Handles both raw bytes and boto3 Binary type from DynamoDB.
+
+    Args:
+        value: Binary data (bytes or Binary type)
+
+    Returns:
+        Base64-encoded string
+    """
+    if isinstance(value, Binary):
+        return bytes(value).decode()
+    return value.decode()
 
 
 class CreateItemRoute(BaseRoute):
@@ -157,7 +175,7 @@ class CompleteUploadRoute(BaseRoute):
             user_id = get_user_from_context(app.current_event)
 
             # Complete upload
-            response = self.item_service.complete_upload(user_id, request)
+            response = self.item_service.complete_upload(user_id=user_id, request=request)
 
             logger.info(
                 "Upload completed successfully",
@@ -208,9 +226,6 @@ class ListItemsRoute(BaseRoute):
             if not vault_id:
                 raise BadRequestError("vault_id is required")
 
-            # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, vault_id, "list_items")
-
             # Validate page_size
             if page_size < 1 or page_size > 100:
                 raise BadRequestError("page_size must be between 1 and 100")
@@ -228,7 +243,20 @@ class ListItemsRoute(BaseRoute):
             ]:
                 raise BadRequestError("item_type must be MEDIA, NOTE, TASK, or EVENT")
 
-            # List items
+            # Verify vault ownership BEFORE listing items - deny by default
+            # This check MUST happen outside try-except to prevent vault enumeration
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
+                logger.warning(
+                    "Vault access denied - user does not own vault",
+                    extra={
+                        "user_id": user_id,
+                        "vault_id": vault_id,
+                        "operation": "list_items",
+                    },
+                )
+                raise NotFoundError("Vault not found")
+
+            # List items - vault ownership verified
             items, next_page_token = self.item_service.list_items(
                 user_id=user_id,
                 vault_id=vault_id,
@@ -237,21 +265,21 @@ class ListItemsRoute(BaseRoute):
                 next_token=next_token,
                 sort_order=sort_order,
             )
+            response_items = []
 
             # Convert items to response format
-            response_items = []
             for item in items:
                 response_item = {
                     "item_id": item["item_id"],
                     "item_type": item["item_type"],
                     "vault_id": item["vault_id"],
                     "user_id": item["user_id"],
-                    "encrypted_metadata": item["encrypted_metadata"],
+                    "encrypted_metadata": _decode_binary(item["encrypted_metadata"]),
                     "created_at": datetime.fromtimestamp(
-                        item["created_at"], tz=timezone.utc
+                        float(item["created_at"]), tz=timezone.utc
                     ).isoformat(),
                     "updated_at": datetime.fromtimestamp(
-                        item["updated_at"], tz=timezone.utc
+                        float(item["updated_at"]), tz=timezone.utc
                     ).isoformat(),
                 }
 
@@ -309,38 +337,20 @@ class GetItemRoute(BaseRoute):
             # Extract user identity from context
             user_id = get_user_from_context(app.current_event)
 
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
-            # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, vault_id, "get_item")
-
             # Get item
-            item = self.item_service.get_item(user_id, vault_id, item_id)
-
-            if not item:
-                logger.warning(
-                    "Item not found",
-                    extra={"user_id": user_id, "item_id": item_id},
-                )
-                raise NotFoundError("Item not found")
+            item = self.item_service.get_item(user_id, item_id)
 
             # Convert item to response format
             response = {
                 "item_id": item["item_id"],
                 "item_type": item["item_type"],
                 "vault_id": item["vault_id"],
-                "encrypted_metadata": item["encrypted_metadata"],
+                "encrypted_metadata": _decode_binary(item["encrypted_metadata"]),
                 "created_at": datetime.fromtimestamp(
-                    item["created_at"], tz=timezone.utc
+                    float(item["created_at"]), tz=timezone.utc
                 ).isoformat(),
                 "updated_at": datetime.fromtimestamp(
-                    item["updated_at"], tz=timezone.utc
+                    float(item["updated_at"]), tz=timezone.utc
                 ).isoformat(),
             }
 
@@ -410,25 +420,13 @@ class DeleteItemRoute(BaseRoute):
             # Extract user identity from context
             user_id = get_user_from_context(app.current_event)
 
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
-            # Verify vault ownership (CRITICAL: Prevents OWASP A01:2021 - Broken Access Control)
-            require_vault_access(self.vault_service, user_id, vault_id, "delete_item")
-
             # Delete item
-            self.item_service.delete_item(user_id, vault_id, item_id)
+            self.item_service.delete_item(user_id, item_id)
 
             logger.info(
                 "Item deleted successfully",
                 extra={
                     "user_id": user_id,
-                    "vault_id": vault_id,
                     "item_id": item_id,
                 },
             )
@@ -461,20 +459,10 @@ class DownloadItemRoute(BaseRoute):
             # Extract user identity from context
             user_id = get_user_from_context(app.current_event)
 
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
-            # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, vault_id, "download_item")
-
             # Get download URL
+            # TODO this should be a data model
             download_url, expires_at, encrypted_metadata, s3_key = (
-                self.item_service.get_download_url(user_id, vault_id, item_id)
+                self.item_service.get_download_url(user_id, item_id)
             )
 
             logger.info(
@@ -482,14 +470,13 @@ class DownloadItemRoute(BaseRoute):
                 extra={
                     "user_id": user_id,
                     "item_id": item_id,
-                    "vault_id": vault_id,
                 },
             )
 
             return {
                 "download_url": download_url,
                 "expires_at": expires_at.isoformat(),
-                "encrypted_metadata": encrypted_metadata,
+                "encrypted_metadata": _decode_binary(encrypted_metadata),
                 "item_id": item_id,
                 "s3_key": s3_key,
             }

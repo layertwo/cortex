@@ -87,7 +87,7 @@ def boto_session(aws_region_name, aws_access_key_id, aws_secret_access_key, aws_
     )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def boto_session_patch(boto_session):
     # Libraries are inconsistent about which is used
     with (

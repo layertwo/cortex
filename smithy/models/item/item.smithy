@@ -53,7 +53,7 @@ operation InitiateItemUpload {
     ]
 }
 
-@http(method: "POST", uri: "/v1/items/upload/complete")
+@http(method: "POST", uri: "/v1/items/{itemId}/upload/complete")
 @documentation("Mark item upload as complete for MEDIA items")
 operation CompleteItemUpload {
     input: CompleteItemUploadInput
@@ -224,12 +224,9 @@ structure InitiateItemUploadOutput {
 
 structure CompleteItemUploadInput {
     @required
-    @documentation("Item identifier from initiate upload")
+    @httpLabel
+    @documentation("Item identifier (must be MEDIA type)")
     itemId: String
-
-    @required
-    @documentation("Vault identifier")
-    vaultId: String
 }
 
 structure CompleteItemUploadOutput {
