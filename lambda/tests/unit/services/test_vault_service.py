@@ -15,6 +15,7 @@ from aws_lambda_powertools.event_handler.exceptions import (
     InternalServerError,
     NotFoundError,
 )
+from botocore.exceptions import ClientError
 from botocore.stub import ANY
 
 from src.api.services.vault_service import VaultService
@@ -114,7 +115,7 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        with pytest.raises(InternalServerError, match="Failed to create vault"):
+        with pytest.raises(ClientError):
             vault_service.create_vault(user_id=user_id)
 
     def test_create_vault_handles_collision(self, vault_service, vaults_table, dynamodb_stubber):
@@ -201,7 +202,7 @@ class TestVaultService:
     def test_get_vault_salt_raises_error_on_missing_salt(
         self, vault_service, vaults_table, dynamodb_stubber
     ):
-        """Test that get_vault_salt raises StorageError when salt is missing from item."""
+        """Test that get_vault_salt raises InternalServerError when salt is missing from item."""
         user_id = "test-user-123"
         vault_id = "vault-456"
 
@@ -224,7 +225,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(InternalServerError, match="Vault salt not found in vault record"):
+        with pytest.raises(InternalServerError, match="missing salt"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_validates_salt_format(
@@ -253,7 +254,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(InternalServerError, match="Invalid vault salt format"):
+        with pytest.raises(InternalServerError, match="invalid salt format"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_handles_dynamodb_error(
@@ -270,7 +271,7 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        with pytest.raises(InternalServerError, match="Failed to retrieve vault salt"):
+        with pytest.raises(ClientError):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_vault_exists_returns_true_when_exists(
@@ -335,9 +336,8 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        result = vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
-
-        assert result is False
+        with pytest.raises(NotFoundError):
+            vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
     def test_list_user_vaults_returns_vaults(self, vault_service, vaults_table, dynamodb_stubber):
         """Test that list_user_vaults returns all user vaults."""
@@ -423,7 +423,7 @@ class TestVaultService:
             service_message="Service unavailable",
         )
 
-        with pytest.raises(InternalServerError, match="Failed to list vaults"):
+        with pytest.raises(ClientError):
             vault_service.list_user_vaults(user_id=user_id)
 
     def test_generated_salts_are_unique(self, vault_service, vaults_table, dynamodb_stubber):

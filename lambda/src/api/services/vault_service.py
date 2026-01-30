@@ -114,7 +114,7 @@ class VaultService:
                 "Failed to create vault",
                 extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
-            raise InternalServerError("Failed to create vault")
+            raise
 
     def get_vault_salt(self, user_id: str, vault_id: str) -> bytes:
         """
@@ -159,7 +159,7 @@ class VaultService:
                     "Vault salt missing from vault item",
                     extra={"vault_id": vault_id, "user_id": user_id},
                 )
-                raise InternalServerError("Vault salt not found in vault record")
+                raise InternalServerError("Vault data integrity error: missing salt")
 
             # Convert Binary type to bytes if necessary
             if isinstance(vault_salt, Binary):
@@ -176,7 +176,7 @@ class VaultService:
                         "salt_length": len(vault_salt) if isinstance(vault_salt, bytes) else None,
                     },
                 )
-                raise InternalServerError("Invalid vault salt format")
+                raise InternalServerError("Vault data integrity error: invalid salt format")
 
             logger.info(
                 "Vault salt retrieved successfully",
@@ -190,7 +190,7 @@ class VaultService:
                 "Failed to retrieve vault salt",
                 extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
-            raise InternalServerError("Failed to retrieve vault salt")
+            raise
 
     def vault_exists(self, user_id: str, vault_id: str) -> bool:
         """
@@ -207,15 +207,13 @@ class VaultService:
             response = self.vaults_table.get_item(
                 Key={"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
             )
-
             return "Item" in response
-
         except ClientError as e:
             logger.error(
                 "Failed to check vault existence",
                 extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
-            return False
+            raise NotFoundError("Vault not found")
 
     def list_user_vaults(self, user_id: str) -> list:
         """
@@ -248,9 +246,8 @@ class VaultService:
                 )
 
             logger.info("Listed user vaults", extra={"user_id": user_id, "count": len(vaults)})
-
             return vaults
 
         except ClientError as e:
             logger.error("Failed to list user vaults", extra={"error": str(e), "user_id": user_id})
-            raise InternalServerError("Failed to list vaults")
+            raise

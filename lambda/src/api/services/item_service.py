@@ -15,8 +15,6 @@ import boto3
 from aws_lambda_powertools import Logger, Metrics
 from aws_lambda_powertools.event_handler.exceptions import (
     BadRequestError,
-    ForbiddenError,
-    InternalServerError,
     NotFoundError,
 )
 from aws_lambda_powertools.metrics import MetricUnit
@@ -30,7 +28,13 @@ from src.shared.models import (
     InitiateUploadResponse,
     ItemType,
 )
-from src.shared.repository import DynamoDBRepository, S3Repository, build_s3_key
+from src.shared.repository import (
+    DynamoDBRepository,
+    S3Repository,
+    build_s3_key,
+    encode_pagination_token,
+    parse_pagination_token,
+)
 
 logger = Logger(child=True)
 metrics = Metrics(namespace="Cortex")
@@ -83,8 +87,8 @@ class ItemService:
 
         # Build DynamoDB item
         item = {
-            "PK": f"VAULT#{request.vault_id}",
-            "SK": f"ITEM#{request.item_type}#{item_id}",
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",  # Constant SK for items (PK-only design with required SK)
             "item_id": item_id,
             "item_type": request.item_type,
             "vault_id": request.vault_id,
@@ -106,22 +110,13 @@ class ItemService:
         if request.time_bucket:
             item["time_bucket"] = request.time_bucket
 
-        # Add GSI keys for type-based queries
+        # Add GSI1 keys for type-based queries
         item["GSI1PK"] = f"VAULT#{request.vault_id}#TYPE#{request.item_type}"
         item["GSI1SK"] = f"ITEM#{item_id}"
 
-        # Add GSI keys for date-based queries (if applicable)
-        if request.time_bucket:
-            item["GSI2PK"] = (
-                f"VAULT#{request.vault_id}#TYPE#{request.item_type}#DATE#{request.time_bucket}"
-            )
-            item["GSI2SK"] = f"ITEM#{item_id}"
-
-        # Add GSI keys for tag-based queries (if applicable)
-        if request.encrypted_tags:
-            # For tag search, we'll create separate GSI entries
-            # This is handled in the tag search implementation
-            pass
+        # Add GSI2 keys for listing all items in vault (without type filter)
+        item["GSI2PK"] = f"VAULT#{request.vault_id}"
+        item["GSI2SK"] = f"ITEM#{item_id}"
 
         # Store item in DynamoDB
         self.items_repo.put_item(item)
@@ -213,8 +208,8 @@ class ItemService:
 
         # Store item metadata in DynamoDB (pending upload completion)
         item = {
-            "PK": f"VAULT#{request.vault_id}",
-            "SK": f"ITEM#{ItemType.MEDIA}#{item_id}",
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",  # Constant SK for items (PK-only design with required SK)
             "item_id": item_id,
             "item_type": ItemType.MEDIA,
             "vault_id": request.vault_id,
@@ -237,9 +232,13 @@ class ItemService:
         if upload_id:
             item["upload_id"] = upload_id
 
-        # Add GSI keys for type-based queries
+        # Add GSI1 keys for type-based queries
         item["GSI1PK"] = f"VAULT#{request.vault_id}#TYPE#{ItemType.MEDIA}"
         item["GSI1SK"] = f"ITEM#{item_id}"
+
+        # Add GSI2 keys for listing all items in vault (without type filter)
+        item["GSI2PK"] = f"VAULT#{request.vault_id}"
+        item["GSI2SK"] = f"ITEM#{item_id}"
 
         # Store metadata
         self.items_repo.put_item(item)
@@ -264,6 +263,7 @@ class ItemService:
         verification and DynamoDB update.
 
         Args:
+            item_id: Item ID to complete
             user_id: Authenticated user ID
             request: Upload completion request
 
@@ -276,10 +276,7 @@ class ItemService:
             StorageError: If DynamoDB operation fails or S3 verification fails
         """
         # Retrieve item from DynamoDB
-        key = {
-            "PK": f"VAULT#{request.vault_id}",
-            "SK": f"ITEM#{ItemType.MEDIA}#{request.item_id}",
-        }
+        key = {"PK": f"ITEM#{request.item_id}"}
 
         item = self.items_repo.get_item(key)
 
@@ -292,15 +289,7 @@ class ItemService:
 
         # Verify user owns the item
         if item["user_id"] != user_id:
-            logger.warning(
-                "User does not own item",
-                extra={
-                    "user_id": user_id,
-                    "item_id": request.item_id,
-                    "item_user_id": item["user_id"],
-                },
-            )
-            raise ForbiddenError("Access denied to item")
+            raise NotFoundError("Item not found")
 
         # Verify S3 object exists and get metadata (including version if available)
         s3_key = item["s3_key"]
@@ -326,10 +315,11 @@ class ItemService:
                         "Failed to abort multipart upload during cleanup",
                         extra={"item_id": request.item_id, "upload_id": upload_id, "error": str(e)},
                     )
+                    raise
 
             # Clean up DynamoDB entry
             self.items_repo.delete_item(key)
-            raise InternalServerError("Upload verification failed - object not found in S3")
+            raise
 
         # Update item status to COMPLETE with conditional expression
         # Condition ensures item is still in PENDING state (prevents double completion)
@@ -360,7 +350,7 @@ class ItemService:
                 expression_attribute_values=expression_attribute_values,
                 expression_attribute_names=expression_attribute_names,
             )
-        except InternalServerError:
+        except Exception:
             # Conditional update failed - verify S3 object still exists
             if not self.s3_repo.object_exists(s3_key):
                 logger.error(
@@ -373,9 +363,7 @@ class ItemService:
                 )
                 # Clean up orphaned metadata
                 self.items_repo.delete_item(key)
-                raise InternalServerError(
-                    "Upload verification failed - object was deleted during completion"
-                )
+                raise
 
             # Item may have already been completed or is in invalid state
             logger.warning(
@@ -401,7 +389,7 @@ class ItemService:
         return CompleteUploadResponse(item_id=request.item_id, uploaded_at=now.timestamp())
 
     def cleanup_failed_upload(
-        self, vault_id: str, item_id: str, s3_key: Optional[str], upload_id: Optional[str] = None
+        self, item_id: str, s3_key: Optional[str], upload_id: Optional[str] = None
     ) -> None:
         """
         Clean up resources after failed upload.
@@ -411,7 +399,6 @@ class ItemService:
         uploads, it aborts the upload to prevent storage costs.
 
         Args:
-            vault_id: Vault ID
             item_id: Item ID
             s3_key: S3 object key (if exists)
             upload_id: Multipart upload ID (if multipart upload)
@@ -430,6 +417,7 @@ class ItemService:
                         "Failed to abort multipart upload",
                         extra={"s3_key": s3_key, "upload_id": upload_id, "error": str(e)},
                     )
+                    raise
 
             # Delete S3 object if it exists (for completed simple uploads)
             if s3_key and not upload_id:
@@ -441,11 +429,11 @@ class ItemService:
                         "Failed to clean up S3 object",
                         extra={"s3_key": s3_key, "error": str(e)},
                     )
+                    raise
 
             # Delete DynamoDB metadata
             key = {
-                "PK": f"VAULT#{vault_id}",
-                "SK": f"ITEM#{ItemType.MEDIA}#{item_id}",
+                "PK": f"ITEM#{item_id}",
             }
 
             self.items_repo.delete_item(key)
@@ -454,8 +442,9 @@ class ItemService:
         except Exception as e:
             logger.error(
                 "Failed to clean up failed upload",
-                extra={"vault_id": vault_id, "item_id": item_id, "error": str(e)},
+                extra={"item_id": item_id, "error": str(e)},
             )
+            raise
 
     def list_items(
         self,
@@ -487,7 +476,6 @@ class ItemService:
         Raises:
             StorageError: If DynamoDB operation fails
         """
-        from src.shared.repository import encode_pagination_token, parse_pagination_token
 
         # Parse pagination token
         exclusive_start_key = parse_pagination_token(next_token)
@@ -502,14 +490,13 @@ class ItemService:
             }
             index_name = "GSI1"
         else:
-            # Query main table for all items in vault
-            key_condition_expression = "PK = :pk AND begins_with(SK, :sk_prefix)"
+            # Use GSI2 for listing all items in vault (without type filter)
+            key_condition_expression = "GSI2PK = :pk"
             expression_attribute_values = {
                 ":pk": f"VAULT#{vault_id}",
-                ":sk_prefix": "ITEM#",
                 ":pending": "PENDING",
             }
-            index_name = None
+            index_name = "GSI2"
 
         # Filter out PENDING uploads at query level (not application level)
         # This ensures consistent page sizes and reduces data transfer
@@ -545,7 +532,7 @@ class ItemService:
 
         return items, next_page_token
 
-    def get_item(self, user_id: str, vault_id: str, item_id: str) -> Optional[dict]:
+    def get_item(self, user_id: str, item_id: str) -> Optional[dict]:
         """
         Get a specific item by ID.
 
@@ -554,7 +541,6 @@ class ItemService:
 
         Args:
             user_id: Authenticated user ID
-            vault_id: Vault ID
             item_id: Item ID
 
         Returns:
@@ -564,55 +550,37 @@ class ItemService:
             AuthorizationError: If user doesn't own the item
             StorageError: If DynamoDB operation fails
         """
-        # Try each item type since we don't know which one it is
-        for item_type in [ItemType.MEDIA, ItemType.NOTE, ItemType.TASK, ItemType.EVENT]:
-            key = {
-                "PK": f"VAULT#{vault_id}",
-                "SK": f"ITEM#{item_type}#{item_id}",
-            }
+        key = {"PK": f"ITEM#{item_id}"}
 
-            item = self.items_repo.get_item(key)
+        item = self.items_repo.get_item(key)
 
-            if item:
-                # Verify user owns the item
-                if item["user_id"] != user_id:
-                    logger.warning(
-                        "User does not own item",
-                        extra={
-                            "user_id": user_id,
-                            "item_id": item_id,
-                            "item_user_id": item["user_id"],
-                        },
-                    )
-                    raise ForbiddenError("Access denied to item")
+        if not item:
+            logger.info(
+                "Item not found",
+                extra={"user_id": user_id, "item_id": item_id},
+            )
+            raise NotFoundError("Item not found")
 
-                # Filter out PENDING uploads
-                if item.get("upload_status") == "PENDING":
-                    return None
+        # Verify user owns the item
+        if item["user_id"] != user_id:
+            raise NotFoundError("Item not found")
 
-                logger.info(
-                    "Retrieved item",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "item_id": item_id,
-                        "item_type": item_type,
-                    },
-                )
+        # Filter out PENDING uploads
+        if item.get("upload_status") == "PENDING":
+            return None
 
-                return item
-
-        # Item not found
         logger.info(
-            "Item not found",
-            extra={"user_id": user_id, "vault_id": vault_id, "item_id": item_id},
+            "Retrieved item",
+            extra={
+                "user_id": user_id,
+                "item_id": item_id,
+                "item_type": item.get("item_type"),
+            },
         )
 
-        return None
+        return item
 
-    def get_download_url(
-        self, user_id: str, vault_id: str, item_id: str
-    ) -> tuple[str, datetime, bytes, str]:
+    def get_download_url(self, user_id: str, item_id: str) -> tuple[str, datetime, bytes, str]:
         """
         Generate presigned download URL for MEDIA items.
 
@@ -621,7 +589,6 @@ class ItemService:
 
         Args:
             user_id: Authenticated user ID
-            vault_id: Vault ID
             item_id: Item ID
 
         Returns:
@@ -635,30 +602,17 @@ class ItemService:
         """
         # Retrieve item from DynamoDB
         key = {
-            "PK": f"VAULT#{vault_id}",
-            "SK": f"ITEM#{ItemType.MEDIA}#{item_id}",
+            "PK": f"ITEM#{item_id}",
         }
 
         item = self.items_repo.get_item(key)
 
         if not item:
-            logger.warning(
-                "Item not found for download",
-                extra={"user_id": user_id, "item_id": item_id},
-            )
             raise NotFoundError("Item not found")
 
         # Verify user owns the item
         if item["user_id"] != user_id:
-            logger.warning(
-                "User does not own item",
-                extra={
-                    "user_id": user_id,
-                    "item_id": item_id,
-                    "item_user_id": item["user_id"],
-                },
-            )
-            raise ForbiddenError("Access denied to item")
+            raise NotFoundError("Item not found")
 
         # Verify item type is MEDIA
         if item["item_type"] != ItemType.MEDIA:
@@ -685,11 +639,12 @@ class ItemService:
 
         # Verify S3 object exists
         if not self.s3_repo.object_exists(s3_key):
+            # TODO consider if all checks pass but object does not exist
             logger.error(
                 "S3 object not found for item",
                 extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
-            raise InternalServerError("Item file not found in storage")
+            raise
 
         # Generate presigned download URL
         download_url = self.s3_repo.generate_download_url(s3_key, PRESIGNED_URL_EXPIRATION)
@@ -702,7 +657,6 @@ class ItemService:
             "Generated download URL",
             extra={
                 "user_id": user_id,
-                "vault_id": vault_id,
                 "item_id": item_id,
                 "s3_key": s3_key,
             },
@@ -710,7 +664,7 @@ class ItemService:
 
         return download_url, expires_at, item["encrypted_metadata"], s3_key
 
-    def delete_item(self, user_id: str, vault_id: str, item_id: str) -> None:
+    def delete_item(self, user_id: str, item_id: str) -> None:
         """
         Delete item and its associated resources.
 
@@ -723,7 +677,6 @@ class ItemService:
 
         Args:
             user_id: Authenticated user ID
-            vault_id: Vault ID
             item_id: Item ID to delete
 
         Raises:
@@ -731,64 +684,40 @@ class ItemService:
             AuthorizationError: If user doesn't own the item
             StorageError: If deletion operation fails
         """
-        # Try to find the item across all item types
-        item = None
-        item_key = None
+        # Direct get using item_id only (no item_type in SK needed)
+        key = {"PK": f"ITEM#{item_id}"}
 
-        for item_type in [ItemType.MEDIA, ItemType.NOTE, ItemType.TASK, ItemType.EVENT]:
-            key = {
-                "PK": f"VAULT#{vault_id}",
-                "SK": f"ITEM#{item_type}#{item_id}",
-            }
+        item = self.items_repo.get_item(key)
 
-            found_item = self.items_repo.get_item(key)
-
-            if found_item:
-                item = found_item
-                item_key = key
-                break
-
-        # Item not found
         if not item:
             logger.warning(
                 "Item not found for deletion",
-                extra={"user_id": user_id, "vault_id": vault_id, "item_id": item_id},
+                extra={"user_id": user_id, "item_id": item_id},
             )
             raise NotFoundError("Item not found")
 
         # Verify user owns the item
         if item["user_id"] != user_id:
-            logger.warning(
-                "User does not own item",
-                extra={
-                    "user_id": user_id,
-                    "item_id": item_id,
-                    "item_user_id": item["user_id"],
-                },
-            )
-            raise ForbiddenError("Access denied to item")
+            raise NotFoundError("Item not found")
 
         # Handle deletion based on item type
         if item["item_type"] == ItemType.MEDIA:
             # For MEDIA items: Delete S3 object and DynamoDB metadata atomically
-            self._delete_media_item(user_id, vault_id, item_id, item, item_key)
+            self._delete_media_item(user_id, item_id, item, key)
         else:
             # For NOTE/TASK/EVENT items: Delete DynamoDB record only
-            self._delete_inline_item(user_id, vault_id, item_id, item_key)
+            self._delete_inline_item(user_id, item_id, key)
 
         logger.info(
             "Item deleted successfully",
             extra={
                 "user_id": user_id,
-                "vault_id": vault_id,
                 "item_id": item_id,
                 "item_type": item["item_type"],
             },
         )
 
-    def _delete_media_item(
-        self, user_id: str, vault_id: str, item_id: str, item: dict, item_key: dict
-    ) -> None:
+    def _delete_media_item(self, user_id: str, item_id: str, item: dict, item_key: dict) -> None:
         """
         Delete MEDIA item with S3 object and DynamoDB metadata.
 
@@ -799,7 +728,6 @@ class ItemService:
 
         Args:
             user_id: Authenticated user ID
-            vault_id: Vault ID
             item_id: Item ID
             item: Item dictionary from DynamoDB
             item_key: DynamoDB key for the item
@@ -835,6 +763,7 @@ class ItemService:
                         "Failed to abort multipart upload during deletion",
                         extra={"item_id": item_id, "upload_id": upload_id, "error": str(e)},
                     )
+                    raise
 
             # Delete DynamoDB metadata for pending upload
             self.items_repo.delete_item(item_key)
@@ -851,12 +780,12 @@ class ItemService:
                 "Deleted S3 object",
                 extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
-        except InternalServerError as e:
+        except Exception as e:
             logger.error(
                 "Failed to delete S3 object",
                 extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key, "error": str(e)},
             )
-            raise InternalServerError(f"Failed to delete media file: {str(e)}")
+            raise
 
         # Delete DynamoDB metadata
         try:
@@ -865,7 +794,7 @@ class ItemService:
                 "Deleted DynamoDB metadata",
                 extra={"user_id": user_id, "item_id": item_id},
             )
-        except InternalServerError as e:
+        except Exception as e:
             logger.error(
                 "Failed to delete DynamoDB metadata after S3 deletion",
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
@@ -890,19 +819,14 @@ class ItemService:
                 },
             )
 
-            raise InternalServerError(
-                "Failed to delete item metadata - S3 object deleted but metadata remains"
-            )
+            raise
 
-    def _delete_inline_item(
-        self, user_id: str, vault_id: str, item_id: str, item_key: dict
-    ) -> None:
+    def _delete_inline_item(self, user_id: str, item_id: str, item_key: dict) -> None:
         """
         Delete inline item (NOTE, TASK, EVENT) from DynamoDB only.
 
         Args:
             user_id: Authenticated user ID
-            vault_id: Vault ID
             item_id: Item ID
             item_key: DynamoDB key for the item
 
@@ -913,11 +837,11 @@ class ItemService:
             self.items_repo.delete_item(item_key)
             logger.info(
                 "Deleted inline item from DynamoDB",
-                extra={"user_id": user_id, "vault_id": vault_id, "item_id": item_id},
+                extra={"user_id": user_id, "item_id": item_id},
             )
-        except InternalServerError as e:
+        except Exception as e:
             logger.error(
                 "Failed to delete inline item",
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
-            raise InternalServerError(f"Failed to delete item: {str(e)}")
+            raise

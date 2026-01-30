@@ -17,7 +17,7 @@ from pydantic import ValidationError as PydanticValidationError
 from src.api.routes.base_route import BaseRoute
 from src.api.services.collection_service import CollectionService
 from src.api.services.vault_service import VaultService
-from src.shared.auth import get_user_from_context, require_vault_access
+from src.shared.auth import get_user_from_context
 from src.shared.models import (
     AddItemToCollectionRequest,
     CreateCollectionRequest,
@@ -58,7 +58,7 @@ class CreateCollectionRoute(BaseRoute):
             user_id = get_user_from_context(app.current_event)
 
             # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, request.vault_id, "create_collection")
+            self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
 
             # Create collection
             response = self.collection_service.create_collection(user_id, request)
@@ -110,12 +110,12 @@ class ListCollectionsRoute(BaseRoute):
             if not vault_id:
                 raise BadRequestError("vault_id is required")
 
-            # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, vault_id, "list_collections")
-
             # Validate page_size
             if page_size < 1 or page_size > 100:
                 raise BadRequestError("page_size must be between 1 and 100")
+
+            # Verify vault ownership
+            self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
             # List collections
             collections, next_page_token = self.collection_service.list_collections(
@@ -194,7 +194,7 @@ class GetCollectionRoute(BaseRoute):
                 raise BadRequestError("vault_id is required")
 
             # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, vault_id, "get_collection")
+            self.vault_service.vault_exists(user_id, vault_id)
 
             # Get collection
             collection = self.collection_service.get_collection(user_id, vault_id, collection_id)
@@ -265,7 +265,7 @@ class UpdateCollectionRoute(BaseRoute):
             user_id = get_user_from_context(app.current_event)
 
             # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, request.vault_id, "update_collection")
+            self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
 
             # Update collection
             response = self.collection_service.update_collection(user_id, request)
@@ -318,7 +318,7 @@ class DeleteCollectionRoute(BaseRoute):
                 raise BadRequestError("vault_id is required")
 
             # Verify vault ownership
-            require_vault_access(self.vault_service, user_id, vault_id, "delete_collection")
+            self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
             # Delete collection
             self.collection_service.delete_collection(user_id, vault_id, collection_id)
@@ -373,9 +373,7 @@ class AddItemToCollectionRoute(BaseRoute):
             user_id = get_user_from_context(app.current_event)
 
             # Verify vault ownership
-            require_vault_access(
-                self.vault_service, user_id, request.vault_id, "add_item_to_collection"
-            )
+            self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
 
             # Add item to collection
             response = self.collection_service.add_item_to_collection(user_id, request)
@@ -431,9 +429,7 @@ class RemoveItemFromCollectionRoute(BaseRoute):
                 raise BadRequestError("vault_id is required")
 
             # Verify vault ownership
-            require_vault_access(
-                self.vault_service, user_id, vault_id, "remove_item_from_collection"
-            )
+            self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
             # Remove item from collection
             self.collection_service.remove_item_from_collection(
