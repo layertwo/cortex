@@ -60,62 +60,32 @@ class ServiceProvider:
     @cached_property
     def vaults_table_name(self):  # pragma: nocover
         """Get vaults table name from environment."""
-        return os.environ.get("VAULTS_TABLE_NAME", "cortex-dev-vaults")
+        return os.environ["VAULTS_TABLE_NAME"]
 
     @cached_property
     def items_table_name(self):  # pragma: nocover
         """Get items table name from environment."""
-        return os.environ.get("ITEMS_TABLE_NAME", "cortex-dev-items")
+        return os.environ["ITEMS_TABLE_NAME"]
 
     @cached_property
     def collections_table_name(self):  # pragma: nocover
         """Get collections table name from environment."""
-        return os.environ.get("COLLECTIONS_TABLE_NAME", "cortex-dev-collections")
+        return os.environ["COLLECTIONS_TABLE_NAME"]
 
     @cached_property
     def shares_table_name(self):  # pragma: nocover
         """Get shares table name from environment."""
-        return os.environ.get("SHARES_TABLE_NAME", "cortex-dev-shares")
+        return os.environ["SHARES_TABLE_NAME"]
 
     @cached_property
     def recovery_table_name(self):  # pragma: nocover
         """Get recovery table name from environment."""
-        return os.environ.get("RECOVERY_TABLE_NAME", "cortex-dev-recovery")
+        return os.environ["RECOVERY_TABLE_NAME"]
 
     @cached_property
     def files_bucket_name(self):  # pragma: nocover
         """Get S3 files bucket name from environment."""
-        return os.environ.get("FILES_BUCKET_NAME", "cortex-dev-files")
-
-    @cached_property
-    def vaults_table(self):  # pragma: nocover
-        """Create DynamoDB vaults table resource."""
-        resource = self.session.resource("dynamodb")
-        return resource.Table(self.vaults_table_name)
-
-    @cached_property
-    def items_table(self):  # pragma: nocover
-        """Create DynamoDB items table resource."""
-        resource = self.session.resource("dynamodb")
-        return resource.Table(self.items_table_name)
-
-    @cached_property
-    def collections_table(self):  # pragma: nocover
-        """Create DynamoDB collections table resource."""
-        resource = self.session.resource("dynamodb")
-        return resource.Table(self.collections_table_name)
-
-    @cached_property
-    def shares_table(self):  # pragma: nocover
-        """Create DynamoDB shares table resource."""
-        resource = self.session.resource("dynamodb")
-        return resource.Table(self.shares_table_name)
-
-    @cached_property
-    def recovery_table(self):  # pragma: nocover
-        """Create DynamoDB recovery table resource."""
-        resource = self.session.resource("dynamodb")
-        return resource.Table(self.recovery_table_name)
+        return os.environ["FILES_BUCKET_NAME"]
 
     # S3 client
     @cached_property
@@ -128,7 +98,8 @@ class ServiceProvider:
     def auth_service(self) -> AuthService:
         """Create authentication service."""
         return AuthService(
-            recovery_table=self.recovery_table,
+            session=self.session,
+            recovery_table_name=self.recovery_table_name,
             cognito_client=None,  # Cognito client would be injected here in production
             user_pool_id=os.environ.get("COGNITO_USER_POOL_ID"),
         )
@@ -136,7 +107,7 @@ class ServiceProvider:
     @cached_property
     def vault_service(self):
         """Create vault service."""
-        return VaultService(vaults_table=self.vaults_table)
+        return VaultService(session=self.session, vaults_table_name=self.vaults_table_name)
 
     @cached_property
     def item_service(self) -> ItemService:
@@ -150,7 +121,6 @@ class ServiceProvider:
     @cached_property
     def collection_service(self):
         """Create collection service."""
-
         return CollectionService(
             session=self.session,
             collections_table_name=self.collections_table_name,
@@ -208,7 +178,7 @@ class ServiceProvider:
                     collection_service=self.collection_service, vault_service=self.vault_service
                 ),
                 # Tag routes
-                SearchTagsRoute(),
+                SearchTagsRoute(item_service=self.item_service, vault_service=self.vault_service),
                 # Share routes
                 CreateShareRoute(),
                 GetShareRoute(),

@@ -21,16 +21,6 @@ from src.shared.models import (
 )
 
 
-@pytest.fixture
-def collection_service(boto_session, collections_table_name, items_table_name):
-    """Create collection service with stubbed boto3 session."""
-    return CollectionService(
-        session=boto_session,
-        collections_table_name=collections_table_name,
-        items_table_name=items_table_name,
-    )
-
-
 class TestCreateCollection:
     """Test suite for create_collection."""
 

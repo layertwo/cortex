@@ -27,6 +27,7 @@ from src.shared.models import (
     InitiateUploadRequest,
     InitiateUploadResponse,
     ItemType,
+    SearchByTagResponse,
 )
 from src.shared.repository import (
     DynamoDBRepository,
@@ -845,3 +846,166 @@ class ItemService:
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
             raise
+
+    def search_by_tag(
+        self,
+        vault_id: str,
+        encrypted_tag: str,
+        page_size: int = 50,
+        next_token: Optional[str] = None,
+    ) -> "SearchByTagResponse":
+        """
+        Search items by encrypted tag.
+
+        This method queries items in a vault and filters by the encrypted tag.
+        The encrypted tag is matched exactly against the tags stored in items.
+
+        Note: This implementation uses application-level filtering. For better
+        performance at scale, consider implementing GSI-based tag indexing
+        as described in the design document (GSI1PK: VAULT#{vaultId}#TAG#{encryptedTag}).
+
+        Args:
+            vault_id: Vault ID to search in
+            encrypted_tag: Base64-encoded encrypted tag to search for
+            page_size: Number of results per page (default: 50, max: 100)
+            next_token: Pagination token from previous response
+
+        Returns:
+            SearchByTagResponse with matching items
+
+        Raises:
+            StorageError: If DynamoDB query fails
+
+        Requirements: 11.4, 11.5
+        """
+        from base64 import b64decode
+
+        from src.shared.models import ItemMetadata, SearchByTagResponse
+
+        # Decode the base64-encoded encrypted tag
+        try:
+            encrypted_tag_bytes = b64decode(encrypted_tag)
+        except Exception as e:
+            logger.error(
+                "Failed to decode encrypted tag",
+                extra={"encrypted_tag": encrypted_tag, "error": str(e)},
+            )
+            raise BadRequestError("Invalid encrypted_tag format - must be base64-encoded")
+
+        # Parse pagination token
+        exclusive_start_key = parse_pagination_token(next_token) if next_token else None
+
+        # Query all items in the vault using GSI2
+        # GSI2PK: VAULT#{vaultId}, GSI2SK: ITEM#{itemId}
+        key_condition_expression = "GSI2PK = :vault_pk"
+        expression_attribute_values = {
+            ":vault_pk": f"VAULT#{vault_id}",
+        }
+
+        # We need to fetch more items than page_size because we're filtering
+        # in the application layer. Fetch up to 5x page_size to increase
+        # the likelihood of getting enough matching results.
+        fetch_limit = min(page_size * 5, 500)
+
+        matching_items = []
+        last_evaluated_key = exclusive_start_key
+
+        # Keep querying until we have enough matching items or run out of results
+        while len(matching_items) < page_size:
+            result = self.items_repo.query(
+                key_condition_expression=key_condition_expression,
+                expression_attribute_values=expression_attribute_values,
+                index_name="GSI2",
+                limit=fetch_limit,
+                exclusive_start_key=last_evaluated_key,
+            )
+
+            items = result.get("Items", [])
+            last_evaluated_key = result.get("LastEvaluatedKey")
+
+            # Filter items by encrypted tag
+            for item in items:
+                # Skip items without tags
+                if "encrypted_tags" not in item or not item["encrypted_tags"]:
+                    continue
+
+                # Check if the encrypted tag matches any of the item's tags
+                item_tags = item["encrypted_tags"]
+                if any(tag == encrypted_tag_bytes for tag in item_tags):
+                    matching_items.append(item)
+
+                    # Stop if we have more than enough results (page_size + 1 to detect more results)
+                    if len(matching_items) > page_size:
+                        break
+
+            # If no more results from DynamoDB, stop
+            if not last_evaluated_key:
+                break
+
+        # Trim to page_size
+        items_to_return = matching_items[:page_size]
+
+        # Convert DynamoDB items to ItemMetadata models
+        item_metadata_list = []
+        for item in items_to_return:
+            # Convert Binary objects to bytes
+            encrypted_content = item.get("encrypted_content")
+            if encrypted_content and hasattr(encrypted_content, "value"):
+                encrypted_content = bytes(encrypted_content)
+
+            encrypted_metadata = item["encrypted_metadata"]
+            if hasattr(encrypted_metadata, "value"):
+                encrypted_metadata = bytes(encrypted_metadata)
+
+            encrypted_tags = item.get("encrypted_tags")
+            if encrypted_tags:
+                encrypted_tags = [
+                    bytes(tag) if hasattr(tag, "value") else tag for tag in encrypted_tags
+                ]
+
+            item_metadata = ItemMetadata(
+                item_id=item["item_id"],
+                item_type=item["item_type"],
+                vault_id=item["vault_id"],
+                user_id=item["user_id"],
+                encrypted_content=encrypted_content,
+                encrypted_metadata=encrypted_metadata,
+                encrypted_tags=encrypted_tags,
+                created_at=datetime.fromtimestamp(int(item["created_at"]), tz=timezone.utc),
+                updated_at=datetime.fromtimestamp(int(item["updated_at"]), tz=timezone.utc),
+                version=int(item.get("version", 1)),
+                size_bytes=int(item["size_bytes"]) if item.get("size_bytes") else None,
+                s3_key=item.get("s3_key"),
+            )
+            item_metadata_list.append(item_metadata)
+
+        # Generate next token if there are more matching items
+        next_token_value = None
+        if len(matching_items) > page_size:
+            # We have more matching items than requested
+            # Use the last returned item's key as the pagination token
+            last_item = items_to_return[-1]
+            last_key = {
+                "PK": f"ITEM#{last_item['item_id']}",
+                "SK": "METADATA",
+                "GSI2PK": f"VAULT#{vault_id}",
+                "GSI2SK": f"ITEM#{last_item['item_id']}",
+            }
+            next_token_value = encode_pagination_token(last_key)
+        elif last_evaluated_key:
+            # There are more items to query from DynamoDB
+            next_token_value = encode_pagination_token(last_evaluated_key)
+
+        logger.info(
+            "Tag search completed",
+            extra={
+                "vault_id": vault_id,
+                "result_count": len(item_metadata_list),
+                "has_more": next_token_value is not None,
+            },
+        )
+
+        return SearchByTagResponse(
+            items=item_metadata_list,
+            next_token=next_token_value,
+        )
