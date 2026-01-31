@@ -18,6 +18,14 @@ The architecture implements a two-password model: an **account password** for au
 
 The architecture follows AWS best practices using Lambda for compute, API Gateway for API management, DynamoDB for metadata storage, S3 for object storage, Cognito for authentication, SNS for push notifications, and EventBridge for scheduled tasks. The Smithy model defines the service contract, enabling type-safe API definitions and automatic SDK generation.
 
+### Terminology
+
+Throughout this document:
+- **Item** refers to any data object stored in a vault, regardless of type (media, note, task, or event).
+- **File** and **media** refer specifically to binary content stored in S3, applicable only to media items.
+- **File content** refers to the binary data stored in S3 (media items only). **Inline content** refers to encrypted content stored directly in DynamoDB (notes, tasks, and events).
+- When a section discusses DEKs and envelope encryption, it applies to media items (which have file content in S3). Notes, tasks, and events use inline content encryption with their respective derived keys.
+
 ### Key Design Principles
 
 1. **True Zero-Knowledge Architecture**: Server never has access to plaintext data, encryption keys, or encrypted key bundles
@@ -57,9 +65,32 @@ Vault Password + Vault Salt → [Argon2id] → Vault Master Key (256-bit)
                                                     ↓
         ┌───────────────────────────┼───────────────────────────┬──────────────────────────┐
         ↓                           ↓                           ↓                          ↓
-  Data Encryption Key    Metadata Encryption Key    Share Key Derivation Key    Notes/Tasks/Events/
-  (media content)        (common metadata)          (file sharing)              Notification Keys
+  Key Encryption Key     Metadata Encryption Key    Share Key Derivation Key    Notes/Tasks/Events/
+  (KEK - wraps DEKs)     (common metadata)          (file sharing)              Notification Keys
+        │
+        │ Wraps/Unwraps
+        ▼
+  ┌─────────────────────────────────────────────────────────────────────────────────────────┐
+  │                              PER-FILE DEKs (Data Encryption Keys)                        │
+  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐              │
+  │  │   DEK #1    │    │   DEK #2    │    │   DEK #3    │    │   DEK #N    │              │
+  │  │ (File 1)    │    │ (File 2)    │    │ (File 3)    │    │ (File N)    │              │
+  │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘    └──────┬──────┘              │
+  │         │                  │                  │                  │                     │
+  │         ▼                  ▼                  ▼                  ▼                     │
+  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐              │
+  │  │ Encrypted   │    │ Encrypted   │    │ Encrypted   │    │ Encrypted   │              │
+  │  │  File #1    │    │  File #2    │    │  File #3    │    │  File #N    │              │
+  │  │   (S3)      │    │   (S3)      │    │   (S3)      │    │   (S3)      │              │
+  │  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘              │
+  └─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Envelope Encryption Benefits:**
+- **Efficient Key Rotation**: Only re-wrap DEKs (small key blobs), not re-encrypt entire files
+- **Fast File Sharing**: Create share-wrapped DEK without re-uploading file content
+- **Per-File Key Isolation**: Compromise of one DEK doesn't affect other files
+- **Bandwidth Efficient**: Key rotation downloads only wrapped DEKs, not file content
 
 This separation provides:
 - Flexibility to change account credentials without expensive re-encryption
@@ -136,17 +167,28 @@ This separation provides:
 **Item Creation Flow (Generic):**
 1. React frontend encrypts item content and metadata locally using appropriate encryption key
 2. React frontend requests API endpoint (authenticated via SigV4)
-3. For media items: Lambda generates presigned S3 URL, React frontend uploads directly to S3
+3. For media items: 
+   - React frontend generates unique DEK for the file
+   - React frontend encrypts file content with DEK
+   - React frontend wraps DEK with vault's KEK
+   - Lambda generates presigned S3 URL
+   - React frontend uploads encrypted content directly to S3
+   - React frontend sends wrapped DEK and encrypted metadata to Lambda
 4. For other items: Content stored inline in DynamoDB as encrypted blob
 5. React frontend sends encrypted metadata to Lambda
-6. Lambda stores encrypted metadata in Items table
+6. Lambda stores encrypted metadata (and wrapped DEK for media) in Items table
 
 **Item Retrieval Flow:**
 1. React frontend requests item list from API Gateway
 2. Lambda queries DynamoDB Items table for user's encrypted metadata
 3. React frontend decrypts metadata locally in browser
-4. For media items: React frontend requests download URL, Lambda generates presigned S3 URL
-5. React frontend downloads and decrypts content locally in browser
+4. For media items: 
+   - React frontend requests download URL
+   - Lambda returns presigned S3 URL and wrapped DEK
+   - React frontend downloads encrypted content from S3
+   - React frontend unwraps DEK using vault's KEK
+   - React frontend decrypts content using unwrapped DEK
+   - React frontend clears DEK from memory after decryption
 
 **Notification Flow:**
 1. React frontend creates task/event with reminder time
@@ -164,20 +206,34 @@ This separation provides:
 2. User enters vault password in React frontend
 3. React frontend retrieves vault salt from DynamoDB
 4. React frontend derives vault master key from vault password + salt using Argon2id
-5. React frontend derives data encryption key and metadata encryption key from vault master key using HKDF
-6. React frontend stores derived keys encrypted locally in browser storage
-7. React frontend can now decrypt all user's files and metadata
+5. React frontend derives HMAC key from vault master key using HKDF with salt and context "cortex-salt-hmac-v1"
+6. React frontend computes HMAC-SHA256 over vault salt using HMAC key
+7. On first access, React frontend stores vault salt HMAC locally for integrity verification
+8. On subsequent accesses, React frontend verifies vault salt HMAC using constant-time comparison
+9. If HMAC verification fails, React frontend displays security warning and refuses to proceed with key derivation
+10. If HMAC verification fails, React frontend provides "reset salt HMAC" option requiring re-authentication with both account password and vault password
+11. When user initiates salt HMAC reset, React frontend re-computes HMAC using newly authenticated vault password and updates locally stored HMAC
+12. React frontend derives KEK, metadata encryption key, and other derived keys from vault master key using HKDF
+13. React frontend stores derived keys encrypted locally in browser storage
+14. React frontend can now decrypt all user's files and metadata
 
-**Vault Recovery Key Flow:**
-1. Initial setup: React frontend generates vault recovery key derived from vault master key
+**Vault Recovery Key Flow (Server-Assisted with Offline Fallback):**
+
+The recovery key encodes the vault master key. KEK version is fetched from the server for efficiency. If the server is unavailable, the client can brute-force the KEK version by trying successive versions (v1, v2, ...) until successful decryption.
+
+1. Initial setup: React frontend generates vault recovery key (BIP39 24-word mnemonic) derived from vault master key
 2. React frontend displays recovery key to user once with instructions to store securely offline
-3. User confirms they have saved the recovery key before proceeding
-4. Vault password forgotten: User initiates recovery process
-5. User enters vault recovery key in React frontend
-6. React frontend uses recovery key to re-derive the vault master key
-7. Upon successful validation, user sets new vault password
-8. React frontend continues using the same vault master key (no re-encryption needed)
-9. Server never receives or stores the vault recovery key
+3. Server stores current KEK version number as non-secret metadata in DynamoDB Vaults table
+4. User confirms they have saved the recovery key before proceeding
+5. Vault password forgotten: User initiates recovery process
+6. User enters vault recovery key in React frontend
+7. React frontend uses recovery key to re-derive the vault master key
+8. React frontend fetches current KEK version from DynamoDB Vaults table (if server available)
+9. React frontend derives appropriate versioned KEK from recovered vault master key using HKDF with correct version context
+10. If vault has undergone key rotation since recovery key creation, React frontend derives latest KEK version to access re-wrapped files
+11. If server is unavailable, React frontend attempts incremental KEK version derivation (v1, v2, v3...) until decryption of a known item succeeds, enabling degraded offline recovery
+12. Upon successful validation, user sets new vault password while maintaining same vault master key (no re-encryption needed)
+13. Server never receives or stores the vault recovery key itself (only KEK version number stored as metadata)
 
 ## Components and Interfaces
 
@@ -220,12 +276,22 @@ This separation provides:
 - HKDF for deriving multiple keys from vault master key
 - Random nonce generation for each encryption operation
 - Authenticated encryption to prevent tampering
+- **Key Commitment**: ChaCha20-Poly1305 does not provide key commitment (attacker could potentially find two DEKs decrypting to valid plaintexts)
+- **Key Commitment Risk Assessment**: Low risk in Cortex because attacker needs to replace both ciphertext AND wrapped DEK
+- **Optional Key Binding**: For additional security, compute HMAC(DEK, file_id) and store with wrapped DEK to bind DEK to specific file and prevent key substitution attacks
+- **Error Handling**: Distinguish between failure types when unwrapping DEKs:
+  - CORRUPTED_DEK: Authentication tag verification failed or malformed structure (data corruption)
+  - WRONG_KEK_VERSION: KEK version mismatch during rotation (user should wait and retry)
+  - AUTHENTICATION_FAILED: Generic decryption failure (could be wrong KEK or corruption)
+- **Corrupted DEK Handling**: Allow user to mark file as corrupted, delete it, or report issue for investigation
+- **KEK Version Mismatch Handling**: Inform user that key rotation is in progress and to retry in a few minutes
 
 **Key Management:**
 - **Two-Password Architecture**: Separate account password (for AWS Cognito authentication) and vault password (for data encryption)
 - **Vault Master Key Derivation**: Argon2id(vault_password, vault_salt) → 256-bit vault master key
+- **Envelope Encryption**: Each media file encrypted with unique DEK, DEK wrapped with KEK
 - **Derived Key Generation**: HKDF used to derive multiple keys from vault master key:
-  - Data encryption key (for media file content encryption)
+  - Key Encryption Key (KEK) - for wrapping/unwrapping per-file DEKs
   - Metadata encryption key (for metadata, tags, collections encryption)
   - Share key derivation key (for generating file share keys)
   - Notes encryption key (for note content encryption)
@@ -233,12 +299,14 @@ This separation provides:
   - Events encryption key (for event content encryption)
   - Notification encryption key (for notification payload encryption)
   - Date bucket key (for deterministic date bucket encryption via HMAC)
+- **Per-File DEK Generation**: Each media file gets a unique 256-bit DEK generated using CSPRNG
+- **DEK Wrapping**: DEKs wrapped with KEK using ChaCha20-Poly1305 before storage
 - **Local Key Storage**: Derived keys encrypted with browser-specific key and stored in browser storage only (never transmitted to server)
 - **Vault Recovery Key**: Generated from vault master key, displayed once to user with secure offline storage guidance
 - **Recovery Key Validation**: Enables vault password reset without re-encrypting data
 - **Account Password Management**: Handled separately via AWS Cognito, can be changed without affecting vault encryption
 - **Password Validation**: Enforces minimum 12 characters, complexity requirements (uppercase, lowercase, numbers, special characters), and breach database checking
-- **Key Rotation**: Automatic vault key rotation every 90 days with background re-encryption
+- **Key Rotation**: Automatic vault key rotation every 90 days - only re-wraps DEKs, does not re-encrypt file content
 
 **Content Analysis (Optional):**
 - Local ML model for image/video analysis (e.g., TensorFlow.js for browser)
@@ -250,20 +318,46 @@ This separation provides:
 - Supports any file type, but analysis is optional and file-type specific
 
 **Sharing Module:**
-- Generate unique share keys for individual files (derived from share key derivation key)
-- Create share URLs containing file ID and base64-encoded share key
-- Support optional password protection (double-encrypt share key with password-derived key)
+- All shares require a password (no passwordless sharing)
+- Generate unique random share salt (16 bytes) per share using CSPRNG
+- Derive share encryption key from password + share salt using Argon2id
+- Derive share HMAC key using HKDF with share encryption key, share salt, and context "cortex-share-hmac-v1" (ensures unique HMAC keys per share even with password reuse)
+- Unwrap file's DEK using vault's KEK
+- Wrap DEK with password-derived share encryption key
+- Generate timestamp nonce representing share creation time
+- Compute HMAC-SHA256 over share metadata (shareId, expiration, timestamp nonce) using share HMAC key to prevent tampering and replay attacks
+- Embed password-wrapped DEK, share salt, HMAC, and timestamp nonce in share URL fragment (not stored on server)
+- Server stores only share metadata (expiration, access count) - no keys, no HMAC
+- When accessing share: extract salt, HMAC, and nonce from URL, derive HMAC key, verify HMAC using constant-time comparison
+- Server validates timestamp nonce is within expiration window to prevent replay attacks
 - Handle time-limited expiration for shares
-- Enable share revocation
-- Anonymous access to shared files (no authentication required)
+- Enable share revocation by server blocking access
+- File content never re-uploaded for sharing (same S3 object used)
+- Validate share password entropy using zxcvbn (minimum 80 bits estimated entropy)
+- Client-side exponential backoff after 3 failed attempts (UX improvement, not security)
 
 **Key Rotation Module:**
 - Monitor key age and trigger rotation after 90 days
-- Generate new derived keys from vault master key using updated HKDF context
-- Re-encrypt vault data in background with new keys
-- Maintain dual-key access during transition period
+- Maintain rotation state machine: NOT_STARTED, IN_PROGRESS, PAUSED, COMPLETED, FAILED
+- Generate new KEK from vault master key using updated HKDF context with incremented version
+- Store rotation progress in IndexedDB: vault ID, old KEK version, new KEK version, last processed item cursor (sort key)
+- Resume from checkpoint on browser crash or network failure by validating both KEKs accessible
+- Provide rollback option for unrecoverable errors to mark rotation as failed and continue with old KEK
+- Auto-pause rotation if not completed within 7 days and prompt user to resume or rollback
+- Download only wrapped DEKs from server (not file content)
+- Process DEKs in configurable batches (recommended 100-500 per batch)
+- Monitor browser heap memory usage and auto-pause if exceeds 80% of available heap
+- Clear processed DEK buffers immediately after upload to manage memory
+- Retry failed batches with exponential backoff (max 3 attempts), then pause and prompt user
+- Unwrap each DEK with old KEK, re-wrap with new KEK
+- Upload re-wrapped DEKs to server
+- Maintain dual-KEK access during transition period (check DEK version to select KEK)
 - Update local encrypted key storage upon completion
+- Securely zeroize old KEK from memory after completion
 - Minimize user disruption during rotation process
+- Support pausing and resuming rotation for large vaults with progress stored in IndexedDB
+- Block share creation during rotation (shares must use new KEK only)
+- New uploads use new KEK; in-progress downloads use KEK matching file's DEK version
 
 ### 2. API Gateway
 
@@ -410,6 +504,8 @@ WebSocket /v1/sync                  - Real-time sync connection
     - version (number) - for conflict resolution
     - sizeBytes (number, optional) - for media items
     - s3Key (string, optional) - for media items with large content
+    - wrappedDek (binary) - DEK wrapped with KEK (required for media items)
+    - dekVersion (number) - version of DEK wrapping format
   - GSI1 (Type-based queries): `PK: VAULT#{vaultId}#TYPE#{itemType}, SK: ITEM#{itemId}`
   - GSI2 (Date-based queries): `PK: VAULT#{vaultId}#TYPE#{itemType}#DATE#{timeBucket}, SK: ITEM#{itemId}`
   - GSI3 (Tag search): `PK: VAULT#{vaultId}#TAG#{encryptedTag}, SK: ITEM#{itemId}`
@@ -428,7 +524,7 @@ WebSocket /v1/sync                  - Real-time sync connection
     - encryptedExactTime (binary) - exact notification time
     - timeBucket (string) - plaintext 15-min bucket (e.g., "2026-01-15T14:00")
     - encryptedDeviceTokens (list<binary>) - for push notifications
-    - status (enum: PENDING, SENT, CANCELLED)
+    - status (enum: PENDING, SENT, CANCELLED, RETRY_1, RETRY_2, RETRY_3, DEAD_LETTER)
     - createdAt (number)
     - sentAt (number, optional)
   - GSI1 (Global notification processing): `PK: STATUS#{status}, SK: TIMEBUCKET#{timeBucket}`
@@ -436,11 +532,14 @@ WebSocket /v1/sync                  - Real-time sync connection
 **Additional Tables:**
 - **Users Table** (`cortex-{env}-users`): `PK: USER#{userId}, SK: PROFILE`
 - **Vaults Table** (`cortex-{env}-vaults`): `PK: USER#{userId}, SK: VAULT#{vaultId}`
+  - Attributes: vaultId, userId, vaultSalt (binary, non-secret), currentKekVersion (number), rotationState (enum: IDLE, IN_PROGRESS), rotationLockedAt (number, optional, Unix epoch), createdAt, updatedAt
+  - Note: currentKekVersion stored as non-secret metadata to support vault recovery key compatibility with rotated keys
+  - Note: rotationState and rotationLockedAt used for concurrent rotation prevention (optimistic locking via conditional writes)
 - **Account Recovery Table** (`cortex-{env}-recovery`): `PK: USER#{userId}, SK: RECOVERY#{codeHash}`
 - **Shares Table** (`cortex-{env}-shares`) - Anonymous access, security isolated: `PK: SHARE#{shareId}, SK: METADATA`
 - **WebSocket Connections Table** (`cortex-{env}-connections`) - Real-time sync: `PK: CONNECTION#{connectionId}, SK: METADATA`
   - Attributes: connectionId, userId, vaultId, connectedAt, lastPingAt
-  - GSI1: `PK: VAULT#{vaultId}, SK: CONNECTION#{connectionId}` (for broadcasting to all vault connections)
+  - GSI1: `PK: VAULT#{vaultId}, SK: CONNECTION#{connectionId}` (for broadcasting to all vault connections and enforcing per-vault connection limit of 10)
 
 ### 5. S3 Bucket Structure
 
@@ -620,22 +719,80 @@ interface Collection {
 interface VaultKeys {
   vaultMasterKey: Uint8Array; // 256-bit key derived from vault password using Argon2id
   
-  // Existing keys
-  dataEncryptionKey: Uint8Array; // derived from master key via HKDF
+  // Key Encryption Key for envelope encryption
+  keyEncryptionKey: Uint8Array; // derived from master key via HKDF (wraps/unwraps DEKs)
+  
+  // Other derived keys
   metadataEncryptionKey: Uint8Array; // derived from master key via HKDF
   shareKeyDerivationKey: Uint8Array; // derived from master key via HKDF
   
-  // NEW keys for productivity features
+  // Keys for productivity features
   notesEncryptionKey: Uint8Array; // derived from master key via HKDF
   tasksEncryptionKey: Uint8Array; // derived from master key via HKDF
   eventsEncryptionKey: Uint8Array; // derived from master key via HKDF
   notificationEncryptionKey: Uint8Array; // derived from master key via HKDF
   dateBucketKey: Uint8Array; // derived from master key via HKDF (for HMAC)
   
+  kekVersion: number; // for KEK rotation tracking
   version: number; // for key rotation
   createdAt: Date;
   lastRotatedAt: Date;
 }
+
+interface WrappedDek {
+  wrappedKey: Uint8Array; // DEK encrypted with KEK using ChaCha20-Poly1305
+  version: number; // DEK wrapping format version
+  createdAt: Date;
+}
+
+/**
+ * DEK Version Management and Deprecation (REQ-32)
+ *
+ * Version States:
+ * - CURRENT (v1): Active version used for all new DEK wrapping
+ * - SUPPORTED (v1): Can be unwrapped for reading existing files
+ * - DEPRECATED: Marked as insecure, migration required, unwrapping refused
+ *
+ * Version Deprecation Policy:
+ * - When a DEK version is deprecated, client maintains list in code
+ * - Deprecated versions refuse unwrapping with error message
+ * - User prompted to run migration tool to re-wrap with current version
+ * - Migration tool: unwrap with old version → re-wrap with current version
+ *
+ * Security Protections:
+ * - Constant-time comparison for authentication tag verification
+ * - Downgrade attack prevention: refuse deprecated/unsupported versions
+ * - Version list maintained in client code, not server-controllable
+ * - Clear user guidance on migration path when deprecated version encountered
+ */
+const SUPPORTED_DEK_VERSIONS = [1]; // Currently supported versions
+const DEPRECATED_DEK_VERSIONS: number[] = []; // Insecure versions, refuse unwrapping
+const CURRENT_DEK_VERSION = 1; // Version used for new wrapping
+
+/**
+ * DEK Version Deployment Strategy (REQ-35)
+ *
+ * New DEK versions follow a two-phase introduction to ensure rollback safety:
+ *
+ * Phase 1 - SUPPORTED only (minimum 30 days):
+ *   - New version added to SUPPORTED_DEK_VERSIONS
+ *   - Client can READ (unwrap) DEKs wrapped with the new version
+ *   - Client continues to WRITE (wrap) new DEKs with the previous CURRENT version
+ *   - This ensures all deployed clients can handle the new version before it becomes active
+ *
+ * Phase 2 - CURRENT (after 30+ days):
+ *   - CURRENT_DEK_VERSION updated to the new version
+ *   - Client now WRITES new DEKs with the new version
+ *   - Old version remains in SUPPORTED_DEK_VERSIONS for backward compatibility
+ *
+ * Rollback Safety:
+ *   - Rolling back from Phase 2 to Phase 1 is safe: clients revert to wrapping with
+ *     the old version, and DEKs already wrapped with the new version remain readable
+ *     because the new version stays in SUPPORTED_DEK_VERSIONS
+ *   - Rolling back from Phase 1 removes the new version from SUPPORTED_DEK_VERSIONS
+ *     only if no DEKs have been wrapped with it (Phase 1 never writes with new version)
+ *   - Data loss is prevented because rollback never removes a version that has wrapped DEKs
+ */
 
 interface LocalKeyStorage {
   encryptedKeys: Uint8Array; // VaultKeys encrypted with device-specific key
@@ -669,6 +826,8 @@ interface StoredItem {
   version: number;
   sizeBytes?: number; // For media
   s3Key?: string; // For media
+  wrappedDek: Uint8Array; // DEK wrapped with KEK (required for media items)
+  dekVersion: number; // Version of DEK wrapping format
 }
 ```
 
@@ -682,9 +841,11 @@ interface StoredNotificationSchedule {
   encryptedExactTime: Uint8Array;
   timeBucket: string; // Plaintext for server queries
   encryptedDeviceTokens: Uint8Array[];
-  status: 'PENDING' | 'SENT' | 'CANCELLED';
+  status: 'PENDING' | 'SENT' | 'CANCELLED' | 'RETRY_1' | 'RETRY_2' | 'RETRY_3' | 'DEAD_LETTER';
   createdAt: number;
   sentAt?: number;
+  failureReason?: string; // set when status is DEAD_LETTER
+  lastAttemptAt?: number; // set on each retry or dead-letter transition
 }
 ```
 
@@ -910,9 +1071,9 @@ Administrators cannot determine:
 
 **Validates: Requirements 23.1**
 
-### Property 22: Vault password change requires data re-encryption
+### Property 22: Vault password change requires DEK re-wrapping
 
-*For any* vault, changing the vault password must result in deriving a new vault master key and re-encrypting all vault data with keys derived from the new master key.
+*For any* vault, changing the vault password must result in deriving a new vault master key and KEK, and re-wrapping all DEKs with the new KEK. File content in S3 must remain unchanged.
 
 **Validates: Requirements 23.3, 23.4**
 
@@ -936,7 +1097,7 @@ Administrators cannot determine:
 
 ### Property 26: Automatic key rotation preserves data access
 
-*For any* vault undergoing automatic key rotation (after 90 days), all previously encrypted data must remain accessible during and after the rotation process, with new data encrypted using the new keys.
+*For any* vault undergoing automatic key rotation (after 90 days), all previously encrypted data must remain accessible during and after the rotation process. Key rotation must only re-wrap DEKs with the new KEK, not re-encrypt file content.
 
 **Validates: Requirements 20.1, 20.2, 20.3, 20.4, 20.5**
 
@@ -973,6 +1134,78 @@ Administrators cannot determine:
 **Design Rationale:** Real-time sync is implemented using WebSocket connections managed by API Gateway and Lambda. When a user modifies an item (create, update, delete), the API handler broadcasts a sync notification to all WebSocket connections for that vault. The notification contains only metadata: item ID, item type, version number, and timestamp. Connected devices receive the notification and fetch the full encrypted item data via REST API. Conflicts are resolved using last-write-wins based on version numbers stored in DynamoDB. Each item has a version field that increments on every update. When a conflict is detected (two devices modified the same item), the React frontend compares version numbers and accepts the higher version. This ensures eventual consistency across all devices while maintaining zero-knowledge architecture (sync notifications never contain encrypted content).
 
 **Validates: Requirements 27.1, 27.2, 27.3, 27.4, 27.5**
+
+### Property 32: Envelope encryption round-trip
+
+*For any* media file content, generating a unique DEK, encrypting the content with the DEK, wrapping the DEK with the KEK, then unwrapping the DEK and decrypting the content must produce the original file content.
+
+**Design Rationale:** Envelope encryption uses a two-layer key hierarchy. Each file gets a unique 256-bit DEK generated using CSPRNG. The file content is encrypted with ChaCha20-Poly1305 using the DEK. The DEK is then wrapped (encrypted) with the vault's KEK using ChaCha20-Poly1305. On download, the wrapped DEK is unwrapped using the KEK, and the file content is decrypted using the unwrapped DEK. This round-trip must be lossless and deterministic for the same inputs.
+
+**Validates: Requirements 28.1, 28.2, 28.3, 29.2, 29.3**
+
+### Property 33: DEK uniqueness
+
+*For any* two distinct media files uploaded to the same vault, their DEKs must be different, ensuring that compromise of one file's DEK does not affect other files.
+
+**Design Rationale:** DEKs are generated using a cryptographically secure random number generator (CSPRNG), not derived from the vault master key. This ensures each file has an independent key. The probability of collision for 256-bit random keys is negligible (2^-128 for birthday attack). This property provides key isolation - if an attacker somehow obtains one DEK, they cannot decrypt other files.
+
+**Validates: Requirements 28.4, 28.5**
+
+### Property 34: Key rotation efficiency
+
+*For any* key rotation operation, only wrapped DEKs must be transferred between client and server, not file content. The total data transferred during rotation must be proportional to the number of files, not the total file size.
+
+**Design Rationale:** With envelope encryption, key rotation only requires re-wrapping DEKs with the new KEK. Each wrapped DEK is approximately 60 bytes (12-byte nonce + 32-byte encrypted DEK + 16-byte auth tag). For a vault with 10,000 files totaling 100GB, key rotation transfers only ~600KB of wrapped DEKs instead of 100GB of file content. This makes key rotation practical for large vaults.
+
+**Validates: Requirements 30.2, 30.4**
+
+### Property 35: Key rotation round-trip
+
+*For any* DEK wrapped with the old KEK, unwrapping with the old KEK and re-wrapping with the new KEK must produce a valid wrapped DEK that can be unwrapped with the new KEK to recover the original DEK.
+
+**Design Rationale:** Key rotation preserves the underlying DEKs - only the wrapping changes. The DEK itself remains constant, so file content in S3 doesn't need to be re-encrypted. After rotation, files can be decrypted using the new KEK to unwrap the DEK, then the DEK to decrypt the content.
+
+**Validates: Requirements 30.1, 30.3, 30.6**
+
+### Property 36: Dual-KEK access during rotation
+
+*For any* vault undergoing key rotation, files must remain accessible using either the old KEK (for not-yet-rotated items) or the new KEK (for already-rotated items) until rotation completes.
+
+**Design Rationale:** During rotation, the client maintains both old and new KEKs. When accessing a file, the client checks the DEK version to determine which KEK to use for unwrapping. This ensures uninterrupted access during the rotation process, which may take time for large vaults.
+
+**Validates: Requirements 30.5**
+
+### Property 37: Share creation round-trip
+
+*For any* media file, creating a share by unwrapping the DEK with the vault's KEK, deriving a share encryption key from the password and salt, and wrapping the DEK with the share encryption key must produce a password-wrapped DEK that allows recipients with the correct password to decrypt the file.
+
+**Design Rationale:** Sharing uses password-based key derivation to wrap the file's DEK. The password-wrapped DEK and salt are embedded in the share URL - no keys are stored on the server. Recipients must know the share password to derive the same share encryption key and unwrap the DEK. This ensures true zero-knowledge sharing where the server never has access to any key material.
+
+**Validates: Requirements 31.1, 31.2, 31.4, 31.5**
+
+### Property 38: Share isolation and zero-knowledge
+
+*For any* share created for a media file, no key material (DEK, wrapped DEK, share key, or salt) must be stored on the server. The server must only store share metadata (expiration, access count, revocation status).
+
+**Design Rationale:** True zero-knowledge sharing requires that all cryptographic material be embedded in the share URL. The server stores only non-sensitive metadata needed for access control (expiration, revocation). This ensures that even with full database access, an attacker cannot decrypt shared files without the share URL and password.
+
+**Validates: Requirements 31.3, 31.6**
+
+### Property 39: DEK version compatibility and deprecation protection
+
+*For any* DEK wrapped with a supported (non-deprecated) version, unwrapping must succeed regardless of when the DEK was wrapped, ensuring long-term access to files. *For any* DEK wrapped with a deprecated or unsupported version, unwrapping must fail with a clear error message and migration guidance.
+
+**Design Rationale:** DEK wrapping includes a version identifier to support future algorithm changes. The client maintains a list of SUPPORTED_DEK_VERSIONS and DEPRECATED_DEK_VERSIONS. Supported versions can be unwrapped for backward compatibility. Deprecated versions (due to security vulnerabilities) refuse unwrapping and prompt users to migrate. This prevents downgrade attacks where an attacker forces use of an old, vulnerable wrapping algorithm. Users are provided a migration path to re-wrap DEKs with the current secure version.
+
+**Validates: Requirements 32.1, 32.2, 32.3, 32.5, 32.6, 32.7, 32.8, 32.9**
+
+### Property 40: Batch rotation with retry
+
+*For any* key rotation operation processing DEKs in batches, if a batch fails, retrying the batch must eventually succeed (assuming transient failures), and the final state must have all DEKs re-wrapped with the new KEK.
+
+**Design Rationale:** Large vaults may have thousands of files. Batch processing with retry logic ensures rotation completes reliably even with transient network or server errors. Progress is tracked so rotation can be paused and resumed without re-processing already-rotated items.
+
+**Validates: Requirements 33.1, 33.2, 33.4, 33.5, 33.6**
 
 ## Non-Functional Requirements Design
 
@@ -1017,6 +1250,17 @@ Administrators cannot determine:
 - S3 server-side encryption (AES-256) as additional defense layer
 - Presigned URLs with 15-minute expiration
 - HTTPS-only bucket policy
+
+**Session Management and Key Zeroization (REQ-34):**
+- **Logout Key Clearing**: On user logout, all key material (vault master key, KEK, all derived keys, cached DEKs) is overwritten with cryptographically random data before dereferencing
+- **Double Overwrite**: Key buffers are overwritten twice (first with zeros, then with random data) to reduce memory recovery risk
+- **Storage Cleanup**: Logout clears all encrypted keys from browser localStorage, sessionStorage, and IndexedDB
+- **Session Timeout**: Automatic logout after inactivity performs same key zeroization as explicit logout
+- **Unexpected Termination**: beforeunload event handlers attempt best-effort key zeroization on tab/window close
+- **TypedArray Usage**: All key material stored in TypedArray (Uint8Array) to enable explicit zeroing via `.fill(0)` and `.fill(crypto.getRandomValues())`
+- **Web Crypto API Preference**: Non-extractable CryptoKey objects used where possible to minimize JavaScript-accessible key material
+- **JavaScript Limitations**: Documentation acknowledges that complete memory clearing cannot be guaranteed due to garbage collection and browser memory management
+- **Constant-Time Operations**: All cryptographic comparisons (HMACs, authentication tags) use constant-time comparison to prevent timing attacks
 
 ### Scalability Design
 
@@ -1083,6 +1327,18 @@ Administrators cannot determine:
 ## Error Handling
 
 ### React Frontend Error Handling
+
+**Local Storage Recovery:**
+- On app load, the React frontend validates integrity of stored keys using a checksum (HMAC over the encrypted key blob using a key derived from the vault password)
+- If the checksum fails or IndexedDB/localStorage is corrupted or unavailable:
+  1. React frontend detects corruption (checksum mismatch, read error, or missing entries)
+  2. React frontend prompts the user to re-enter their vault password
+  3. React frontend fetches the vault salt from the Cortex System
+  4. React frontend re-derives the vault master key from the vault password + vault salt using Argon2id
+  5. React frontend re-derives all keys (KEK, metadata key, etc.) from the vault master key using HKDF
+  6. React frontend stores the re-derived keys in local storage with a fresh integrity checksum
+  7. Normal operation resumes
+- This flow is identical to the new-device key derivation flow (REQ-14.4, REQ-14.5) and requires server connectivity to fetch the vault salt
 
 **Encryption Failures:**
 - Key derivation failures: Prompt user to re-enter password
@@ -1553,7 +1809,7 @@ These parameters provide strong protection against brute-force attacks while rem
 - Input key material: Vault master key (256 bits)
 - Salt: None (optional, not used)
 - Info contexts for key derivation:
-  - "cortex-data-encryption-v1" → Data encryption key (media content)
+  - "cortex-kek-v1" → Key Encryption Key (KEK - wraps per-file DEKs)
   - "cortex-metadata-encryption-v1" → Metadata encryption key (common metadata)
   - "cortex-share-key-derivation-v1" → Share key derivation key (file sharing)
   - "cortex-notes-encryption-v1" → Notes encryption key (note content)
@@ -1563,13 +1819,33 @@ These parameters provide strong protection against brute-force attacks while rem
   - "cortex-date-bucket-v1" → Date bucket key (deterministic date bucket HMAC)
 - Output: 32 bytes per derived key (256 bits)
 
+**Per-File DEK Generation:**
+- Each media file gets a unique 256-bit DEK
+- DEK generated using cryptographically secure random number generator (CSPRNG)
+- DEK never derived from vault master key (ensures key isolation)
+- DEK wrapped with KEK using ChaCha20-Poly1305 before storage
+- Wrapped DEK format (65 bytes total, big-endian):
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 1 byte | Version | Format version (0x01) |
+| 1 | 4 bytes | Timestamp | uint32_be, Unix epoch seconds (wrap creation time) |
+| 5 | 12 bytes | Nonce | Random nonce for ChaCha20-Poly1305 |
+| 17 | 32 bytes | Encrypted DEK | DEK encrypted with KEK |
+| 49 | 16 bytes | Auth Tag | ChaCha20-Poly1305 authentication tag |
+
+  The version byte enables forward-compatible format changes. The timestamp allows auditing when a DEK was wrapped. All multi-byte integers use big-endian (network byte order).
+
 ### Password Validation
 
 **Strength Requirements:**
-- Minimum length: 12 characters
-- Must contain: uppercase letter, lowercase letter, number, special character
+- Minimum length: 12 characters for account passwords, 16 characters for share passwords
+- **Entropy-Based Validation**: Use zxcvbn or similar entropy estimator to calculate estimated entropy
+- **Minimum Entropy**: Require minimum estimated entropy of 80 bits (for account, vault, and share passwords)
+- Character class requirements (uppercase, lowercase, numbers, special characters) are secondary to entropy calculation
+- Provide clear user feedback: "Password strength: X bits (minimum 80 required)" with actionable guidance
 - No maximum length restriction
-- Applied to both account passwords and vault passwords
+- Applied to account passwords, vault passwords, and share passwords
 
 **Breach Detection:**
 - Integration with Have I Been Pwned API (k-anonymity model)
@@ -1652,58 +1928,221 @@ async function validatePassword(password: string): Promise<ValidationResult> {
 - Manual: User-initiated via settings
 - Client-side monitoring of key age
 
-**Rotation Process:**
-1. Generate new HKDF context parameters (increment version)
-2. Derive new data and metadata encryption keys from vault master key
-3. Create background re-encryption queue with all vault files
-4. Re-encrypt files in batches (configurable batch size)
-5. Upload re-encrypted files to S3 with new keys
-6. Update DynamoDB metadata with new key version
-7. Maintain old keys for reading during transition
-8. Delete old encrypted versions after successful re-encryption
-9. Update local key storage with new key version
+**Rotation Process (Envelope Encryption - Efficient):**
+1. Generate new KEK from vault master key using HKDF with incremented version context (e.g., "cortex-kek-v2")
+2. Query server for all wrapped DEKs in the vault (small metadata, not file content)
+3. Process DEKs in batches (configurable batch size, default 100):
+   a. Download batch of wrapped DEKs
+   b. Unwrap each DEK with old KEK
+   c. Re-wrap each DEK with new KEK
+   d. Upload re-wrapped DEKs to server
+   e. Report progress to UI
+4. Update DynamoDB metadata with new KEK version for each item
+5. Maintain old KEK for reading during transition
+6. Update local key storage with new KEK version
+7. Purge old KEK after all DEKs successfully re-wrapped
 
-**Dual-Key Access Period:**
-- During rotation, client maintains both old and new keys
-- Old keys used for reading existing data
-- New keys used for encrypting new data
-- Transition completes when all data re-encrypted
-- Old keys purged after successful completion
+**Concurrent Rotation Prevention:**
+- Only one key rotation can be in progress per vault at a time
+- When rotation is initiated, the client acquires a rotation lock by performing a conditional write to the DynamoDB Vaults table:
+  - ConditionExpression: `rotationState = :idle OR (rotationState = :inProgress AND rotationLockedAt < :expiry)`
+  - Sets `rotationState = IN_PROGRESS` and `rotationLockedAt = now()`
+- If a second device attempts rotation while one is in progress, the conditional write fails and the user is informed that rotation is already in progress on another device
+- Rotation locks auto-expire after 7 days (rotationLockedAt + 7 days) to prevent permanent lock-out from crashed clients
+- When rotation completes or is rolled back, the client sets `rotationState = IDLE` and clears `rotationLockedAt`
+
+**Key Rotation Benefits with Envelope Encryption:**
+- **Bandwidth Efficient**: Only download/upload wrapped DEKs (~60 bytes each), not file content
+- **Fast**: Re-wrapping 10,000 DEKs takes seconds, not hours
+- **Resumable**: Can pause and resume rotation for large vaults
+- **No S3 Operations**: File content in S3 remains unchanged
+- **Progress Tracking**: UI shows percentage complete
+
+**Dual-KEK Access Period (REQ-20):**
+- During rotation, client maintains both old and new KEKs
+- **Reading Existing Files**: Client checks DEK version and uses matching KEK for unwrapping
+  - DEKs with old version unwrapped with old KEK
+  - DEKs with new version unwrapped with new KEK
+- **New File Uploads**: All new file uploads during rotation use NEW KEK for wrapping DEKs
+- **In-Progress Downloads**: Downloads that started before rotation complete using the KEK version that matches the file's DEK version
+- **Share Creation**: Share creation is BLOCKED during active rotation
+  - UI displays "Key rotation in progress, please wait to create shares"
+  - Prevents shares from being created with old KEK
+  - Ensures all shares use the new KEK version for consistency
+- **Re-wrapped DEKs**: DEKs that have been re-wrapped use new KEK
+- Transition completes when all DEKs re-wrapped
+- Old KEK securely zeroized and purged after successful completion
+
+**Multipart Upload Handling During Rotation:**
+- When a multipart upload is initiated during key rotation, the React frontend captures the current KEK version at upload initiation time
+- The captured KEK version is stored in the upload session context (in-memory)
+- When the multipart upload completes, the React frontend verifies the captured KEK version is still available before wrapping the DEK
+- If the captured KEK version is no longer available (e.g., due to rotation rollback), the upload is aborted and the user is prompted to retry
+- This prevents a scenario where a DEK is wrapped with a KEK version that has been rolled back, which would make the file inaccessible
+
+**Batch Processing:**
+```typescript
+interface KeyRotationProgress {
+  totalItems: number;
+  processedItems: number;
+  lastProcessedSortKey: string; // cursor-based progress tracking to avoid storing all IDs
+  failedItems: string[]; // item IDs that failed (only failures tracked, not successes)
+  status: 'in_progress' | 'paused' | 'completed' | 'failed';
+  startedAt: Date;
+  lastUpdatedAt: Date;
+}
+
+// Note: Use navigator.storage.estimate() to check available IndexedDB quota
+// before starting rotation. Cursor-based tracking ensures progress state stays
+// small regardless of vault size (avoids storing 1M+ item IDs).
+
+async function rotateKeys(vaultId: string, batchSize: number = 100): Promise<void> {
+  const newKek = deriveKek(vaultMasterKey, newVersion);
+  const oldKek = deriveKek(vaultMasterKey, currentVersion);
+  
+  let nextToken: string | undefined;
+  do {
+    // Fetch batch of wrapped DEKs
+    const batch = await fetchWrappedDeks(vaultId, batchSize, nextToken);
+    
+    // Re-wrap each DEK (idempotent via conditional update)
+    for (const item of batch.items) {
+      const dek = unwrapDek(item.wrappedDek, oldKek);
+      const newWrappedDek = wrapDek(dek, newKek);
+      try {
+        // Conditional update ensures idempotency: only update if dekVersion still matches old version
+        await updateWrappedDek(item.itemId, newWrappedDek, newVersion, {
+          conditionExpression: 'dekVersion = :oldVersion',
+          expressionValues: { ':oldVersion': currentVersion }
+        });
+      } catch (e) {
+        if (e.code === 'ConditionalCheckFailedException') {
+          // DEK already re-wrapped (e.g., by a retry), skip and continue
+          continue;
+        }
+        throw e;
+      }
+    }
+    
+    nextToken = batch.nextToken;
+    reportProgress(batch.items.length);
+  } while (nextToken);
+  
+  // Update local key storage
+  updateLocalKeyVersion(newVersion);
+}
+```
 
 ### File Sharing Implementation
 
-**Share Key Generation:**
-- Unique 256-bit share key per file
-- Derived from share key derivation key + file ID using HKDF
-- Share key encrypts file-specific metadata for recipient
-- Share key embedded in share URL (base64-encoded)
+**Share Design Principle:** No keys or wrapped keys are ever stored on the server. All key material is embedded in the share URL, ensuring true zero-knowledge sharing.
+
+**Password-Required Sharing:**
+- All shares require a password (no anonymous/passwordless shares)
+- Password is used to derive a share encryption key via Argon2id
+- The file's DEK is wrapped with the password-derived key
+- Password-wrapped DEK is embedded in the share URL (not stored on server)
+
+**Share Key Derivation:**
+- User provides share password
+- Generate random share salt (16 bytes)
+- Derive share encryption key: Argon2id(password, share_salt) → 256-bit key
+- Share salt is embedded in URL (non-secret, needed for key derivation)
+
+**Share Creation Flow:**
+1. User initiates share for a media file and provides share password
+2. React frontend retrieves wrapped DEK from server
+3. React frontend unwraps DEK using vault's KEK
+4. React frontend generates random share salt
+5. React frontend derives share encryption key from password + salt using Argon2id
+6. React frontend wraps DEK with share encryption key (password-wrapped DEK)
+7. React frontend derives HMAC key from share password using HKDF with context "cortex-share-hmac-v1"
+8. React frontend computes HMAC-SHA256 over share metadata (shareId, expiration timestamp) using HMAC key
+9. React frontend creates share URL with embedded password-wrapped DEK, salt, and HMAC
+10. Server stores only share metadata (expiration, access count) - NO keys or wrapped keys
 
 **Share URL Format:**
 ```
-https://cortex.example.com/share/{shareId}#{base64(shareKey)}
+https://cortex.example.com/share/{shareId}#{base64(salt)}:{base64(passwordWrappedDek)}:{base64(hmac)}
 ```
-- Fragment (#) ensures share key never sent to server
-- Client extracts share key from URL fragment
-- Share ID used to fetch share metadata from server
+- Fragment (#) ensures key material never sent to server
+- Salt needed for recipient to derive same share encryption key
+- Password-wrapped DEK can only be unwrapped with correct password
+- HMAC authenticates share metadata (shareId, expiration) to prevent tampering
+- Share ID used to fetch share metadata (expiration, file location) from server
 
-**Password-Protected Shares:**
-- User provides additional password for share
-- Password-derived key (Argon2id) encrypts the share key
-- Encrypted share key stored in URL instead of plaintext share key
-- Recipient must enter password to decrypt share key
-- Password never transmitted to server
+**Share Access Flow:**
+1. Recipient opens share URL
+2. React frontend extracts salt, password-wrapped DEK, and HMAC from URL fragment
+3. React frontend prompts recipient for share password
+4. React frontend derives share encryption key from password + salt using Argon2id
+5. React frontend derives HMAC key from share password using HKDF with context "cortex-share-hmac-v1"
+6. React frontend fetches share metadata (shareId, expiration) from server
+7. React frontend computes HMAC-SHA256 over received share metadata using HMAC key
+8. React frontend verifies computed HMAC matches HMAC from URL using constant-time comparison
+9. If HMAC verification fails, display error indicating share metadata has been tampered with
+10. React frontend unwraps DEK using share encryption key
+11. If unwrapping fails (wrong password), display error and prompt again (with rate limiting)
+12. React frontend fetches file metadata and presigned S3 URL from server
+13. React frontend downloads encrypted file from S3
+14. React frontend decrypts file using unwrapped DEK
+15. React frontend overwrites DEK buffer with zeros before dereferencing
 
-**Share Expiration:**
-- Server stores expiration timestamp
-- Server validates expiration on each access attempt
-- Expired shares return 403 error
-- Client displays expiration time to share creator
+**Server-Side Share Storage (Minimal):**
+```typescript
+interface StoredShare {
+  shareId: string;
+  itemId: string;
+  vaultId: string;
+  userId: string;
+  createdAt: number;
+  expiresAt?: number;
+  accessCount: number;
+  lastAccessedAt?: number;
+  isRevoked: boolean;
+  // NO keys, NO wrapped keys, NO salt stored on server
+}
+```
+
+**Benefits of Password-Required Sharing:**
+- **True Zero-Knowledge**: Server never sees any key material
+- **Password Protection**: Only recipients with password can access
+- **No Server Key Storage**: All cryptographic material in URL
+- **Revocation**: Server can block access by marking share as revoked
+- **Expiration**: Server enforces time-based expiration
 
 **Share Revocation:**
 - Owner can revoke share at any time
 - Server marks share as revoked in database
-- Revoked shares return 403 error
-- Share key remains in URL but server blocks access
+- Server rejects all access attempts for revoked shares
+- URL still contains key material but server blocks file access
+- Original file and vault-wrapped DEK remain unaffected
+
+**Share Expiration (Optional):**
+- Expiration is optional - shares can be created without expiration
+- If set, server stores expiration timestamp
+- Server validates expiration on each access attempt
+- Expired shares return 403 error
+- Client displays expiration time to share creator (if set)
+
+**Password Attempt Rate Limiting:**
+- **Server-side rate limiting** (primary defense): Maximum 5 password attempts per IP address per share ID per hour
+- Server returns HTTP 429 (Too Many Requests) with Retry-After header when limit exceeded
+- Server logs rate limit violations for security monitoring
+- **Client-side rate limiting** (additional layer): Maximum 5 password attempts per minute per share
+- Exponential backoff after 3 failed attempts (1s, 2s, 4s, 8s...)
+- Generic error messages to prevent share enumeration ("Invalid password" not "Share not found")
+
+**Security Considerations:**
+- Share password **requires** minimum 16+ characters with uppercase, lowercase, numbers, and special characters (minimum 80 bits entropy)
+- React frontend validates password entropy before allowing share creation
+- **Entropy validation timing**: Password entropy is validated at share creation time only. When recipients access a share, the password is used to derive the share encryption key without re-validating entropy. This prevents zxcvbn dictionary updates from retroactively blocking access to previously-created shares. The entropy check is a creation-time gate, not an access-time gate.
+- Argon2id parameters for share key derivation: 64MB memory, 3 iterations, 4 parallelism
+- HMAC-SHA256 over share metadata (shareId, expiration) prevents metadata tampering attacks
+- Share URLs should be transmitted securely (HTTPS, encrypted messaging)
+- Recipients should be warned not to share URLs publicly
+- Alternative share access method: Enter share ID and password separately (for truncated URLs)
+- Share URLs should NOT be shortened using URL shorteners (leaks share existence to third parties)
 
 ### Push Notification Implementation
 
@@ -1723,11 +2162,35 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 - Lambda marks schedule as SENT with sentAt timestamp
 - React frontend receives push notification, decrypts payload, displays to user
 
+**Notification Delivery Failure Handling:**
+- **Transient failures** (network errors, SNS throttling, temporary service unavailability):
+  - Retry up to 3 times with exponential backoff: 5 minutes, 15 minutes, 45 minutes
+  - Schedule status transitions: PENDING → RETRY_1 → RETRY_2 → RETRY_3 → DEAD_LETTER
+  - Each retry is triggered by the next EventBridge invocation that finds the schedule at the appropriate retry time
+- **Permanent failures** (SNS EndpointDisabled, InvalidParameter, expired device tokens):
+  - Do NOT retry - mark the device token as invalid immediately
+  - Remove invalid device token from future notification deliveries
+  - Log the permanent failure for monitoring
+- **Dead-letter handling**:
+  - After 3 failed retry attempts, move notification to DEAD_LETTER status
+  - Store failure reason and last attempt timestamp
+  - On next app access, the React frontend queries for dead-letter notifications and displays a summary to the user (e.g., "3 reminders could not be delivered while you were offline")
+- **Failure classification**: Lambda notification handler inspects SNS response codes to distinguish transient from permanent failures before deciding retry strategy
+
 **Device Token Management:**
 - React frontend registers device token (encrypted with metadata encryption key) via API
 - Multiple device tokens per user supported (phone, tablet, desktop)
 - Device tokens stored encrypted in Notification Schedules table
 - React frontend can unregister device tokens when no longer needed
+
+**Recurring Event Notification Scheduling:**
+- When a user creates a recurring task or event with a reminder, the React frontend expands the recurrence rule into individual notification schedules using a lazy expansion strategy
+- **90-day expansion window**: The React frontend generates individual notification schedules for the next 90 days from the current date
+- **7-day refresh threshold**: When the current date is within 7 days of the end of the pre-generated window, the React frontend generates the next batch of notification schedules (extending another 90 days)
+- **Modification handling**: When a recurring event is modified, the React frontend cancels all future notification schedules (status = CANCELLED) and regenerates them based on the updated recurrence rule
+- **Deletion handling**: When a recurring event is deleted, the React frontend cancels all associated future notification schedules
+- Each expanded notification schedule is a standard entry in the Notification Schedules table with its own encrypted payload and time bucket
+- The recurrence rule itself is stored as part of the encrypted item content (task or event), not in the notification schedule
 
 **Privacy Guarantees:**
 - Server never sees plaintext notification content
@@ -1744,6 +2207,10 @@ https://cortex.example.com/share/{shareId}#{base64(shareKey)}
 - Connection includes: connectionId, userId, vaultId, connectedAt, lastPingAt
 - React frontend sends periodic ping messages to keep connection alive
 - Server responds with pong messages
+- **Connection limits**: Maximum 10 concurrent WebSocket connections per vault
+  - On new connection, Lambda queries the Connections table GSI for the vault's active connections
+  - If the count reaches 10, the oldest connection (by connectedAt) is gracefully terminated with a close frame indicating the reason
+  - Excessive connection attempts (>20 per hour per vault) are logged for security monitoring
 
 **Sync Notification Broadcasting:**
 - When item is modified (create, update, delete), API handler identifies affected vault

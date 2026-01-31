@@ -85,6 +85,19 @@ This document is intended for:
 - **Device Private Key**: A private key stored securely on a device for decryption
 - **Key Rotation**: The periodic process of generating new encryption keys and re-encrypting data
 - **Recovery Code**: A backup code provided at signup for account recovery
+- **Data Encryption Key (DEK)**: A unique 256-bit symmetric key generated for each file, used to encrypt the file content
+- **Key Encryption Key (KEK)**: The vault's key used to encrypt (wrap) DEKs, derived from the vault master key via HKDF
+- **Wrapped DEK**: A DEK that has been encrypted with a KEK for secure storage
+- **Envelope Encryption**: A pattern where data is encrypted with a DEK, and the DEK is encrypted with a KEK
+- **Key Wrapping**: The process of encrypting a DEK with a KEK
+- **Key Unwrapping**: The process of decrypting a wrapped DEK using the KEK
+- **Share-Wrapped DEK**: A DEK encrypted with a share key for sharing files with others
+- **DEK Metadata**: Information stored alongside the wrapped DEK including version, algorithm, and creation timestamp
+- **Share Encryption Key**: A key derived from the share password using Argon2id, used to wrap the DEK for sharing
+- **URL Fragment**: The portion of a URL after the # symbol, which is never sent to the server and remains client-side only
+- **Share Salt**: A random value generated per share, used with the share password to derive the share encryption key
+- **File Content**: The binary data stored in S3, applicable only to media items
+- **Inline Content**: Encrypted content stored directly in DynamoDB, applicable to notes, tasks, and events
 
 ## 3. Functional Requirements
 
@@ -96,11 +109,12 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user initiates a media upload, THE React Frontend SHALL encrypt the file using ChaCha20-Poly1305 with the data encryption key before transmission
-2. WHEN encrypted data is transmitted, THE Cortex System SHALL store the encrypted data in the S3 Bucket without decryption
-3. WHEN data is stored, THE Cortex System SHALL use S3 server-side encryption for additional security layer
-4. WHEN a user uploads a media file, THE Cortex System SHALL generate a presigned URL for direct S3 upload to optimize transfer speed
-5. WHERE a media file exceeds 5MB, THE Cortex System SHALL support S3 multipart upload for efficient large file handling
+1. WHEN a user initiates a media upload, THE React Frontend SHALL generate a unique DEK and encrypt the file using ChaCha20-Poly1305 with the DEK before transmission
+2. WHEN the file is encrypted, THE React Frontend SHALL wrap the DEK using ChaCha20-Poly1305 with the vault's KEK
+3. WHEN encrypted data is transmitted, THE Cortex System SHALL store the encrypted data in the S3 Bucket without decryption
+4. WHEN data is stored, THE Cortex System SHALL use S3 server-side encryption for additional security layer
+5. WHEN a user uploads a media file, THE Cortex System SHALL generate a presigned URL for direct S3 upload to optimize transfer speed
+6. WHERE a media file exceeds 5MB, THE Cortex System SHALL support S3 multipart upload for efficient large file handling
 
 ### 3.2 Metadata Management
 
@@ -139,8 +153,8 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user requests a media item, THE Cortex System SHALL generate a presigned URL for direct S3 download
-2. WHEN a user downloads encrypted data, THE React Frontend SHALL decrypt the content using the vault's appropriate encryption key
+1. WHEN a user requests a media item, THE Cortex System SHALL generate a presigned URL for direct S3 download and return the wrapped DEK
+2. WHEN a user downloads encrypted data, THE React Frontend SHALL unwrap the DEK using the vault's KEK and decrypt the content
 3. WHEN generating download URLs, THE Cortex System SHALL verify user ownership of the requested item
 4. WHEN a download request is unauthorized, THE Cortex System SHALL reject the request and return an authorization error
 5. THE Cortex System SHALL set presigned URL expiration to 15 minutes to limit exposure window
@@ -281,11 +295,14 @@ This document is intended for:
 #### Acceptance Criteria
 
 1. WHEN a user first creates a vault, THE React Frontend SHALL derive a vault master key from the vault password and vault salt using Argon2id with 64MB memory, 3 iterations, and 4 parallelism
-2. WHEN a vault master key is derived, THE React Frontend SHALL use HKDF to derive data encryption key and metadata encryption key from the vault master key
+2. WHEN a vault master key is derived, THE React Frontend SHALL use HKDF to derive KEK, metadata encryption key, and other derived keys from the vault master key
 3. WHEN derived keys are generated, THE React Frontend SHALL store them encrypted locally in the browser using browser-specific encryption
 4. WHEN a user accesses the vault from a new device, THE React Frontend SHALL prompt for the vault password and retrieve the vault salt from the Cortex System
-5. WHEN the vault salt is retrieved, THE React Frontend SHALL derive the vault master key and all derived keys locally using the vault password
-6. THE Cortex System SHALL never receive, store, or have access to the vault master key or any derived keys
+5. WHEN the vault salt is retrieved, THE React Frontend SHALL derive the vault master key, KEK, and all derived keys locally using the vault password
+6. THE Cortex System SHALL never receive, store, or have access to the vault master key, KEK, or any derived keys
+7. WHEN encrypted local key storage is corrupted or unavailable, THE React Frontend SHALL prompt the user to re-enter their vault password
+8. WHEN re-entering vault password after storage corruption, THE React Frontend SHALL fetch the vault salt from the Cortex System and re-derive all keys from scratch
+9. THE React Frontend SHALL validate integrity of stored keys on app load using a checksum or MAC
 
 ### 3.15 Vault Recovery
 
@@ -295,11 +312,17 @@ This document is intended for:
 
 #### Acceptance Criteria
 
-1. WHEN a user creates a vault, THE React Frontend SHALL generate a vault recovery key derived from the vault master key
-2. WHEN a vault recovery key is generated, THE React Frontend SHALL display it to the user once for secure offline storage
-3. WHEN a user forgets their vault password, THE React Frontend SHALL allow vault access using the vault recovery key to re-derive the vault master key
-4. WHEN vault recovery key is used, THE React Frontend SHALL allow the user to set a new vault password
-5. THE Cortex System SHALL never receive, store, or have access to the vault recovery key
+1. WHEN a user creates a vault, THE React Frontend SHALL generate a vault recovery key derived from the vault master key using BIP39 mnemonic encoding (24 words)
+2. WHEN a vault recovery key is generated, THE React Frontend SHALL display it to the user once for secure offline storage with clear instructions
+3. WHEN a user stores a vault recovery key, THE Cortex System SHALL store the current KEK version number as non-secret metadata in the DynamoDB Vaults table
+4. WHEN a user forgets their vault password, THE React Frontend SHALL allow vault access using the vault recovery key to re-derive the vault master key
+5. WHEN recovering a vault with a recovery key, THE React Frontend SHALL fetch the current KEK version from the DynamoDB Vaults table
+6. WHEN the KEK version is retrieved, THE React Frontend SHALL derive the appropriate versioned KEK from the recovered vault master key using HKDF with the correct version context
+7. IF the vault has undergone key rotation since the recovery key was created, THE React Frontend SHALL derive the latest KEK version to access files that have been re-wrapped with newer KEKs
+8. WHEN vault recovery key is used successfully, THE React Frontend SHALL allow the user to set a new vault password while maintaining the same vault master key (no re-encryption needed)
+9. THE Cortex System SHALL never receive, store, or have access to the vault recovery key itself (only the KEK version number is stored as metadata)
+10. THE React Frontend SHALL document that recovery keys enable vault password reset without re-encrypting data, and that the KEK version ensures compatibility with rotated keys
+11. IF the server is unavailable during recovery, THE React Frontend SHALL attempt to derive KEK versions incrementally (v1, v2, v3...) until decryption succeeds, enabling degraded offline recovery
 
 ### 3.16 Administrator Data Privacy
 
@@ -319,43 +342,85 @@ This document is intended for:
 
 **Requirement ID:** REQ-17
 
-**User Story:** As a user, I want to share specific items with others via public links, so that I can give access to selected content without compromising my entire vault.
+**User Story:** As a user, I want to share specific items with others via password-protected links, so that I can give access to selected content without compromising my entire vault.
 
 #### Acceptance Criteria
 
-1. WHEN a user initiates item sharing, THE React Frontend SHALL generate a unique share key for the specific item
-2. WHEN a share key is generated, THE React Frontend SHALL create a share URL containing the item identifier and base64-encoded share key
-3. WHEN creating a public share, THE Cortex System SHALL store only the item identifier and share metadata without access to the share key
-4. WHEN a recipient accesses a share URL, THE React Frontend SHALL extract the share key from the URL and use it to decrypt the item locally
-5. THE Cortex System SHALL allow anonymous access to items via share identifier without requiring authentication
+1. WHEN a user initiates media item sharing, THE React Frontend SHALL require a share password (passwordless sharing is not supported)
+2. WHEN a share password is provided, THE React Frontend SHALL generate a unique random share salt (16 bytes) using a cryptographically secure random number generator
+3. WHEN a share salt is generated, THE React Frontend SHALL derive a share encryption key using Argon2id with the share salt for wrapping the DEK
+4. WHEN deriving share HMAC key, THE React Frontend SHALL use HKDF with the share encryption key, the same share salt, and context "cortex-share-hmac-v1" to ensure unique HMAC keys per share even with password reuse
+5. WHEN a share encryption key is derived, THE React Frontend SHALL unwrap the file's DEK using the vault's KEK and wrap it with the share encryption key
+6. WHEN creating a share, THE React Frontend SHALL generate a timestamp nonce representing the share creation time
+7. WHEN computing share metadata HMAC, THE React Frontend SHALL include shareId, expiration timestamp, and creation timestamp nonce in the HMAC computation to prevent replay attacks
+8. WHEN creating a share, THE React Frontend SHALL embed the password-wrapped DEK, share salt, HMAC of share metadata, and timestamp nonce in the share URL fragment (after the # symbol, never sent to server)
+9. WHEN creating a share, THE Cortex System SHALL store only share metadata (share ID, file reference, creation time, optional expiration, access count) without any key material
+10. WHEN a recipient accesses a share URL, THE React Frontend SHALL extract the wrapped DEK, salt, HMAC, and timestamp nonce from the URL fragment
+11. WHEN a recipient accesses a share URL, THE React Frontend SHALL derive the share HMAC key using HKDF with the share encryption key, the share salt, and context "cortex-share-hmac-v1"
+12. WHEN verifying share metadata HMAC, THE React Frontend SHALL recompute the HMAC over the server-provided metadata (shareId, expiration) plus the timestamp nonce from the URL fragment
+13. WHEN verifying share metadata HMAC, THE React Frontend SHALL use constant-time comparison to prevent timing attacks
+14. IF HMAC verification fails, THE React Frontend SHALL display an error indicating share metadata tampering and refuse to proceed with decryption
+15. WHEN accessing a share, THE Cortex System SHALL validate that the timestamp nonce is within the share expiration window to prevent attackers from extending share lifetime
+16. WHEN a recipient provides the share password, THE React Frontend SHALL derive the share encryption key using Argon2id with the salt from the URL fragment
+17. WHEN the share encryption key is derived, THE React Frontend SHALL unwrap the DEK and decrypt the item locally
+18. THE Cortex System SHALL never receive, store, or have access to the share password, share encryption key, wrapped DEK, salt, or HMAC key
+19. THE React Frontend SHALL warn users that share URLs should not be shortened using URL shorteners (which leak share existence to third parties)
+20. THE React Frontend SHALL support an alternative share access method where users enter share ID and password separately (for cases where full URL is truncated)
+21. THE system documentation SHALL note that share metadata replay protection relies on server-side expiration checking as the source of truth, with timestamp nonces providing additional defense against replay attacks
 
 ### 3.18 Share Permission Control
 
 **Requirement ID:** REQ-18
 
-**User Story:** As a user, I want to control sharing permissions and expiration, so that I can limit access to my shared content.
+**User Story:** As a user, I want to control sharing permissions and optionally set expiration, so that I can limit access to my shared content.
 
 #### Acceptance Criteria
 
-1. WHEN creating a share, THE React Frontend SHALL allow the user to specify time-limited expiration
-2. WHEN a share has expired, THE Cortex System SHALL reject access requests and return an expiration error
-3. WHERE a user enables password protection, THE React Frontend SHALL derive an additional encryption key from the password and double-encrypt the share key in the URL
-4. WHEN a password-protected share is accessed, THE React Frontend SHALL prompt for the password before decrypting the share key
-5. WHEN a user revokes a share, THE Cortex System SHALL mark the share identifier as invalid and reject future access attempts
+1. WHEN creating a share, THE React Frontend SHALL allow the user to optionally specify a time-limited expiration (TTL is not required)
+2. WHERE a share has an expiration set AND the expiration time has passed, THE Cortex System SHALL reject access requests and return an expiration error
+3. WHEN a share password is provided, THE React Frontend SHALL require a minimum length of 16 characters
+4. WHEN validating share password strength, THE React Frontend SHALL use an entropy estimator (such as zxcvbn) to calculate the estimated entropy rather than relying solely on character class requirements
+5. WHEN calculating password entropy, THE React Frontend SHALL require a minimum estimated entropy of 80 bits regardless of password length or character composition
+6. WHEN a share password fails entropy requirements, THE React Frontend SHALL provide clear user feedback displaying "Password strength: X bits (minimum 80 required)" with actionable guidance
+7. WHEN a recipient enters an incorrect password, THE React Frontend SHALL display a generic error message and prompt for the correct password without revealing whether the share exists
+8. WHEN a user revokes a share, THE Cortex System SHALL mark the share identifier as invalid and reject future access attempts
+9. THE Cortex System SHALL implement server-side rate limiting on share access attempts (maximum 5 attempts per IP address per share ID per hour) to prevent brute-force attacks
+10. WHEN rate limit is exceeded, THE Cortex System SHALL return HTTP 429 with a Retry-After header and log the attempt for security monitoring
+11. THE React Frontend SHALL implement client-side exponential backoff after 3 failed password attempts to improve user experience and reduce server load (this is a UX improvement, not a security layer)
+12. WHEN a share is revoked, THE user documentation SHALL clearly state that recipients who downloaded files before revocation can still decrypt them (true revocation requires re-encryption with new DEK)
+13. THE React Frontend SHALL validate share password entropy at creation time only; entropy is not re-validated when recipients access shares
+14. THE React Frontend SHALL NOT block share access based on updated entropy calculations that differ from creation-time validation
 
 ### 3.20 Automatic Key Rotation
 
 **Requirement ID:** REQ-20
 
-**User Story:** As a user, I want my vault encryption keys to be automatically rotated, so that I maintain strong security over time without manual intervention.
+**User Story:** As a user, I want my vault encryption keys to be automatically rotated efficiently, so that I maintain strong security over time without re-uploading all my files.
 
 #### Acceptance Criteria
 
 1. WHEN 90 days have elapsed since the last key rotation, THE React Frontend SHALL initiate automatic vault key rotation
-2. WHEN key rotation begins, THE React Frontend SHALL generate new derived keys from the vault master key using HKDF with updated context parameters
-3. WHEN new keys are generated, THE React Frontend SHALL re-encrypt all vault data in the background using the new data encryption key
-4. WHEN re-encryption completes, THE React Frontend SHALL update the locally stored encrypted key bundle with the new key material
-5. WHILE key rotation is in progress, THE React Frontend SHALL maintain access to data encrypted with both old and new keys during the transition period
+2. WHEN key rotation begins, THE React Frontend SHALL generate a new KEK from the vault master key using HKDF with an incremented version context parameter
+3. WHEN key rotation begins, THE React Frontend SHALL store rotation state in IndexedDB with values: NOT_STARTED, IN_PROGRESS, PAUSED, COMPLETED, FAILED
+4. WHEN key rotation is in progress, THE React Frontend SHALL store rotation progress in IndexedDB including vault ID, old KEK version, new KEK version, and completed items list to enable recovery from interruptions
+5. IF the browser crashes or network fails during rotation, THE React Frontend SHALL resume rotation on next login by validating both old and new KEKs are still accessible and continuing from the last checkpoint
+6. IF rotation encounters unrecoverable errors, THE React Frontend SHALL provide a "rollback" option to mark rotation as failed and continue using the old KEK
+7. WHEN rotation has not completed within 7 days of starting, THE React Frontend SHALL auto-pause rotation and prompt the user to resume or rollback
+8. WHEN rotating keys, THE React Frontend SHALL download only the wrapped DEKs from the Cortex System (not file content) for bandwidth efficiency
+9. WHEN re-wrapping DEKs, THE React Frontend SHALL unwrap each DEK with the old KEK and wrap it with the new KEK without decrypting or re-encrypting file content
+10. WHEN DEKs are re-wrapped, THE React Frontend SHALL upload the new wrapped DEKs to the Cortex System
+11. WHILE key rotation is in progress, THE React Frontend SHALL maintain access to data using both old and new KEKs during the transition period
+12. WHEN key rotation completes, THE React Frontend SHALL update the locally stored key version and overwrite the old KEK buffer with zeros before dereferencing
+13. WHILE key rotation is in progress, THE React Frontend SHALL block share creation operations (shares must use the new KEK only)
+14. WHILE key rotation is in progress, new file uploads SHALL use the new KEK for wrapping DEKs
+15. WHILE key rotation is in progress, in-progress downloads SHALL complete using the KEK version that matches the file's DEK version
+16. WHEN a multipart upload is initiated during key rotation, THE React Frontend SHALL capture the current KEK version at upload initiation
+17. WHEN a multipart upload completes during or after key rotation, THE React Frontend SHALL verify the captured KEK version is still available before wrapping the DEK
+18. IF the captured KEK version is no longer available due to rotation rollback, THE React Frontend SHALL abort the upload and prompt the user to retry
+19. THE Cortex System SHALL enforce that only one key rotation can be in progress per vault at a time
+20. WHEN key rotation is initiated, THE Cortex System SHALL acquire a rotation lock in the DynamoDB Vaults table using optimistic locking (conditional write on rotationState)
+21. WHEN a second device attempts rotation while one is in progress, THE Cortex System SHALL reject the request and inform the user that rotation is already in progress on another device
+22. THE Cortex System SHALL auto-expire rotation locks after 7 days to prevent permanent lock-out
 
 ### 3.21 Password Security Requirements
 
@@ -385,19 +450,26 @@ This document is intended for:
 4. WHERE a user enables two-factor authentication, THE Cortex System SHALL provide backup codes for 2FA recovery
 5. WHEN account recovery is successful, THE React Frontend SHALL prompt the user to set a new account password
 
-### 3.22 Vault Salt Management
+### 3.22 Vault Salt Management and Integrity Protection
 
 **Requirement ID:** REQ-22
 
-**User Story:** As a user, I want the system to store my vault salt securely, so that I can derive the same keys across devices while maintaining security.
+**User Story:** As a user, I want the system to store my vault salt securely with integrity protection, so that I can derive the same keys across devices while detecting any tampering attempts.
 
 #### Acceptance Criteria
 
 1. WHEN a user creates a vault, THE Cortex System SHALL generate a unique vault salt using a cryptographically secure random number generator
 2. WHEN a vault salt is generated, THE Cortex System SHALL store it in the DynamoDB Table associated with the vault
-3. WHEN a user accesses their vault from any device, THE Cortex System SHALL provide the vault salt to enable key derivation
-4. THE Cortex System SHALL ensure each vault salt is unique and never reused across vaults
-5. THE Cortex System SHALL treat the vault salt as non-secret information that can be stored and transmitted without encryption
+3. WHEN a user first derives their vault master key from their vault password, THE React Frontend SHALL compute an HMAC over the vault salt using a key derived from the vault password via HKDF with context "cortex-salt-hmac-v1"
+4. WHEN the vault salt HMAC is computed, THE React Frontend SHALL store it locally for integrity verification on subsequent accesses
+5. WHEN a user accesses their vault from any device, THE Cortex System SHALL provide the vault salt to enable key derivation
+6. WHEN the vault salt is retrieved, THE React Frontend SHALL verify the HMAC to detect any tampering with the salt using constant-time comparison
+7. IF vault salt HMAC verification fails, THEN THE React Frontend SHALL display a security warning and refuse to proceed with key derivation
+8. IF vault salt HMAC verification fails, THEN THE React Frontend SHALL provide a "reset salt HMAC" option that requires re-authentication with both account password and vault password to re-establish trust
+9. WHEN a user initiates salt HMAC reset, THE React Frontend SHALL re-compute the HMAC using the newly re-authenticated vault password and update the locally stored HMAC
+10. THE Cortex System SHALL ensure each vault salt is unique and never reused across vaults
+11. THE Cortex System SHALL treat the vault salt as non-secret information that can be stored and transmitted without encryption
+12. THE React Frontend SHALL document the recovery procedure for HMAC verification failures, including scenarios where legitimate salt changes occur (e.g., account recovery from backup)
 
 ### 3.23 Password Change Management
 
@@ -409,9 +481,15 @@ This document is intended for:
 
 1. WHEN a user changes their account password, THE Cortex System SHALL update the account authentication credentials in AWS Cognito without affecting the vault encryption keys
 2. WHEN an account password is changed, THE React Frontend SHALL authenticate with AWS Cognito using the new account password
-3. WHEN a user changes their vault password, THE React Frontend SHALL derive a new vault master key from the new vault password and the existing vault salt using Argon2id
-4. WHEN a new vault master key is derived, THE React Frontend SHALL re-encrypt all vault data and metadata with keys derived from the new vault master key
-5. WHILE vault password change is processing, THE React Frontend SHALL perform re-encryption in the background to minimize user disruption
+3. WHEN a user changes their vault password, THE React Frontend SHALL derive a new vault master key and KEK from the new vault password and the existing vault salt using Argon2id
+4. WHEN a new KEK is derived from vault password change, THE React Frontend SHALL generate it with an incremented version number using HKDF with updated version context (e.g., "cortex-kek-v2")
+5. WHEN vault password change begins, THE React Frontend SHALL store the KEK version alongside each wrapped DEK in DynamoDB to track which version was used for wrapping
+6. WHEN re-wrapping DEKs during vault password change, THE React Frontend SHALL implement progress tracking in IndexedDB storing vault ID, old KEK version, new KEK version, and completed items list
+7. IF vault password change process is interrupted (network failure, browser crash), THE React Frontend SHALL resume from the last checkpoint using the progress tracking data
+8. WHEN vault password change is in progress, THE React Frontend SHALL maintain dual-KEK access allowing both old and new KEKs to unwrap files during the transition period
+9. WHEN a wrapped DEK is accessed during vault password change, THE React Frontend SHALL check the DEK's version metadata to determine whether to use the old or new KEK for unwrapping
+10. WHILE vault password change is processing, THE React Frontend SHALL perform DEK re-wrapping in configurable batches to manage memory usage and minimize user disruption
+11. WHEN vault password change completes successfully, THE React Frontend SHALL clear the old KEK from memory and update the local encrypted key storage with the new KEK version
 
 ### 3.24 Multi-Type Item Storage
 
@@ -454,6 +532,13 @@ This document is intended for:
 3. WHEN a notification is due, THE Cortex System SHALL send push notifications via AWS SNS with encrypted payloads
 4. WHEN receiving a notification, THE Client Application SHALL decrypt the payload locally before displaying
 5. THE Cortex System SHALL never have access to plaintext notification content
+6. WHEN notification delivery fails, THE notification processor SHALL retry up to 3 times with exponential backoff (5 minutes, 15 minutes, 45 minutes)
+7. WHEN SNS returns a permanent failure (EndpointDisabled, InvalidParameter), THE notification processor SHALL mark the device token as invalid and SHALL NOT retry
+8. WHEN all retry attempts are exhausted, THE notification processor SHALL move the notification to a dead-letter state and notify the user on next app access
+9. THE Cortex System SHALL distinguish between transient failures (network errors, throttling) that warrant retry and permanent failures (expired tokens, invalid endpoints) that do not
+10. WHEN a user creates a recurring task or event with a reminder, THE React Frontend SHALL expand the recurrence rule into individual notification schedules for the next 90 days
+11. WHEN the pre-generated notification window approaches within 7 days of its end, THE React Frontend SHALL generate the next batch of notification schedules
+12. WHEN a recurring event is modified or deleted, THE React Frontend SHALL update or cancel all associated future notification schedules
 
 ### 3.27 Real-Time Sync
 
@@ -468,6 +553,152 @@ This document is intended for:
 3. WHEN conflicts occur, THE React Frontend SHALL use last-write-wins resolution based on version numbers
 4. THE Cortex System SHALL send only metadata in sync notifications without content
 5. THE React Frontend SHALL decrypt and merge changes locally
+6. THE Cortex System SHALL enforce a maximum of 10 concurrent WebSocket connections per vault
+7. WHEN a new connection is established and the limit is exceeded, THE Cortex System SHALL gracefully terminate the oldest connection
+8. THE Cortex System SHALL log excessive connection attempts for security monitoring
+
+### 3.28 Envelope Encryption for Media Files
+
+**Requirement ID:** REQ-28
+
+**User Story:** As a user, I want each of my media files to be encrypted with a unique key, so that compromise of one file's key does not affect other files and key rotation is efficient.
+
+#### Acceptance Criteria
+
+1. WHEN a user initiates a media file upload, THE React Frontend SHALL generate a unique 256-bit DEK using a cryptographically secure random number generator
+2. WHEN a DEK is generated, THE React Frontend SHALL encrypt the file content using ChaCha20-Poly1305 with the DEK
+3. WHEN the file is encrypted, THE React Frontend SHALL wrap the DEK using ChaCha20-Poly1305 with the vault's KEK
+4. WHEN a file upload completes, THE React Frontend SHALL send the wrapped DEK to the Cortex System for storage alongside the file metadata
+5. THE React Frontend SHALL never reuse a DEK across multiple files
+6. THE Cortex System SHALL store wrapped DEKs in the DynamoDB Items table without decryption capability
+7. THE React Frontend SHALL document that ChaCha20-Poly1305 does not provide key commitment, meaning an attacker with ciphertext could potentially find two different DEKs that both decrypt to valid plaintexts
+8. THE React Frontend SHALL document that the risk of key commitment attacks is low in Cortex's context because an attacker would need to replace both the ciphertext AND the wrapped DEK
+9. WHERE key binding is desired for additional security, THE React Frontend MAY compute HMAC(DEK, file_id) and store it alongside the wrapped DEK metadata to bind the DEK to a specific file and prevent key substitution attacks
+10. IF HMAC(DEK, file_id) binding is implemented, THE React Frontend SHALL verify the HMAC during unwrapping to ensure the DEK has not been substituted with a different key
+11. THE React Frontend SHALL use a documented binary format for wrapped DEKs that includes version byte, timestamp, nonce, encrypted DEK, and authentication tag
+12. THE system documentation SHALL specify endianness (big-endian) and field sizes for the wrapped DEK format
+
+### 3.29 Envelope Encryption Decryption
+
+**Requirement ID:** REQ-29
+
+**User Story:** As a user, I want to decrypt my envelope-encrypted files seamlessly, so that I can access my content securely from any device.
+
+#### Acceptance Criteria
+
+1. WHEN a user requests to download a media file, THE Cortex System SHALL return the wrapped DEK along with the file metadata
+2. WHEN the wrapped DEK is retrieved, THE React Frontend SHALL unwrap it using the vault's KEK
+3. WHEN the DEK is unwrapped, THE React Frontend SHALL use it to decrypt the file content downloaded from S3
+4. IF the wrapped DEK cannot be unwrapped, THEN THE React Frontend SHALL return a specific error code indicating the failure type
+5. WHEN unwrapping fails due to authentication tag verification, THE React Frontend SHALL return error code CORRUPTED_DEK or AUTHENTICATION_FAILED to distinguish between data corruption and wrong KEK
+6. WHEN unwrapping fails due to KEK version mismatch during rotation, THE React Frontend SHALL return error code WRONG_KEK_VERSION with user message "Key rotation in progress, try again in a few minutes"
+7. WHEN unwrapping fails due to malformed wrapped DEK structure, THE React Frontend SHALL return error code CORRUPTED_DEK with user message indicating unrecoverable data corruption
+8. WHEN CORRUPTED_DEK error occurs, THE React Frontend SHALL allow the user to mark the file as corrupted, delete it, or report the issue for investigation
+9. WHEN WRONG_KEK_VERSION error occurs, THE React Frontend SHALL inform the user to wait for key rotation completion and retry the operation
+10. THE React Frontend SHALL log unwrapping failures (without key material) to enable monitoring of data corruption rates and KEK version mismatches
+11. WHEN decryption completes successfully, THE React Frontend SHALL overwrite the unwrapped DEK buffer with zeros before dereferencing (best-effort memory clearing)
+12. THE React Frontend SHALL use TypedArray (Uint8Array) for all key material to enable explicit zeroing
+13. WHERE available, THE React Frontend SHALL prefer Web Crypto API (crypto.subtle) for key operations as it may provide better memory handling
+
+### 3.30 Efficient Key Rotation with Envelope Encryption
+
+**Requirement ID:** REQ-30
+
+**User Story:** As a user, I want key rotation to be fast and bandwidth-efficient, so that I can maintain security without re-uploading all my files.
+
+#### Acceptance Criteria
+
+1. WHEN key rotation is triggered, THE React Frontend SHALL generate a new KEK from the vault master key using HKDF with an incremented version
+2. WHEN rotating keys, THE React Frontend SHALL download only the wrapped DEKs from the Cortex System, not the file content
+3. WHEN re-wrapping DEKs, THE React Frontend SHALL unwrap each DEK with the old KEK and wrap it with the new KEK
+4. WHEN a DEK is re-wrapped, THE React Frontend SHALL upload the new wrapped DEK to the Cortex System
+5. WHILE key rotation is in progress, THE React Frontend SHALL maintain access to files using both old and new KEKs
+6. WHEN key rotation completes for all files, THE Cortex System SHALL have updated wrapped DEK records with the new versions
+
+### 3.31 Enhanced File Sharing with Envelope Encryption
+
+**Requirement ID:** REQ-31
+
+**User Story:** As a user, I want to share files securely with a password, so that only recipients who know the password can access my shared content.
+
+#### Acceptance Criteria
+
+1. WHEN a user creates a share for a media file, THE React Frontend SHALL require a share password
+2. WHEN a share password is provided, THE React Frontend SHALL derive a share encryption key from the password and a random salt using Argon2id
+3. WHEN the share encryption key is derived, THE React Frontend SHALL unwrap the file's DEK using the vault's KEK and wrap it with the share encryption key
+4. WHEN a share is created, THE React Frontend SHALL embed the password-wrapped DEK and salt in the share URL
+5. THE Cortex System SHALL NOT store any key material (DEK, wrapped DEK, share key, or salt) on the server
+6. WHEN a recipient accesses a shared file, THE React Frontend SHALL prompt for the share password and derive the share encryption key to unwrap the DEK
+7. THE original file's vault-wrapped DEK SHALL remain unaffected by share creation
+
+### 3.32 DEK Versioning and Downgrade Protection
+
+**Requirement ID:** REQ-32
+
+**User Story:** As a user, I want my file encryption keys to be versioned and protected against downgrade attacks, so that the system can handle key format changes gracefully while maintaining security.
+
+#### Acceptance Criteria
+
+1. WHEN wrapping a DEK, THE React Frontend SHALL include a version identifier in the wrapped DEK metadata
+2. WHEN storing a wrapped DEK, THE Cortex System SHALL store the DEK version alongside the wrapped DEK in the Items table
+3. WHEN unwrapping a DEK, THE React Frontend SHALL check the version identifier and use the appropriate unwrapping algorithm
+4. IF an unsupported DEK version is encountered, THEN THE React Frontend SHALL return a version error with guidance
+5. THE React Frontend SHALL maintain a list of deprecated or insecure DEK wrapping versions
+6. WHEN encountering a DEK with a deprecated version, THE React Frontend SHALL refuse to unwrap it and prompt the user to migrate
+7. WHEN a deprecated version is encountered, THE React Frontend SHALL provide a migration path to re-wrap the DEK with the current version
+8. THE React Frontend SHALL support reading DEKs wrapped with any previously supported version that is not marked as deprecated
+9. THE React Frontend SHALL use constant-time comparison when verifying DEK authentication tags to prevent timing attacks
+
+### 3.33 Batch Key Rotation
+
+**Requirement ID:** REQ-33
+
+**User Story:** As a user with many files, I want key rotation to process files in batches, so that rotation completes reliably without overwhelming my device.
+
+#### Acceptance Criteria
+
+1. WHEN key rotation begins, THE React Frontend SHALL query the Cortex System for all wrapped DEKs in the vault
+2. WHEN processing DEKs, THE React Frontend SHALL re-wrap them in configurable batch sizes with a recommended default of 100-500 DEKs per batch to manage memory usage
+3. WHILE batch processing, THE React Frontend SHALL monitor browser heap memory usage and pause rotation automatically if memory usage exceeds 80% of available heap
+4. WHILE batch processing, THE React Frontend SHALL report progress to the user interface showing total items, processed items, and estimated remaining time
+5. WHEN a batch completes processing, THE React Frontend SHALL immediately clear processed DEK buffers from memory before proceeding to the next batch
+6. IF a batch fails, THEN THE React Frontend SHALL retry the failed batch with exponential backoff before proceeding
+7. IF a batch fails after 3 retry attempts, THE React Frontend SHALL pause rotation and prompt the user to resolve the issue or rollback
+8. WHEN all batches complete, THE React Frontend SHALL update the vault's key version in local storage
+9. THE React Frontend SHALL allow pausing and resuming key rotation for large vaults, storing progress state in IndexedDB
+10. WHEN rotation is paused, THE React Frontend SHALL provide clear indication to the user that rotation is incomplete and dual-KEK access is still active
+11. THE React Frontend SHALL track rotation progress using cursor-based pagination (last processed item sort key) rather than storing complete lists of processed item IDs, to avoid exceeding IndexedDB storage quotas for large vaults
+12. WHEN re-wrapping a DEK during key rotation, THE React Frontend SHALL use conditional DynamoDB updates (ConditionExpression on dekVersion) to ensure idempotent writes
+13. WHEN a conditional update fails because the DEK was already re-wrapped, THE React Frontend SHALL skip that item and continue with the next
+
+### 3.34 Secure Key Zeroization on Logout
+
+**Requirement ID:** REQ-34
+
+**User Story:** As a user, I want all encryption keys to be securely cleared from memory when I log out, so that my keys cannot be recovered from memory after my session ends.
+
+#### Acceptance Criteria
+
+1. WHEN a user initiates logout, THE React Frontend SHALL overwrite all key material buffers (vault master key, KEK, all derived keys, and any cached DEKs) with cryptographically random data before dereferencing
+2. WHEN key buffers are zeroized, THE React Frontend SHALL perform the overwrite operation at least twice (first with zeros, then with random data) to reduce potential for memory recovery
+3. WHEN logout is initiated, THE React Frontend SHALL clear all encrypted key storage from browser local storage and session storage
+4. WHEN logout completes, THE React Frontend SHALL explicitly delete all IndexedDB entries containing encrypted keys
+5. WHEN a user closes the browser or tab unexpectedly, THE React Frontend SHALL use beforeunload event handlers to attempt best-effort key zeroization
+6. THE React Frontend SHALL document that complete memory clearing cannot be guaranteed in JavaScript environments due to garbage collection and memory management limitations
+7. WHERE available, THE React Frontend SHALL prefer Web Crypto API (crypto.subtle) non-extractable keys to minimize key exposure in JavaScript-accessible memory
+8. WHEN session timeout occurs, THE React Frontend SHALL perform the same key zeroization process as explicit logout
+
+### 3.35 DEK Version Deployment Safety
+
+**Requirement ID:** REQ-35
+
+**User Story:** As a user, I want new DEK versions to be deployed safely with rollback support, so that bugs in new encryption versions do not cause data loss.
+
+#### Acceptance Criteria
+
+1. New DEK versions SHALL be deployed as SUPPORTED (readable) for a minimum of 30 days before becoming CURRENT (used for new wrapping)
+2. Rollback to a previous DEK version deployment SHALL NOT cause data loss for files wrapped with the new version
+3. THE React Frontend SHALL maintain backward compatibility with all non-deprecated DEK versions
 
 ## 4. Non-Functional Requirements
 

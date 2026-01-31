@@ -29,7 +29,16 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - **Vault Password**: Used exclusively for deriving vault encryption keys, never transmitted to server
 - Separation allows flexible credential management without expensive re-encryption
 - Vault password + server-stored vault salt → Argon2id → Vault master key (256-bit)
-- HKDF derives multiple keys from vault master key: data encryption key, metadata encryption key, share key derivation key
+- HKDF derives multiple keys from vault master key: KEK (Key Encryption Key), metadata encryption key, share key derivation key
+
+**Envelope Encryption (Media Files):**
+- Each media file encrypted with unique DEK (Data Encryption Key)
+- DEK wrapped with vault's KEK and stored in DynamoDB (not S3)
+- File content encrypted with DEK, uploaded to S3
+- Benefits:
+  - Efficient key rotation: only re-wrap DEKs, not re-encrypt files
+  - Fast sharing: wrap DEK with share key, no file re-upload
+  - Per-file key isolation: compromise of one DEK doesn't affect others
 
 **Key Management:**
 - Vault master key derived from vault password using Argon2id (64MB memory, 3 iterations, 4 parallelism)
@@ -38,7 +47,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - Multi-device support via vault password + vault salt (derive same keys on any device)
 - Vault recovery key (24-word BIP39 mnemonic) enables complete offline vault recovery without server dependency
 - Account recovery codes (10 per user) enable account password reset
-- Automatic key rotation every 90 days with background re-encryption
+- Automatic key rotation every 90 days - only re-wraps DEKs, no file re-encryption needed
 
 ## Core Stack
 
@@ -88,7 +97,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - Input: vault password + vault salt (16 bytes)
 - Output: 256-bit vault master key
 - HKDF derives multiple keys from vault master key:
-  - Data encryption key (context: "cortex-data-encryption-v1")
+  - KEK (Key Encryption Key) for wrapping per-file DEKs (context: "cortex-kek-v1")
   - Metadata encryption key (context: "cortex-metadata-encryption-v1")
   - Share key derivation key (context: "cortex-share-key-derivation-v1")
 
@@ -301,9 +310,11 @@ cortex/
 packages/encryption/src/
 ├── lib/
 │   ├── encryption.ts          # ChaCha20-Poly1305 core
-│   ├── key-management.ts      # Argon2id, HKDF
+│   ├── envelope-encryption.ts # DEK generation, wrapping, file encryption
+│   ├── key-management.ts      # Argon2id, HKDF, KEK derivation
+│   ├── key-rotation.ts        # Batch DEK re-wrapping, progress tracking
 │   ├── password-validation.ts # Password strength, breach check
-│   └── sharing.ts             # Share key derivation
+│   └── sharing.ts             # Password-required sharing with DEK wrapping
 ├── index.ts                   # Public API exports
 └── tests/
     ├── unit/                  # Unit tests
@@ -448,7 +459,7 @@ Environments: `dev`, `staging`, `prod`
 
 **Items Table (single-table design within Data Table):**
 - PK: `ITEM#{itemId}`, SK: `METADATA` (constant)
-- Stores: itemId, vaultId, userId, itemType (MEDIA/NOTE/TASK/EVENT), s3Key (MEDIA only), encryptedMetadata (binary), encryptedContent (non-MEDIA), encryptedTags (list<binary>), createdAt, updatedAt, sizeBytes (MEDIA), upload_status (PENDING/COMPLETE for MEDIA), ttl (Unix epoch, for PENDING uploads only), version
+- Stores: itemId, vaultId, userId, itemType (MEDIA/NOTE/TASK/EVENT), s3Key (MEDIA only), encryptedMetadata (binary), encryptedContent (non-MEDIA), encryptedTags (list<binary>), createdAt, updatedAt, sizeBytes (MEDIA), upload_status (PENDING/COMPLETE for MEDIA), ttl (Unix epoch, for PENDING uploads only), version, wrappedDek (binary, MEDIA only), dekVersion (number, MEDIA only)
 - GSI1: PK: `VAULT#{vaultId}#TYPE#{itemType}`, SK: `ITEM#{itemId}` (for type-filtered queries)
 - GSI2: PK: `VAULT#{vaultId}`, SK: `ITEM#{itemId}` (for listing all items in vault without type filter)
 - TTL: Pending uploads auto-expire after 48 hours to prevent data inconsistency from failed/abandoned uploads
@@ -465,8 +476,8 @@ Environments: `dev`, `staging`, `prod`
 
 **Shares Table:**
 - PK: `SHARE#{shareId}`, SK: `METADATA`
-- Stores: shareId, fileId, vaultId, userId, createdAt, expiresAt, isPasswordProtected, isRevoked, accessCount, lastAccessedAt
-- Note: Share key NOT stored (embedded in URL)
+- Stores: shareId, fileId, vaultId, userId, createdAt, expiresAt (optional), isRevoked, accessCount, lastAccessedAt
+- Note: All shares require password. Share key, wrapped DEK, and salt are embedded in URL fragment (never sent to server)
 
 **Account Recovery Table:**
 - PK: `USER#{userId}`, SK: `RECOVERY#{codeHash}`
