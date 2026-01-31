@@ -10,26 +10,27 @@
 | src/api/routes/auth.py                  |       68 |        0 |        0 |        0 |    100% |           |
 | src/api/routes/base\_route.py           |        3 |        0 |        0 |        0 |    100% |           |
 | src/api/routes/collections.py           |      144 |       39 |       16 |        4 |     68% |114-160, 197-231, 265-281, 321-335, 373-390, 432-449 |
-| src/api/routes/items.py                 |      161 |       22 |       32 |       10 |     79% |46, 170-172, 231, 235, 244, 272-296, 310, 359, 361, 363, 365 |
+| src/api/routes/items.py                 |      157 |       21 |       30 |        9 |     80% |153-155, 214, 218, 227, 255-279, 293, 342, 344, 346, 348 |
 | src/api/routes/recovery.py              |       46 |        0 |        0 |        0 |    100% |           |
 | src/api/routes/shares.py                |       22 |        0 |        0 |        0 |    100% |           |
-| src/api/routes/tags.py                  |       10 |        0 |        0 |        0 |    100% |           |
+| src/api/routes/tags.py                  |       42 |        0 |       16 |        0 |    100% |           |
 | src/api/routes/vaults.py                |       40 |        0 |        0 |        0 |    100% |           |
 | src/api/services/\_\_init\_\_.py        |        0 |        0 |        0 |        0 |    100% |           |
 | src/api/services/api\_router.py         |       20 |        0 |        2 |        0 |    100% |           |
-| src/api/services/auth\_service.py       |       84 |        0 |       18 |        0 |    100% |           |
+| src/api/services/auth\_service.py       |       85 |        0 |       18 |        0 |    100% |           |
 | src/api/services/collection\_service.py |      146 |       26 |       28 |        5 |     81% |254, 311, 409, 432, 548, 622-661, 691-725 |
-| src/api/services/item\_service.py       |      224 |       43 |       58 |        5 |     82% |307-318, 338-339, 353-377, 415-420, 427-432, 442-447, 643-647, 741-747, 753->769, 761-766, 783-788, 797-822, 842-847 |
-| src/api/services/vault\_service.py      |       71 |        0 |       16 |        1 |     99% |  165->169 |
+| src/api/services/item\_service.py       |      275 |       47 |       82 |       11 |     83% |308-319, 339-340, 354-378, 416-421, 428-433, 443-448, 644-648, 742-748, 754->770, 762-767, 784-789, 798-823, 843-848, 888-893, 914->946, 942->914, 953->956, 957->960, 961->966, 997 |
+| src/api/services/vault\_service.py      |       72 |        0 |       16 |        1 |     99% |  167->171 |
 | src/entrypoint/\_\_init\_\_.py          |        0 |        0 |        0 |        0 |    100% |           |
 | src/entrypoint/api.py                   |        5 |        0 |        0 |        0 |    100% |           |
 | src/environment/\_\_init\_\_.py         |        0 |        0 |        0 |        0 |    100% |           |
 | src/environment/service\_provider.py    |       31 |        0 |        0 |        0 |    100% |           |
 | src/shared/\_\_init\_\_.py              |        0 |        0 |        0 |        0 |    100% |           |
 | src/shared/auth.py                      |       20 |        2 |        4 |        0 |     92% |     59-63 |
-| src/shared/models.py                    |      315 |        6 |       14 |        3 |     97% |126-128, 140, 375, 383 |
+| src/shared/models.py                    |      316 |        6 |       14 |        3 |     97% |126-128, 140, 376, 384 |
 | src/shared/repository.py                |      180 |       48 |       32 |        4 |     75% |55-60, 91-94, 132-137, 181-195, 210-215, 276-281, 330-335, 367-372, 412-422, 455-460, 485-495, 512-517, 537-541, 579-583, 624-625, 653-655 |
-| **TOTAL**                               | **1590** |  **186** |  **220** |   **32** | **87%** |           |
+| src/shared/util.py                      |       10 |        2 |        4 |        2 |     71% |    21, 39 |
+| **TOTAL**                               | **1682** |  **191** |  **262** |   **39** | **87%** |           |
 
 
 ## Setup coverage badge
