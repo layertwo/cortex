@@ -12,6 +12,7 @@ import time
 import uuid
 from typing import Dict, Optional
 
+import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler.exceptions import (
     BadRequestError,
@@ -27,14 +28,15 @@ logger = Logger(child=True)
 class VaultService:
     """Service for vault management operations."""
 
-    def __init__(self, vaults_table):
+    def __init__(self, session: boto3.Session, vaults_table_name: str):
         """
         Initialize vault service.
 
         Args:
-            vaults_table: DynamoDB vaults table resource
+            session: AWS session for DynamoDB access
+            vaults_table_name: DynamoDB table name for vaults
         """
-        self.vaults_table = vaults_table
+        self.vaults_table = session.resource("dynamodb").Table(vaults_table_name)
 
     def create_vault(self, user_id: str, vault_salt: Optional[bytes] = None) -> Dict:
         """

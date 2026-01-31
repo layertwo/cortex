@@ -174,6 +174,7 @@ class ItemMetadata(BaseModel):
     encrypted_tags: Optional[List[bytes]] = Field(default=None, description="Encrypted tags")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
+    version: int = Field(..., description="Version number for conflict resolution")
     size_bytes: Optional[int] = Field(default=None, description="File size (for MEDIA items)")
     s3_key: Optional[str] = Field(default=None, description="S3 object key (for MEDIA items)")
 
@@ -346,7 +347,7 @@ class SearchByTagRequest(BaseModel):
 class SearchByTagResponse(BaseModel):
     """Response model for tag search."""
 
-    items: List[MediaItem] = Field(..., description="Matching media items")
+    items: List[ItemMetadata] = Field(..., description="Matching items")
     next_token: Optional[str] = Field(default=None, description="Pagination token")
 
 

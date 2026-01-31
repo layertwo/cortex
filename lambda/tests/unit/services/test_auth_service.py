@@ -1,221 +1,254 @@
-"""Unit tests for authentication service layer."""
+"""Unit tests for authentication auth_service layer."""
 
-from unittest.mock import MagicMock
+import hashlib
 
 import pytest
 from aws_lambda_powertools.event_handler.exceptions import BadRequestError, UnauthorizedError
+from botocore.stub import ANY
 
-from src.api.services.auth_service import RECOVERY_CODE_COUNT, AuthService
-
-
-class TestAuthServiceInit:
-    def test_init_with_recovery_table(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
-        assert service.recovery_table == mock_table
-
-    def test_init_with_all_params(self):
-        mock_table = MagicMock()
-        mock_cognito = MagicMock()
-        service = AuthService(
-            recovery_table=mock_table, cognito_client=mock_cognito, user_pool_id="test-pool-id"
-        )
-        assert service.cognito_client == mock_cognito
+from src.api.services.auth_service import RECOVERY_CODE_COUNT
 
 
 class TestValidateLogin:
-    def test_validate_login_success(self):
-        service = AuthService(recovery_table=MagicMock())
-        result = service.validate_login("test@example.com", "password123")
+    def test_validate_login_success(self, auth_service):
+        result = auth_service.validate_login("test@example.com", "password123")
         assert result["auth_type"] == "cognito"
 
-    def test_validate_login_empty_email(self):
-        service = AuthService(recovery_table=MagicMock())
+    def test_validate_login_empty_email(self, auth_service):
         with pytest.raises(BadRequestError):
-            service.validate_login("", "password123")
+            auth_service.validate_login("", "password123")
 
 
 class TestRefreshToken:
-    def test_refresh_token_success(self):
-        service = AuthService(recovery_table=MagicMock())
-        result = service.refresh_token("test-refresh-token")
+    def test_refresh_token_success(self, auth_service):
+        result = auth_service.refresh_token("test-refresh-token")
         assert result["auth_type"] == "cognito"
 
-    def test_refresh_token_empty(self):
-        service = AuthService(recovery_table=MagicMock())
+    def test_refresh_token_empty(self, auth_service):
         with pytest.raises(BadRequestError, match="Refresh token is required"):
-            service.refresh_token("")
+            auth_service.refresh_token("")
 
 
 class TestGenerateRecoveryCodes:
-    def test_generate_recovery_codes_success(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
-        codes, timestamp = service.generate_recovery_codes("user-123")
+    def test_generate_recovery_codes_success(self, auth_service, dynamodb_stubber):
+        """Test successful generation of recovery codes with stubbed DynamoDB."""
+        # Stub put_item for each recovery code
+        for _ in range(RECOVERY_CODE_COUNT):
+            dynamodb_stubber.add_response(
+                "put_item",
+                {},
+                {"TableName": "test-recovery-table", "Item": ANY},
+            )
+
+        codes, timestamp = auth_service.generate_recovery_codes("user-123")
         assert len(codes) == RECOVERY_CODE_COUNT
+        assert timestamp > 0
 
-    def test_generate_recovery_codes_empty_user_id(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+    def test_generate_recovery_codes_empty_user_id(self, auth_service):
         with pytest.raises(BadRequestError, match="User ID is required"):
-            service.generate_recovery_codes("")
+            auth_service.generate_recovery_codes("")
 
-    def test_generate_recovery_codes_stores_hashed(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
-        service.generate_recovery_codes("user-123")
-        assert mock_table.put_item.call_count == RECOVERY_CODE_COUNT
+    def test_generate_recovery_codes_stores_hashed(self, auth_service, dynamodb_stubber):
+        """Test that recovery codes are stored with hashed values."""
+        # Stub put_item for each recovery code
+        for _ in range(RECOVERY_CODE_COUNT):
+            dynamodb_stubber.add_response(
+                "put_item",
+                {},
+                {"TableName": "test-recovery-table", "Item": ANY},
+            )
+
+        codes, _ = auth_service.generate_recovery_codes("user-123")
+
+        # Verify codes are in correct format
+        for code in codes:
+            assert len(code) == 19  # XXXX-XXXX-XXXX-XXXX
+            assert code.count("-") == 3
 
 
 class TestValidateRecoveryCode:
-    def test_validate_recovery_code_success(self):
-        import hashlib
+    def test_validate_recovery_code_success(self, auth_service, dynamodb_stubber):
+        """Test successful recovery code validation."""
+        test_code = "ABCD-EFGH-IJKL-MNOP"
+        normalized = test_code.replace("-", "").upper()
+        code_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
-        mock_table = MagicMock()
-        # Compute the correct hash for the test code
-        test_code = "ABCDEFGHIJKLMNOP"
-        code_hash = hashlib.sha256(test_code.encode("utf-8")).hexdigest()
-        mock_table.get_item.return_value = {"Item": {"is_valid": True, "code_hash": code_hash}}
-        service = AuthService(recovery_table=mock_table)
-        result = service.validate_recovery_code("user-123", "ABCD-EFGH-IJKL-MNOP")
+        # Stub get_item to return valid code - use ANY for Key since Table transforms it
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "USER#user-123"},
+                    "SK": {"S": f"RECOVERY#{code_hash}"},
+                    "code_hash": {"S": code_hash},
+                    "is_valid": {"BOOL": True},
+                }
+            },
+            {
+                "TableName": "test-recovery-table",
+                "Key": ANY,
+            },
+        )
+
+        # Stub update_item to mark code as used
+        dynamodb_stubber.add_response(
+            "update_item",
+            {},
+            {
+                "TableName": "test-recovery-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+            },
+        )
+
+        result = auth_service.validate_recovery_code("user-123", test_code)
         assert result is True
 
-    def test_validate_recovery_code_not_found(self):
-        mock_table = MagicMock()
-        mock_table.get_item.return_value = {}
-        service = AuthService(recovery_table=mock_table)
+    def test_validate_recovery_code_not_found(self, auth_service, dynamodb_stubber):
+        """Test recovery code validation when code not found."""
+        test_code = "ABCD-EFGH-IJKL-MNOP"
+
+        # Stub get_item to return empty response
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": "test-recovery-table",
+                "Key": ANY,
+            },
+        )
+
         with pytest.raises(UnauthorizedError):
-            service.validate_recovery_code("user-123", "ABCD-EFGH-IJKL-MNOP")
+            auth_service.validate_recovery_code("user-123", test_code)
 
 
 class TestValidateRecoveryCodeEdgeCases:
     """Test edge cases in recovery code validation."""
 
-    def test_validate_recovery_code_hash_mismatch(self):
+    def test_validate_recovery_code_hash_mismatch(self, auth_service, dynamodb_stubber):
         """Test recovery code with hash mismatch."""
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+        test_code = "AAAA-BBBB-CCCC-DDDD"
 
-        # Mock get_item to return code with wrong hash
-        mock_table.get_item.return_value = {
-            "Item": {
-                "PK": "USER#user-123",
-                "SK": "RECOVERY#wronghash",
-                "code_hash": "wronghash",
-                "is_valid": True,
-            }
-        }
+        # Stub get_item to return code with wrong hash
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "USER#user-123"},
+                    "SK": {"S": "RECOVERY#wronghash"},
+                    "code_hash": {"S": "wronghash"},
+                    "is_valid": {"BOOL": True},
+                }
+            },
+            {
+                "TableName": "test-recovery-table",
+                "Key": ANY,
+            },
+        )
 
         with pytest.raises(UnauthorizedError):
-            service.validate_recovery_code("user-123", "AAAA-BBBB-CCCC-DDDD")
+            auth_service.validate_recovery_code("user-123", test_code)
 
-    def test_validate_recovery_code_already_used(self):
+    def test_validate_recovery_code_already_used(self, auth_service, dynamodb_stubber):
         """Test recovery code that was already used."""
-        import hashlib
+        test_code = "AAAA-BBBB-CCCC-DDDD"
+        normalized = test_code.replace("-", "").upper()
+        code_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
-
-        code = "AAAA-BBBB-CCCC-DDDD"
-        normalized = code.replace("-", "").upper()
-        code_hash = hashlib.sha256(normalized.encode()).hexdigest()
-
-        # Mock get_item to return used code
-        mock_table.get_item.return_value = {
-            "Item": {
-                "PK": "USER#user-123",
-                "SK": f"RECOVERY#{code_hash}",
-                "code_hash": code_hash,
-                "is_valid": False,  # Already used
-            }
-        }
+        # Stub get_item to return used code
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "USER#user-123"},
+                    "SK": {"S": f"RECOVERY#{code_hash}"},
+                    "code_hash": {"S": code_hash},
+                    "is_valid": {"BOOL": False},  # Already used
+                }
+            },
+            {
+                "TableName": "test-recovery-table",
+                "Key": ANY,
+            },
+        )
 
         with pytest.raises(UnauthorizedError, match="already been used"):
-            service.validate_recovery_code("user-123", code)
+            auth_service.validate_recovery_code("user-123", test_code)
 
 
 class TestValidateRecoveryCodeValidation:
     """Test validation in validate_recovery_code."""
 
-    def test_validate_recovery_code_empty_user_id(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+    def test_validate_recovery_code_empty_user_id(self, auth_service):
         with pytest.raises(BadRequestError, match="User ID and recovery code are required"):
-            service.validate_recovery_code("", "AAAA-BBBB-CCCC-DDDD")
+            auth_service.validate_recovery_code("", "AAAA-BBBB-CCCC-DDDD")
 
-    def test_validate_recovery_code_empty_code(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+    def test_validate_recovery_code_empty_code(self, auth_service):
         with pytest.raises(BadRequestError, match="User ID and recovery code are required"):
-            service.validate_recovery_code("user-123", "")
+            auth_service.validate_recovery_code("user-123", "")
 
 
 class TestInitiateRecoveryValidation:
     """Test validation in initiate_recovery."""
 
-    def test_initiate_recovery_empty_email(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+    def test_initiate_recovery_empty_email(self, auth_service):
         with pytest.raises(BadRequestError, match="Email and recovery code are required"):
-            service.initiate_recovery("", "AAAA-BBBB-CCCC-DDDD")
+            auth_service.initiate_recovery("", "AAAA-BBBB-CCCC-DDDD")
 
-    def test_initiate_recovery_empty_code(self):
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+    def test_initiate_recovery_empty_code(self, auth_service):
         with pytest.raises(BadRequestError, match="Email and recovery code are required"):
-            service.initiate_recovery("test@example.com", "")
+            auth_service.initiate_recovery("test@example.com", "")
 
 
 class TestValidateLoginValidation:
     """Test validation in validate_login."""
 
-    def test_validate_login_empty_password(self):
-        service = AuthService(recovery_table=MagicMock())
+    def test_validate_login_empty_password(self, auth_service):
         with pytest.raises(BadRequestError):
-            service.validate_login("test@example.com", "")
+            auth_service.validate_login("test@example.com", "")
 
 
 class TestInitiateRecoveryFlow:
     """Test initiate_recovery flow."""
 
-    def test_initiate_recovery_normalizes_code(self):
+    def test_initiate_recovery_normalizes_code(self, auth_service):
         """Test that recovery code is normalized during initiate_recovery."""
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
-
-        # Call initiate_recovery with formatted code
-        result = service.initiate_recovery("test@example.com", "AAAA-BBBB-CCCC-DDDD")
-
-        # Should return placeholder response
+        result = auth_service.initiate_recovery("test@example.com", "AAAA-BBBB-CCCC-DDDD")
         assert result["recovery_type"] == "account_password"
 
 
 class TestValidateRecoveryCodeExceptionHandling:
     """Test exception handling in validate_recovery_code."""
 
-    def test_validate_recovery_code_generic_exception(self):
+    def test_validate_recovery_code_generic_exception(self, auth_service, dynamodb_stubber):
         """Test generic exception handling in validate_recovery_code."""
-        mock_table = MagicMock()
-        service = AuthService(recovery_table=mock_table)
+        test_code = "AAAA-BBBB-CCCC-DDDD"
 
-        # Mock get_item to raise a generic exception
-        mock_table.get_item.side_effect = Exception("Database error")
+        # Stub get_item to raise an error
+        dynamodb_stubber.add_client_error(
+            "get_item",
+            service_error_code="InternalServerError",
+            service_message="Database error",
+            expected_params={
+                "TableName": "test-recovery-table",
+                "Key": ANY,
+            },
+        )
 
         with pytest.raises(UnauthorizedError):
-            service.validate_recovery_code("user-123", "AAAA-BBBB-CCCC-DDDD")
+            auth_service.validate_recovery_code("user-123", test_code)
 
 
 class TestValidateLoginEdgeCases:
     """Test edge cases in validate_login."""
 
-    def test_validate_login_empty_email(self):
+    def test_validate_login_empty_email(self, auth_service):
         """Test validation with empty email."""
-        service = AuthService(recovery_table=MagicMock())
         with pytest.raises(BadRequestError, match="Email and password are required"):
-            service.validate_login("", "password123")
+            auth_service.validate_login("", "password123")
 
-    def test_validate_login_both_empty(self):
+    def test_validate_login_both_empty(self, auth_service):
         """Test validation with both fields empty."""
-        service = AuthService(recovery_table=MagicMock())
         with pytest.raises(BadRequestError, match="Email and password are required"):
-            service.validate_login("", "")
+            auth_service.validate_login("", "")

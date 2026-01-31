@@ -22,19 +22,30 @@ Cortex is a privacy-first backup system where all encryption happens client-side
 
 ```
 cortex/
-├── infrastructure/         # CDK stacks (TypeScript)
+├── cdk/                   # CDK stacks (TypeScript)
 │   ├── lib/               # Stack definitions
-│   └── bin/app.ts         # CDK entry point
-├── api/smithy/            # Smithy API models
+│   │   ├── stacks/        # auth.ts, service.ts
+│   │   ├── app.ts         # CDK entry point
+│   │   └── config.ts      # Environment configuration
+│   └── cdk.json
+├── smithy/                # Smithy API models
+│   └── models/            # auth/, vault/, item/, collection/, tag/, share/, recovery/
 ├── lambda/                # Python Lambda handlers
-│   ├── api/              # Main API handler
-│   └── shared/           # Common utilities
-├── client/                # Client-side encryption library
-│   └── src/              # TypeScript source
-└── tests/                 # Test suites
-    ├── unit/
-    ├── integration/
-    └── property/
+│   ├── src/
+│   │   ├── api/           # Routes and services
+│   │   │   ├── routes/    # auth, vaults, items, collections, tags, shares, recovery
+│   │   │   └── services/  # Business logic layer
+│   │   ├── entrypoint/    # Lambda entry point (api.py)
+│   │   ├── environment/   # Service provider
+│   │   └── shared/        # Common utilities (auth, models, repository, util)
+│   └── tests/             # Unit, integration, and property tests
+├── packages/              # Monorepo packages (npm workspaces)
+│   ├── encryption/        # @cortex/encryption - Standalone encryption library
+│   │   ├── src/lib/       # encryption, key-management, key-storage, password-validation
+│   │   └── tests/         # Unit and property tests
+│   └── web/               # @cortex/web - React web application
+│       └── src/           # App.tsx, main.tsx
+└── package.json           # Root workspace configuration
 ```
 
 ## Getting Started
@@ -49,7 +60,7 @@ cortex/
 ### Infrastructure Setup
 
 ```bash
-cd infrastructure
+cd cdk
 npm install
 npm run build
 cdk synth
@@ -61,13 +72,14 @@ cdk deploy --all
 ```bash
 cd lambda
 pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest
 ```
 
-### Client Library
+### Encryption Library
 
 ```bash
-cd client
+cd packages/encryption
 npm install
 npm run build
 npm test
@@ -106,13 +118,13 @@ npm test
 - **Authentication**: Account password authentication, recovery codes, vault salt management
 - **Item Management**: Create, upload, list, retrieve, update, delete items (MEDIA, NOTE, TASK, EVENT types)
 - **Collection Management**: Create, list, retrieve, update, delete collections with many-to-many item associations
+- **Tag Search**: Search items by encrypted tags with vault isolation and pagination
 - **Encryption Library**: ChaCha20-Poly1305 encryption, Argon2id key derivation, password validation
 - **API Layer**: Single Lambda function with APIGatewayRestResolver handling all routes
 - **Testing**: Unit tests with botocore Stubber, property-based tests with Hypothesis
 
 ### 🚧 In Progress
 
-- Tag search functionality
 - File sharing system
 - React web application
 - Automatic key rotation
@@ -121,16 +133,22 @@ npm test
 
 ### CDK Commands
 
-- `npm run build` - Compile TypeScript
-- `cdk synth` - Generate CloudFormation templates
-- `cdk diff` - Preview infrastructure changes
-- `cdk deploy` - Deploy stacks to AWS
+```bash
+cd cdk
+npm run build      # Compile TypeScript
+cdk synth          # Generate CloudFormation templates
+cdk diff           # Preview infrastructure changes
+cdk deploy         # Deploy stacks to AWS
+```
 
 ### Testing
 
-- Unit tests: `pytest tests/unit/`
-- Integration tests: `pytest tests/integration/`
-- Property-based tests: `pytest tests/property/`
+```bash
+cd lambda
+pytest tests/unit/           # Unit tests
+pytest tests/integration/    # Integration tests
+pytest tests/property/       # Property-based tests
+```
 
 ## License
 

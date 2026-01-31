@@ -19,23 +19,12 @@ from aws_lambda_powertools.event_handler.exceptions import (
 )
 from botocore.stub import ANY
 
-from src.api.services.item_service import ItemService
 from src.shared.models import (
     CompleteUploadRequest,
     CreateItemRequest,
     InitiateUploadRequest,
     ItemType,
 )
-
-
-@pytest.fixture
-def item_service(boto_session, items_table_name, files_bucket_name):
-    """Create an ItemService instance for testing."""
-    return ItemService(
-        session=boto_session,
-        items_table_name=items_table_name,
-        s3_bucket_name=files_bucket_name,
-    )
 
 
 class TestCreateItem:

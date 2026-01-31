@@ -12,6 +12,7 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler.exceptions import BadRequestError, UnauthorizedError
 
@@ -31,16 +32,23 @@ class AuthService:
     account recovery using recovery codes.
     """
 
-    def __init__(self, recovery_table, cognito_client=None, user_pool_id: Optional[str] = None):
+    def __init__(
+        self,
+        session: boto3.Session,
+        recovery_table_name: str,
+        cognito_client=None,
+        user_pool_id: Optional[str] = None,
+    ):
         """
         Initialize the authentication service.
 
         Args:
-            recovery_table: DynamoDB table resource for recovery codes
+            session: AWS session for DynamoDB access
+            recovery_table_name: DynamoDB table name for recovery codes
             cognito_client: Optional Cognito client for authentication
             user_pool_id: Optional Cognito user pool ID
         """
-        self.recovery_table = recovery_table
+        self.recovery_table = session.resource("dynamodb").Table(recovery_table_name)
         self.cognito_client = cognito_client
         self.user_pool_id = user_pool_id
 

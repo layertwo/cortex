@@ -432,14 +432,14 @@
   - **Property 16: File removal from collection preserves file**
   - **Validates: Requirements 13.2**
 
-- [ ] 15. Implement tag search routes and services
-- [ ] 15.1 Create tag search route handler
+- [x] 15. Implement tag search routes and services
+- [x] 15.1 Create tag search route handler
   - Implement GET /v1/tags/search route
   - Extract encrypted search term from query parameters
   - Extract user identity from context
   - _Requirements: 11.4, 11.5_
 
-- [ ] 15.2 Create tag search service layer
+- [x] 15.2 Create tag search service layer
   - Receive encrypted search term from client
   - Query DynamoDB GSI for matching encrypted tags
   - Return matching items with encrypted metadata

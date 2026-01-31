@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
-from boto3.dynamodb.types import Binary
 from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
@@ -25,25 +24,9 @@ from src.shared.models import (
     InitiateUploadRequest,
     ItemType,
 )
+from src.shared.util import _decode_binary
 
 logger = Logger(child=True)
-
-
-def _decode_binary(value: bytes | Binary) -> str:
-    """
-    Decode binary data to base64 string.
-
-    Handles both raw bytes and boto3 Binary type from DynamoDB.
-
-    Args:
-        value: Binary data (bytes or Binary type)
-
-    Returns:
-        Base64-encoded string
-    """
-    if isinstance(value, Binary):
-        return bytes(value).decode()
-    return value.decode()
 
 
 class CreateItemRoute(BaseRoute):

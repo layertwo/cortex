@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.api.services.auth_service import AuthService
+from src.api.services.collection_service import CollectionService
+from src.api.services.item_service import ItemService
+from src.api.services.vault_service import VaultService
 from src.environment.service_provider import ServiceProvider
 from tests.fixtures.boto import *  # noqa: F403,F401
 
@@ -75,3 +79,38 @@ def setup_environment(
 @pytest.fixture
 def mock_service_provider():
     return ServiceProvider()
+
+
+@pytest.fixture
+def auth_service(boto_session, recovery_table_name):
+    """Create auth service with stubbed boto3 session."""
+    return AuthService(
+        session=boto_session,
+        recovery_table_name=recovery_table_name,
+    )
+
+
+@pytest.fixture
+def collection_service(boto_session, collections_table_name, items_table_name):
+    """Create collection service with stubbed boto3 session."""
+    return CollectionService(
+        session=boto_session,
+        collections_table_name=collections_table_name,
+        items_table_name=items_table_name,
+    )
+
+
+@pytest.fixture
+def vault_service(boto_session, vaults_table_name):
+    """Create a VaultService instance with real table resource."""
+    return VaultService(session=boto_session, vaults_table_name=vaults_table_name)
+
+
+@pytest.fixture
+def item_service(boto_session, items_table_name, files_bucket_name):
+    """Create an ItemService instance for testing."""
+    return ItemService(
+        session=boto_session,
+        items_table_name=items_table_name,
+        s3_bucket_name=files_bucket_name,
+    )

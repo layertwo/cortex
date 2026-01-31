@@ -18,23 +18,11 @@ from aws_lambda_powertools.event_handler.exceptions import (
 from botocore.exceptions import ClientError
 from botocore.stub import ANY
 
-from src.api.services.vault_service import VaultService
-
 
 class TestVaultService:
     """Unit tests for VaultService."""
 
-    @pytest.fixture
-    def vaults_table(self, dynamodb_table):
-        """Create a real DynamoDB table resource for stubbing."""
-        return dynamodb_table("test-vaults-table")
-
-    @pytest.fixture
-    def vault_service(self, vaults_table):
-        """Create a VaultService instance with real table resource."""
-        return VaultService(vaults_table=vaults_table)
-
-    def test_create_vault_generates_salt(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_create_vault_generates_salt(self, vault_service, dynamodb_stubber):
         """Test that create_vault generates a 16-byte salt when not provided."""
         user_id = "test-user-123"
 
@@ -60,7 +48,7 @@ class TestVaultService:
         assert isinstance(result["vault_salt"], bytes)
         assert len(result["vault_salt"]) == 16
 
-    def test_create_vault_with_provided_salt(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_create_vault_with_provided_salt(self, vault_service, dynamodb_stubber):
         """Test that create_vault accepts a provided salt."""
         user_id = "test-user-123"
         provided_salt = secrets.token_bytes(16)
@@ -102,9 +90,7 @@ class TestVaultService:
         with pytest.raises(BadRequestError, match="Vault salt must be exactly 16 bytes"):
             vault_service.create_vault(user_id=user_id, vault_salt="not-bytes-value")
 
-    def test_create_vault_handles_dynamodb_error(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_create_vault_handles_dynamodb_error(self, vault_service, dynamodb_stubber):
         """Test that create_vault handles DynamoDB errors appropriately."""
         user_id = "test-user-123"
 
@@ -118,7 +104,7 @@ class TestVaultService:
         with pytest.raises(ClientError):
             vault_service.create_vault(user_id=user_id)
 
-    def test_create_vault_handles_collision(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_create_vault_handles_collision(self, vault_service, dynamodb_stubber):
         """Test that create_vault retries on UUID collision."""
         user_id = "test-user-123"
 
@@ -147,7 +133,7 @@ class TestVaultService:
         assert "vault_salt" in result
         assert len(result["vault_salt"]) == 16
 
-    def test_get_vault_salt_returns_salt(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_get_vault_salt_returns_salt(self, vault_service, dynamodb_stubber):
         """Test that get_vault_salt retrieves the correct salt."""
         user_id = "test-user-123"
         vault_id = "vault-456"
@@ -181,7 +167,7 @@ class TestVaultService:
         # Note: The exact value might differ due to boto3's Binary type handling
         # but the length and type should be correct
 
-    def test_get_vault_salt_raises_not_found(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_get_vault_salt_raises_not_found(self, vault_service, dynamodb_stubber):
         """Test that get_vault_salt raises ResourceNotFoundError when vault doesn't exist."""
         user_id = "test-user-123"
         vault_id = "nonexistent-vault"
@@ -199,9 +185,7 @@ class TestVaultService:
         with pytest.raises(NotFoundError, match=f"Vault {vault_id} not found"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
-    def test_get_vault_salt_raises_error_on_missing_salt(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_get_vault_salt_raises_error_on_missing_salt(self, vault_service, dynamodb_stubber):
         """Test that get_vault_salt raises InternalServerError when salt is missing from item."""
         user_id = "test-user-123"
         vault_id = "vault-456"
@@ -228,9 +212,7 @@ class TestVaultService:
         with pytest.raises(InternalServerError, match="missing salt"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
-    def test_get_vault_salt_validates_salt_format(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_get_vault_salt_validates_salt_format(self, vault_service, dynamodb_stubber):
         """Test that get_vault_salt validates the salt format."""
         user_id = "test-user-123"
         vault_id = "vault-456"
@@ -257,9 +239,7 @@ class TestVaultService:
         with pytest.raises(InternalServerError, match="invalid salt format"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
-    def test_get_vault_salt_handles_dynamodb_error(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_get_vault_salt_handles_dynamodb_error(self, vault_service, dynamodb_stubber):
         """Test that get_vault_salt handles DynamoDB errors."""
         user_id = "test-user-123"
         vault_id = "vault-456"
@@ -274,9 +254,7 @@ class TestVaultService:
         with pytest.raises(ClientError):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
-    def test_vault_exists_returns_true_when_exists(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_vault_exists_returns_true_when_exists(self, vault_service, dynamodb_stubber):
         """Test that vault_exists returns True when vault exists."""
         user_id = "test-user-123"
         vault_id = "vault-456"
@@ -301,9 +279,7 @@ class TestVaultService:
 
         assert result is True
 
-    def test_vault_exists_returns_false_when_not_exists(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_vault_exists_returns_false_when_not_exists(self, vault_service, dynamodb_stubber):
         """Test that vault_exists returns False when vault doesn't exist."""
         user_id = "test-user-123"
         vault_id = "nonexistent-vault"
@@ -322,9 +298,7 @@ class TestVaultService:
 
         assert result is False
 
-    def test_vault_exists_handles_error_gracefully(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_vault_exists_handles_error_gracefully(self, vault_service, dynamodb_stubber):
         """Test that vault_exists returns False on DynamoDB error."""
         user_id = "test-user-123"
         vault_id = "vault-456"
@@ -339,7 +313,7 @@ class TestVaultService:
         with pytest.raises(NotFoundError):
             vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
-    def test_list_user_vaults_returns_vaults(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_list_user_vaults_returns_vaults(self, vault_service, dynamodb_stubber):
         """Test that list_user_vaults returns all user vaults."""
         user_id = "test-user-123"
         salt1 = secrets.token_bytes(16)
@@ -390,9 +364,7 @@ class TestVaultService:
         assert "created_at" in result[0]
         assert "created_at" in result[1]
 
-    def test_list_user_vaults_returns_empty_list(
-        self, vault_service, vaults_table, dynamodb_stubber
-    ):
+    def test_list_user_vaults_returns_empty_list(self, vault_service, dynamodb_stubber):
         """Test that list_user_vaults returns empty list when user has no vaults."""
         user_id = "test-user-123"
 
@@ -412,7 +384,7 @@ class TestVaultService:
         # Verify empty list
         assert result == []
 
-    def test_list_user_vaults_handles_error(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_list_user_vaults_handles_error(self, vault_service, dynamodb_stubber):
         """Test that list_user_vaults handles DynamoDB errors."""
         user_id = "test-user-123"
 
@@ -426,7 +398,7 @@ class TestVaultService:
         with pytest.raises(ClientError):
             vault_service.list_user_vaults(user_id=user_id)
 
-    def test_generated_salts_are_unique(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_generated_salts_are_unique(self, vault_service, dynamodb_stubber):
         """Test that multiple vault creations generate unique salts."""
         user_id = "test-user-123"
 
@@ -452,7 +424,7 @@ class TestVaultService:
         unique_salts = set(salts)
         assert len(unique_salts) == 100, "All generated salts should be unique"
 
-    def test_salt_is_cryptographically_random(self, vault_service, vaults_table, dynamodb_stubber):
+    def test_salt_is_cryptographically_random(self, vault_service, dynamodb_stubber):
         """Test that generated salts are cryptographically random."""
         user_id = "test-user-123"
 
