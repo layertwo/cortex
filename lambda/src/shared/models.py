@@ -40,7 +40,7 @@ class CreateItemRequest(BaseModel):
     encrypted_content: bytes = Field(..., description="Encrypted item content as JSON blob")
     encrypted_metadata: bytes = Field(..., description="Encrypted item metadata")
     encrypted_tags: Optional[List[bytes]] = Field(
-        default=None, description="List of encrypted tags"
+        default=None, max_length=50, description="List of encrypted tags (max 50)"
     )
     encrypted_date_bucket: Optional[bytes] = Field(
         default=None, description="Encrypted date bucket for tasks/events"
@@ -76,7 +76,7 @@ class InitiateUploadRequest(BaseModel):
     size_bytes: int = Field(..., gt=0, le=5_368_709_120, description="File size in bytes (max 5GB)")
     content_type: str = Field(..., description="MIME type of the file")
     encrypted_tags: Optional[List[bytes]] = Field(
-        default=None, description="List of encrypted tags"
+        default=None, max_length=50, description="List of encrypted tags (max 50)"
     )
 
 
