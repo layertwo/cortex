@@ -9,8 +9,13 @@ Requirements: 17.3, 17.4, 17.5, 18.2, 18.5
 
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
+from aws_lambda_powertools.event_handler.exceptions import BadRequestError
+from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
+from src.api.services.share_service import ShareService
+from src.shared.auth import get_user_from_context
+from src.shared.models import CreateShareRequest
 
 logger = Logger(child=True)
 
@@ -18,20 +23,54 @@ logger = Logger(child=True)
 class CreateShareRoute(BaseRoute):
     """Handle share creation."""
 
+    def __init__(self, share_service: ShareService):
+        """Initialize the create share route."""
+        self.share_service = share_service
+
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.post("/v1/shares")
         def handle():
             """
             Create item share with metadata.
 
-            This endpoint will be implemented in task 17.2.
+            Requirements: 17.3
             """
-            logger.info("Create share endpoint called")
-            return {"message": "Create share endpoint - to be implemented in task 17.2"}
+            # Pydantic validation
+            try:
+                body = app.current_event.json_body
+                request = CreateShareRequest(**body)
+            except PydanticValidationError as e:
+                logger.warning("Request validation failed", extra={"errors": e.errors()})
+                raise BadRequestError("Invalid request format")
+
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
+
+            # Create share
+            response = self.share_service.create_share(user_id, request)
+
+            logger.info(
+                "Share created successfully",
+                extra={
+                    "user_id": user_id,
+                    "share_id": response.share_id,
+                    "item_id": request.item_id,
+                },
+            )
+
+            return {
+                "share_id": response.share_id,
+                "created_at": response.created_at,
+                "expires_at": response.expires_at,
+            }
 
 
 class GetShareRoute(BaseRoute):
     """Handle share access (anonymous)."""
+
+    def __init__(self, share_service: ShareService):
+        """Initialize the get share route."""
+        self.share_service = share_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.get("/v1/shares/<share_id>")
@@ -42,14 +81,39 @@ class GetShareRoute(BaseRoute):
             Args:
                 share_id: Share identifier
 
-            This endpoint will be implemented in task 17.2.
+            Requirements: 17.4, 18.2
             """
-            logger.info("Get share endpoint called", extra={"share_id": share_id})
-            return {"message": "Get share endpoint - to be implemented in task 17.2"}
+            # Extract client IP from request context (no auth required)
+            request_context = app.current_event.get("requestContext", {})
+            identity = request_context.get("identity", {})
+            client_ip = identity.get("sourceIp", "unknown")
+
+            # Access share
+            response = self.share_service.get_share(share_id, client_ip)
+
+            logger.info(
+                "Share accessed successfully",
+                extra={
+                    "share_id": share_id,
+                    "client_ip": client_ip,
+                },
+            )
+
+            return {
+                "share_id": response.share_id,
+                "item_id": response.item_id,
+                "download_url": response.download_url,
+                "url_expires_at": response.url_expires_at,
+                "expires_at": response.expires_at,
+            }
 
 
 class RevokeShareRoute(BaseRoute):
     """Handle share revocation."""
+
+    def __init__(self, share_service: ShareService):
+        """Initialize the revoke share route."""
+        self.share_service = share_service
 
     def register(self, app: APIGatewayRestResolver) -> None:
         @app.delete("/v1/shares/<share_id>")
@@ -60,7 +124,23 @@ class RevokeShareRoute(BaseRoute):
             Args:
                 share_id: Share identifier
 
-            This endpoint will be implemented in task 17.2.
+            Requirements: 17.5, 18.5
             """
-            logger.info("Revoke share endpoint called", extra={"share_id": share_id})
-            return {"message": "Revoke share endpoint - to be implemented in task 17.2"}
+            # Extract user identity from context
+            user_id = get_user_from_context(app.current_event)
+
+            # Revoke share
+            response = self.share_service.revoke_share(user_id, share_id)
+
+            logger.info(
+                "Share revoked successfully",
+                extra={
+                    "user_id": user_id,
+                    "share_id": share_id,
+                },
+            )
+
+            return {
+                "message": response.message,
+                "revoked_at": response.revoked_at,
+            }

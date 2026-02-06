@@ -39,6 +39,7 @@ from src.api.services.api_router import ApiRouter
 from src.api.services.auth_service import AuthService
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
+from src.api.services.share_service import ShareService
 from src.api.services.vault_service import VaultService
 
 
@@ -127,6 +128,16 @@ class ServiceProvider:
             items_table_name=self.items_table_name,
         )
 
+    @cached_property
+    def share_service(self) -> ShareService:
+        """Create share service."""
+        return ShareService(
+            session=self.session,
+            shares_table_name=self.shares_table_name,
+            items_table_name=self.items_table_name,
+            s3_bucket_name=self.files_bucket_name,
+        )
+
     # API Router with all routes
     @cached_property
     def api_router(self):
@@ -180,9 +191,9 @@ class ServiceProvider:
                 # Tag routes
                 SearchTagsRoute(item_service=self.item_service, vault_service=self.vault_service),
                 # Share routes
-                CreateShareRoute(),
-                GetShareRoute(),
-                RevokeShareRoute(),
+                CreateShareRoute(share_service=self.share_service),
+                GetShareRoute(share_service=self.share_service),
+                RevokeShareRoute(share_service=self.share_service),
                 # Recovery routes (with service injection)
                 GenerateRecoveryCodesRoute(auth_service=self.auth_service),
                 ValidateRecoveryCodeRoute(auth_service=self.auth_service),
