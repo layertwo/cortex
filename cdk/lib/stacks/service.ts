@@ -196,7 +196,7 @@ export class ServiceStack extends Stack {
         //
         // Note: Share key is NOT stored (embedded in URL fragment)
         // Requirements: 17.3
-        return new TableV2(this, "SharesTable", {
+        const table = new TableV2(this, "SharesTable", {
             tableName: this.resourceName("shares"),
             partitionKey: {
                 name: "PK",
@@ -206,8 +206,10 @@ export class ServiceStack extends Stack {
                 name: "SK",
                 type: AttributeType.STRING,
             },
+            timeToLiveAttribute: "ttl",
             ...DYNAMODB_DEFAULT_PROPS,
         });
+        return table;
     }
 
     private createApiHandler(): Lambda {
