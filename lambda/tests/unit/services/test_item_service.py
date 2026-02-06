@@ -40,9 +40,7 @@ class TestCreateItem:
             encrypted_tags=[b"tag1", b"tag2"],
         )
 
-        dynamodb_stubber.add_response(
-            "transact_write_items", {}, {"TransactItems": ANY}
-        )
+        dynamodb_stubber.add_response("transact_write_items", {}, {"TransactItems": ANY})
 
         response = item_service.create_item("user-123", request)
 

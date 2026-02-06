@@ -343,8 +343,18 @@ class TestDynamoDBRepository:
     def test_transact_write_items(self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name):
         """Should write multiple items atomically."""
         items = [
-            {"Put": {"TableName": dynamodb_table_name, "Item": {"PK": {"S": "A"}, "SK": {"S": "1"}}}},
-            {"Put": {"TableName": dynamodb_table_name, "Item": {"PK": {"S": "B"}, "SK": {"S": "2"}}}},
+            {
+                "Put": {
+                    "TableName": dynamodb_table_name,
+                    "Item": {"PK": {"S": "A"}, "SK": {"S": "1"}},
+                }
+            },
+            {
+                "Put": {
+                    "TableName": dynamodb_table_name,
+                    "Item": {"PK": {"S": "B"}, "SK": {"S": "2"}},
+                }
+            },
         ]
         dynamodb_stubber.add_response(
             "transact_write_items",

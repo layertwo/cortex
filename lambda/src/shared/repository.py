@@ -231,7 +231,11 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB transact_write_items failed",
-                extra={"error": str(e), "table": self.table_name, "item_count": len(transact_items)},
+                extra={
+                    "error": str(e),
+                    "table": self.table_name,
+                    "item_count": len(transact_items),
+                },
             )
             raise
 

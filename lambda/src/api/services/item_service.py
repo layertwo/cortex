@@ -123,9 +123,7 @@ class ItemService:
         # Store item in DynamoDB
         if request.encrypted_tags:
             # Use transact_write_items to atomically write item + tag index rows
-            transact_items = [
-                {"Put": {"TableName": self.items_repo.table_name, "Item": item}}
-            ]
+            transact_items = [{"Put": {"TableName": self.items_repo.table_name, "Item": item}}]
             for tag in request.encrypted_tags:
                 tag_row = {
                     "PK": f"VAULT#{request.vault_id}#TAG#{b64encode(tag).decode('utf-8')}",

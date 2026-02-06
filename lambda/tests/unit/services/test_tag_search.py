@@ -14,9 +14,7 @@ from botocore.stub import ANY
 class TestTagSearch:
     """Test tag search using tag index rows."""
 
-    def test_search_by_tag_returns_matching_items(
-        self, item_service, dynamodb_stubber
-    ):
+    def test_search_by_tag_returns_matching_items(self, item_service, dynamodb_stubber):
         """Should query tag index and batch get full item metadata."""
         vault_id = "vault-123"
         encrypted_tag = b"encrypted-tag-value"

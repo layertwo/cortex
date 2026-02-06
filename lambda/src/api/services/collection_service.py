@@ -409,9 +409,7 @@ class CollectionService:
             raise NotFoundError("Collection not found")
 
         # Verify item exists and user owns it via direct lookup
-        item = self.items_repo.get_item(
-            {"PK": f"ITEM#{request.item_id}", "SK": "METADATA"}
-        )
+        item = self.items_repo.get_item({"PK": f"ITEM#{request.item_id}", "SK": "METADATA"})
 
         if not item:
             raise NotFoundError("Item not found")
