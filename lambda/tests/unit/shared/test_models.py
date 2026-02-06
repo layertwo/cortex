@@ -22,6 +22,7 @@ from src.shared.models import (
     GenerateRecoveryCodesResponse,
     InitiateUploadRequest,
     InitiateUploadResponse,
+    ItemType,
     ListMediaRequest,
     MediaItem,
     SearchByTagRequest,
@@ -636,3 +637,40 @@ class TestCreateItemRequestItemTypeValidation:
             encrypted_metadata=b"metadata",
         )
         assert request.item_type == "NOTE"
+
+
+class TestTagValidation:
+    """Test encrypted_tags validation."""
+
+    def test_create_item_accepts_50_tags(self):
+        """Should accept up to 50 tags."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type=ItemType.NOTE,
+            encrypted_content=b"content",
+            encrypted_metadata=b"metadata",
+            encrypted_tags=[b"tag"] * 50,
+        )
+        assert len(request.encrypted_tags) == 50
+
+    def test_create_item_rejects_51_tags(self):
+        """Should reject more than 50 tags."""
+        with pytest.raises(ValueError, match="at most 50"):
+            CreateItemRequest(
+                vault_id="vault-123",
+                item_type=ItemType.NOTE,
+                encrypted_content=b"content",
+                encrypted_metadata=b"metadata",
+                encrypted_tags=[b"tag"] * 51,
+            )
+
+    def test_initiate_upload_rejects_51_tags(self):
+        """Should reject more than 50 tags on upload."""
+        with pytest.raises(ValueError, match="at most 50"):
+            InitiateUploadRequest(
+                vault_id="vault-123",
+                encrypted_metadata=b"metadata",
+                size_bytes=1000,
+                content_type="image/jpeg",
+                encrypted_tags=[b"tag"] * 51,
+            )

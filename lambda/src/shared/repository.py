@@ -11,7 +11,7 @@ import base64
 import json
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import boto3
 from aws_lambda_powertools import Logger
@@ -211,6 +211,70 @@ class DynamoDBRepository:
             logger.error(
                 "DynamoDB delete_item failed",
                 extra={"error": str(e), "table": self.table_name, "key": key},
+            )
+            raise
+
+    def transact_write_items(self, transact_items: List[Dict[str, Any]]) -> None:
+        """
+        Execute a transactional write across multiple items.
+
+        Args:
+            transact_items: List of transact item operations (Put, Delete, Update, ConditionCheck)
+
+        Raises:
+            ClientError: If transaction fails
+        """
+        try:
+            # transact_write_items is a client-level operation, not table-level
+            self.table.meta.client.transact_write_items(TransactItems=transact_items)
+
+        except ClientError as e:
+            logger.error(
+                "DynamoDB transact_write_items failed",
+                extra={
+                    "error": str(e),
+                    "table": self.table_name,
+                    "item_count": len(transact_items),
+                },
+            )
+            raise
+
+    def batch_get_items(self, keys: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Batch get multiple items by their primary keys.
+
+        Args:
+            keys: List of primary key dictionaries (each with PK and SK)
+
+        Returns:
+            List of items found
+
+        Raises:
+            ClientError: If batch get fails
+        """
+        if not keys:
+            return []
+
+        try:
+            response = self.table.meta.client.batch_get_item(
+                RequestItems={self.table_name: {"Keys": keys}}
+            )
+
+            items = response.get("Responses", {}).get(self.table_name, [])
+
+            # Handle unprocessed keys with retry
+            unprocessed = response.get("UnprocessedKeys", {})
+            while unprocessed.get(self.table_name):
+                response = self.table.meta.client.batch_get_item(RequestItems=unprocessed)
+                items.extend(response.get("Responses", {}).get(self.table_name, []))
+                unprocessed = response.get("UnprocessedKeys", {})
+
+            return items
+
+        except ClientError as e:
+            logger.error(
+                "DynamoDB batch_get_item failed",
+                extra={"error": str(e), "table": self.table_name, "key_count": len(keys)},
             )
             raise
 

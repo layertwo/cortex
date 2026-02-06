@@ -340,6 +340,56 @@ class TestDynamoDBRepository:
             exclusive_start_key=start_key,
         )
 
+    def test_transact_write_items(self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name):
+        """Should write multiple items atomically."""
+        items = [
+            {
+                "Put": {
+                    "TableName": dynamodb_table_name,
+                    "Item": {"PK": {"S": "A"}, "SK": {"S": "1"}},
+                }
+            },
+            {
+                "Put": {
+                    "TableName": dynamodb_table_name,
+                    "Item": {"PK": {"S": "B"}, "SK": {"S": "2"}},
+                }
+            },
+        ]
+        dynamodb_stubber.add_response(
+            "transact_write_items",
+            {},
+            {"TransactItems": items},
+        )
+        dynamodb_repository.transact_write_items(items)
+
+    def test_batch_get_items(self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name):
+        """Should batch get multiple items by keys."""
+        keys = [
+            {"PK": "ITEM#1", "SK": "METADATA"},
+            {"PK": "ITEM#2", "SK": "METADATA"},
+        ]
+        dynamodb_stubber.add_response(
+            "batch_get_item",
+            {
+                "Responses": {
+                    dynamodb_table_name: [
+                        {"PK": {"S": "ITEM#1"}, "SK": {"S": "METADATA"}, "item_id": {"S": "1"}},
+                        {"PK": {"S": "ITEM#2"}, "SK": {"S": "METADATA"}, "item_id": {"S": "2"}},
+                    ]
+                },
+                "UnprocessedKeys": {},
+            },
+            {"RequestItems": {dynamodb_table_name: {"Keys": keys}}},
+        )
+        result = dynamodb_repository.batch_get_items(keys)
+        assert len(result) == 2
+
+    def test_batch_get_items_empty_keys(self, dynamodb_repository):
+        """Should return empty list for empty keys."""
+        result = dynamodb_repository.batch_get_items([])
+        assert result == []
+
 
 class TestS3Repository:
     """Tests for S3Repository class."""

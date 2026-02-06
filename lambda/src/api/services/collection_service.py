@@ -408,30 +408,11 @@ class CollectionService:
         if not collection:
             raise NotFoundError("Collection not found")
 
-        # Verify item exists and user owns it
-        # Query by vault to find item across all types (single query with begins_with)
-        key_condition_expression = "PK = :pk AND begins_with(SK, :sk_prefix)"
-        expression_attribute_values = {
-            ":pk": f"VAULT#{request.vault_id}",
-            ":sk_prefix": "ITEM#",
-        }
+        # Verify item exists and user owns it via direct lookup
+        item = self.items_repo.get_item({"PK": f"ITEM#{request.item_id}", "SK": "METADATA"})
 
-        # Add filter to match exact item_id
-        filter_expression = "item_id = :item_id"
-        expression_attribute_values[":item_id"] = request.item_id
-
-        result = self.items_repo.query(
-            key_condition_expression=key_condition_expression,
-            expression_attribute_values=expression_attribute_values,
-            filter_expression=filter_expression,
-            limit=1,
-        )
-
-        items = result.get("Items", [])
-        if not items:
+        if not item:
             raise NotFoundError("Item not found")
-
-        item = items[0]
 
         # Verify user owns the item
         if item["user_id"] != user_id:
@@ -443,6 +424,10 @@ class CollectionService:
                     "item_user_id": item["user_id"],
                 },
             )
+            raise NotFoundError("Item not found")
+
+        # Verify item belongs to the specified vault
+        if item["vault_id"] != request.vault_id:
             raise NotFoundError("Item not found")
 
         # Create item-collection association

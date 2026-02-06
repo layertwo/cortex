@@ -8,6 +8,7 @@ Requirements: 1.2, 1.4, 1.5, 2.1, 2.2, 2.4, 4.5, 7.1, 7.2, 7.4, 11.3, 24.1, 24.2
 """
 
 import uuid
+from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -120,7 +121,23 @@ class ItemService:
         item["GSI2SK"] = f"ITEM#{item_id}"
 
         # Store item in DynamoDB
-        self.items_repo.put_item(item)
+        if request.encrypted_tags:
+            # Use transact_write_items to atomically write item + tag index rows
+            transact_items = [{"Put": {"TableName": self.items_repo.table_name, "Item": item}}]
+            for tag in request.encrypted_tags:
+                tag_row = {
+                    "PK": f"VAULT#{request.vault_id}#TAG#{b64encode(tag).decode('utf-8')}",
+                    "SK": f"ITEM#{item_id}",
+                    "item_id": item_id,
+                    "vault_id": request.vault_id,
+                    "user_id": user_id,
+                }
+                transact_items.append(
+                    {"Put": {"TableName": self.items_repo.table_name, "Item": tag_row}}
+                )
+            self.items_repo.transact_write_items(transact_items)
+        else:
+            self.items_repo.put_item(item)
 
         logger.info(
             "Created item",
@@ -129,6 +146,7 @@ class ItemService:
                 "vault_id": request.vault_id,
                 "item_id": item_id,
                 "item_type": request.item_type,
+                "tag_count": len(request.encrypted_tags) if request.encrypted_tags else 0,
             },
         )
 
@@ -707,7 +725,7 @@ class ItemService:
             self._delete_media_item(user_id, item_id, item, key)
         else:
             # For NOTE/TASK/EVENT items: Delete DynamoDB record only
-            self._delete_inline_item(user_id, item_id, key)
+            self._delete_inline_item(user_id, item_id, key, item)
 
         logger.info(
             "Item deleted successfully",
@@ -795,6 +813,11 @@ class ItemService:
                 "Deleted DynamoDB metadata",
                 extra={"user_id": user_id, "item_id": item_id},
             )
+
+            # Clean up tag index rows (best-effort)
+            encrypted_tags = item.get("encrypted_tags")
+            if encrypted_tags:
+                self._delete_tag_index_rows(item["vault_id"], item_id, encrypted_tags)
         except Exception as e:
             logger.error(
                 "Failed to delete DynamoDB metadata after S3 deletion",
@@ -822,7 +845,7 @@ class ItemService:
 
             raise
 
-    def _delete_inline_item(self, user_id: str, item_id: str, item_key: dict) -> None:
+    def _delete_inline_item(self, user_id: str, item_id: str, item_key: dict, item: dict) -> None:
         """
         Delete inline item (NOTE, TASK, EVENT) from DynamoDB only.
 
@@ -830,6 +853,7 @@ class ItemService:
             user_id: Authenticated user ID
             item_id: Item ID
             item_key: DynamoDB key for the item
+            item: Item dictionary from DynamoDB
 
         Raises:
             StorageError: If deletion operation fails
@@ -847,6 +871,47 @@ class ItemService:
             )
             raise
 
+        # Clean up tag index rows (best-effort)
+        encrypted_tags = item.get("encrypted_tags")
+        if encrypted_tags:
+            self._delete_tag_index_rows(item["vault_id"], item_id, encrypted_tags)
+
+    def _delete_tag_index_rows(self, vault_id: str, item_id: str, encrypted_tags: list) -> None:
+        """
+        Delete tag index rows for an item. Best-effort cleanup.
+
+        Args:
+            vault_id: Vault ID
+            item_id: Item ID
+            encrypted_tags: List of encrypted tag bytes
+        """
+        from base64 import b64encode
+
+        if not encrypted_tags:
+            return
+
+        try:
+            with self.items_repo.table.batch_writer() as writer:
+                for tag in encrypted_tags:
+                    tag_bytes = bytes(tag) if hasattr(tag, "value") else tag
+                    tag_b64 = b64encode(tag_bytes).decode("utf-8")
+                    writer.delete_item(
+                        Key={
+                            "PK": f"VAULT#{vault_id}#TAG#{tag_b64}",
+                            "SK": f"ITEM#{item_id}",
+                        }
+                    )
+            logger.info(
+                "Deleted tag index rows",
+                extra={"item_id": item_id, "tag_count": len(encrypted_tags)},
+            )
+        except Exception as e:
+            # Best-effort cleanup - orphaned tag rows are harmless
+            logger.warning(
+                "Failed to delete tag index rows",
+                extra={"item_id": item_id, "error": str(e)},
+            )
+
     def search_by_tag(
         self,
         vault_id: str,
@@ -855,14 +920,10 @@ class ItemService:
         next_token: Optional[str] = None,
     ) -> "SearchByTagResponse":
         """
-        Search items by encrypted tag.
+        Search items by encrypted tag using tag index rows.
 
-        This method queries items in a vault and filters by the encrypted tag.
-        The encrypted tag is matched exactly against the tags stored in items.
-
-        Note: This implementation uses application-level filtering. For better
-        performance at scale, consider implementing GSI-based tag indexing
-        as described in the design document (GSI1PK: VAULT#{vaultId}#TAG#{encryptedTag}).
+        Queries tag association rows (PK: VAULT#{vaultId}#TAG#{b64tag}) to find
+        matching item IDs, then batch-gets full item metadata.
 
         Args:
             vault_id: Vault ID to search in
@@ -874,17 +935,16 @@ class ItemService:
             SearchByTagResponse with matching items
 
         Raises:
+            BadRequestError: If encrypted_tag is not valid base64
             StorageError: If DynamoDB query fails
-
-        Requirements: 11.4, 11.5
         """
         from base64 import b64decode
 
         from src.shared.models import ItemMetadata, SearchByTagResponse
 
-        # Decode the base64-encoded encrypted tag
+        # Validate the base64 tag
         try:
-            encrypted_tag_bytes = b64decode(encrypted_tag)
+            b64decode(encrypted_tag)
         except Exception as e:
             logger.error(
                 "Failed to decode encrypted tag",
@@ -895,60 +955,37 @@ class ItemService:
         # Parse pagination token
         exclusive_start_key = parse_pagination_token(next_token) if next_token else None
 
-        # Query all items in the vault using GSI2
-        # GSI2PK: VAULT#{vaultId}, GSI2SK: ITEM#{itemId}
-        key_condition_expression = "GSI2PK = :vault_pk"
-        expression_attribute_values = {
-            ":vault_pk": f"VAULT#{vault_id}",
-        }
+        # Query tag index: PK = VAULT#{vaultId}#TAG#{b64tag}
+        tag_pk = f"VAULT#{vault_id}#TAG#{encrypted_tag}"
 
-        # We need to fetch more items than page_size because we're filtering
-        # in the application layer. Fetch up to 5x page_size to increase
-        # the likelihood of getting enough matching results.
-        fetch_limit = min(page_size * 5, 500)
+        result = self.items_repo.query(
+            key_condition_expression="PK = :tag_pk",
+            expression_attribute_values={":tag_pk": tag_pk},
+            limit=page_size,
+            exclusive_start_key=exclusive_start_key,
+        )
 
-        matching_items = []
-        last_evaluated_key = exclusive_start_key
+        tag_rows = result.get("Items", [])
+        last_evaluated_key = result.get("LastEvaluatedKey")
 
-        # Keep querying until we have enough matching items or run out of results
-        while len(matching_items) < page_size:
-            result = self.items_repo.query(
-                key_condition_expression=key_condition_expression,
-                expression_attribute_values=expression_attribute_values,
-                index_name="GSI2",
-                limit=fetch_limit,
-                exclusive_start_key=last_evaluated_key,
-            )
+        if not tag_rows:
+            return SearchByTagResponse(items=[], next_token=None)
 
-            items = result.get("Items", [])
-            last_evaluated_key = result.get("LastEvaluatedKey")
+        # Batch get full item metadata
+        keys = [{"PK": f"ITEM#{row['item_id']}", "SK": "METADATA"} for row in tag_rows]
+        full_items = self.items_repo.batch_get_items(keys)
 
-            # Filter items by encrypted tag
-            for item in items:
-                # Skip items without tags
-                if "encrypted_tags" not in item or not item["encrypted_tags"]:
-                    continue
+        # Build a lookup map for ordering
+        item_map = {item["item_id"]: item for item in full_items}
 
-                # Check if the encrypted tag matches any of the item's tags
-                item_tags = item["encrypted_tags"]
-                if any(tag == encrypted_tag_bytes for tag in item_tags):
-                    matching_items.append(item)
-
-                    # Stop if we have more than enough results (page_size + 1 to detect more results)
-                    if len(matching_items) > page_size:
-                        break
-
-            # If no more results from DynamoDB, stop
-            if not last_evaluated_key:
-                break
-
-        # Trim to page_size
-        items_to_return = matching_items[:page_size]
-
-        # Convert DynamoDB items to ItemMetadata models
+        # Convert to ItemMetadata models, preserving tag index order
         item_metadata_list = []
-        for item in items_to_return:
-            # Convert Binary objects to bytes
+        for row in tag_rows:
+            item = item_map.get(row["item_id"])
+            if not item:
+                # Item was deleted but tag row remains (orphaned) - skip
+                continue
+
             encrypted_content = item.get("encrypted_content")
             if encrypted_content and hasattr(encrypted_content, "value"):
                 encrypted_content = bytes(encrypted_content)
@@ -979,22 +1016,8 @@ class ItemService:
             )
             item_metadata_list.append(item_metadata)
 
-        # Generate next token if there are more matching items
-        next_token_value = None
-        if len(matching_items) > page_size:
-            # We have more matching items than requested
-            # Use the last returned item's key as the pagination token
-            last_item = items_to_return[-1]
-            last_key = {
-                "PK": f"ITEM#{last_item['item_id']}",
-                "SK": "METADATA",
-                "GSI2PK": f"VAULT#{vault_id}",
-                "GSI2SK": f"ITEM#{last_item['item_id']}",
-            }
-            next_token_value = encode_pagination_token(last_key)
-        elif last_evaluated_key:
-            # There are more items to query from DynamoDB
-            next_token_value = encode_pagination_token(last_evaluated_key)
+        # Pagination token
+        next_token_value = encode_pagination_token(last_evaluated_key)
 
         logger.info(
             "Tag search completed",

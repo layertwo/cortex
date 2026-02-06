@@ -31,7 +31,7 @@ class TestCreateItem:
     """Tests for create_item method (NOTE, TASK, EVENT items)."""
 
     def test_create_note_item(self, item_service, dynamodb_stubber):
-        """Test creating a NOTE item with inline content."""
+        """Test creating a NOTE item with inline content and tags uses transact_write_items."""
         request = CreateItemRequest(
             vault_id="vault-123",
             item_type=ItemType.NOTE,
@@ -40,9 +40,7 @@ class TestCreateItem:
             encrypted_tags=[b"tag1", b"tag2"],
         )
 
-        dynamodb_stubber.add_response(
-            "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
-        )
+        dynamodb_stubber.add_response("transact_write_items", {}, {"TransactItems": ANY})
 
         response = item_service.create_item("user-123", request)
 
@@ -88,6 +86,23 @@ class TestCreateItem:
 
         assert response.item_id is not None
         assert response.item_type == ItemType.EVENT
+
+    def test_create_item_without_tags_uses_put_item(self, item_service, dynamodb_stubber):
+        """Test that creating item without tags uses simple put_item."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type=ItemType.NOTE,
+            encrypted_content=b"content",
+            encrypted_metadata=b"metadata",
+        )
+
+        dynamodb_stubber.add_response(
+            "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
+        )
+
+        response = item_service.create_item("user-123", request)
+
+        assert response.item_id is not None
 
 
 class TestInitiateUpload:
@@ -791,6 +806,48 @@ class TestDeleteItem:
         )
         dynamodb_stubber.add_response(
             "delete_item", {}, {"TableName": "test-items-table", "Key": ANY}
+        )
+
+        item_service.delete_item("user-123", "item-1")
+
+    def test_delete_note_item_with_tags_cleans_up_tag_rows(self, item_service, dynamodb_stubber):
+        """Test that deleting item with tags also deletes tag index rows."""
+
+        tag1 = b"encrypted-tag-1"
+        tag2 = b"encrypted-tag-2"
+
+        # Stub get_item to return item with tags
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "ITEM#item-1"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "NOTE"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_content": {"B": b"encrypted-content"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "encrypted_tags": {"L": [{"B": tag1}, {"B": tag2}]},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {"TableName": "test-items-table", "Key": ANY},
+        )
+
+        # Stub delete of item row
+        dynamodb_stubber.add_response(
+            "delete_item", {}, {"TableName": "test-items-table", "Key": ANY}
+        )
+
+        # Stub batch_write_item for tag row cleanup
+        dynamodb_stubber.add_response(
+            "batch_write_item",
+            {"UnprocessedItems": {}},
+            {"RequestItems": ANY},
         )
 
         item_service.delete_item("user-123", "item-1")
