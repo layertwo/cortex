@@ -18,6 +18,7 @@ enum ItemType {
 }
 
 /// List of encrypted tags
+@length(max: 50)
 list EncryptedTagList {
     member: Blob
 }
