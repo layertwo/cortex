@@ -10,6 +10,7 @@ Standalone zero-knowledge encryption library for Cortex. This package provides a
 
 **Features:**
 - ChaCha20-Poly1305 authenticated encryption
+- Envelope encryption (per-file DEK wrapped with KEK)
 - Argon2id key derivation
 - HKDF key expansion
 - Password validation and breach checking

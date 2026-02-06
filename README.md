@@ -41,7 +41,7 @@ cortex/
 │   └── tests/             # Unit, integration, and property tests
 ├── packages/              # Monorepo packages (npm workspaces)
 │   ├── encryption/        # @cortex/encryption - Standalone encryption library
-│   │   ├── src/lib/       # encryption, key-management, key-storage, password-validation
+│   │   ├── src/lib/       # encryption, envelope-encryption, key-management, key-storage, password-validation
 │   │   └── tests/         # Unit and property tests
 │   └── web/               # @cortex/web - React web application
 │       └── src/           # App.tsx, main.tsx
@@ -104,7 +104,8 @@ npm test
 3. **Vault Password**: Derives encryption keys (never transmitted to server)
 4. **Vault Salt**: Stored on server (non-secret), enables multi-device key derivation
 5. **Vault Master Key**: Derived from vault password + salt using Argon2id
-6. **Derived Keys**: Data encryption key, metadata encryption key, share key derivation key
+6. **Derived Keys**: KEK (Key Encryption Key), metadata encryption key, share key derivation key
+7. **Envelope Encryption**: Each media file encrypted with a unique DEK, DEK wrapped with KEK
 
 **Recovery Options:**
 - **Account Recovery**: Use one of 10 recovery codes to reset account password (codes are hashed with SHA-256 and invalidated after use)
@@ -119,7 +120,7 @@ npm test
 - **Item Management**: Create, upload, list, retrieve, update, delete items (MEDIA, NOTE, TASK, EVENT types)
 - **Collection Management**: Create, list, retrieve, update, delete collections with many-to-many item associations
 - **Tag Search**: Search items by encrypted tags with vault isolation and pagination
-- **Encryption Library**: ChaCha20-Poly1305 encryption, Argon2id key derivation, password validation
+- **Encryption Library**: ChaCha20-Poly1305 encryption, envelope encryption (DEK/KEK), Argon2id key derivation, password validation
 - **API Layer**: Single Lambda function with APIGatewayRestResolver handling all routes
 - **Testing**: Unit tests with botocore Stubber, property-based tests with Hypothesis
 

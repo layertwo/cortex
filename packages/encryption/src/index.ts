@@ -51,3 +51,14 @@ export {
   checkPasswordBreach,
   type PasswordValidationResult,
 } from './lib/password-validation';
+
+// Export envelope encryption functions
+export {
+  generateDek,
+  wrapDek,
+  unwrapDek,
+  encryptFileWithDek,
+  decryptFileWithDek,
+  DekUnwrapError,
+  type DekUnwrapErrorCode,
+} from './lib/envelope-encryption';
