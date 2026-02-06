@@ -62,3 +62,14 @@ export {
   DekUnwrapError,
   type DekUnwrapErrorCode,
 } from './lib/envelope-encryption';
+
+// Export share encryption functions
+export {
+  deriveShareKeys,
+  computeShareHmac,
+  verifyShareHmac,
+  encodeShareBlob,
+  decodeShareBlob,
+  type ShareKeys,
+  type ShareBlob,
+} from './lib/share-encryption';
