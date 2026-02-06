@@ -205,26 +205,17 @@ class TestCreateShareRequest:
 
     def test_valid_request_minimal(self):
         """Should create valid request with minimal fields."""
-        request = CreateShareRequest(file_id="file-123", vault_id="vault-456")
+        request = CreateShareRequest(item_id="item-123")
 
-        assert request.file_id == "file-123"
-        assert request.vault_id == "vault-456"
+        assert request.item_id == "item-123"
         assert request.expires_at is None
-        assert request.is_password_protected is False
 
-    def test_with_expiration(self, now):
-        """Should accept expiration timestamp."""
-        request = CreateShareRequest(file_id="file-123", vault_id="vault-456", expires_at=now)
+    def test_with_expiration(self):
+        """Should accept expiration timestamp as Unix epoch."""
+        expires_at = 1738800000
+        request = CreateShareRequest(item_id="item-123", expires_at=expires_at)
 
-        assert request.expires_at == now
-
-    def test_with_password_protection(self):
-        """Should accept password protection flag."""
-        request = CreateShareRequest(
-            file_id="file-123", vault_id="vault-456", is_password_protected=True
-        )
-
-        assert request.is_password_protected is True
+        assert request.expires_at == expires_at
 
 
 class TestDynamoDBFileItem:
@@ -299,7 +290,7 @@ class TestDynamoDBShareItem:
             PK="SHARE#share-123",
             SK="METADATA",
             share_id="share-123",
-            file_id="file-456",
+            item_id="item-456",
             vault_id="vault-789",
             user_id="user-abc",
             created_at=1234567890,
@@ -307,11 +298,12 @@ class TestDynamoDBShareItem:
 
         assert item.PK == "SHARE#share-123"
         assert item.SK == "METADATA"
-        assert item.is_password_protected is False
+        assert item.item_id == "item-456"
         assert item.is_revoked is False
         assert item.access_count == 0
         assert item.expires_at is None
         assert item.last_accessed_at is None
+        assert item.ttl is None
 
     def test_with_all_fields(self):
         """Should accept all optional fields."""
@@ -319,22 +311,23 @@ class TestDynamoDBShareItem:
             PK="SHARE#share-123",
             SK="METADATA",
             share_id="share-123",
-            file_id="file-456",
+            item_id="item-456",
             vault_id="vault-789",
             user_id="user-abc",
             created_at=1234567890,
             expires_at=1234567900,
-            is_password_protected=True,
             is_revoked=True,
             access_count=5,
             last_accessed_at=1234567895,
+            ttl=1234654290,
         )
 
+        assert item.item_id == "item-456"
         assert item.expires_at == 1234567900
-        assert item.is_password_protected is True
         assert item.is_revoked is True
         assert item.access_count == 5
         assert item.last_accessed_at == 1234567895
+        assert item.ttl == 1234654290
 
 
 class TestDynamoDBRecoveryCodeItem:
