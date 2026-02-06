@@ -774,8 +774,8 @@
   - **Property 22: Vault password change requires DEK re-wrapping**
   - **Validates: Requirements 23.3, 23.4**
 
-- [ ] 17. Implement file sharing system
-- [ ] 17.1 Build frontend share creation with envelope encryption
+- [x] 17. Implement file sharing system
+- [x] 17.1 Build frontend share creation with envelope encryption
   - Require share password (no passwordless sharing)
   - Validate password meets minimum strength requirements (16+ chars with 80 bits entropy)
   - Generate random share salt (16 bytes)
@@ -789,13 +789,13 @@
   - Provide alternative share ID + password entry method for truncated URLs
   - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.10, 17.11, 18.3, 31.1, 31.2, 31.3, 31.4_
 
-- [ ] 17.2 Create share route handlers
+- [x] 17.2 Create share route handlers
   - Implement POST /v1/shares route (create share metadata only, no keys)
   - Implement GET /v1/shares/{id} route (access share, anonymous)
   - Implement DELETE /v1/shares/{id} route (revoke share)
   - _Requirements: 17.4, 17.5, 17.7, 18.2, 18.5_
 
-- [ ] 17.3 Create share service layer with server-side rate limiting
+- [x] 17.3 Create share service layer with server-side rate limiting
   - Store share metadata only (share ID, file reference, creation time, optional expiration, access count)
   - Never store any key material (DEK, wrapped DEK, share key, salt, HMAC)
   - Validate share access (check optional expiration and revocation)
@@ -807,7 +807,7 @@
   - Track access count and last accessed time
   - _Requirements: 17.4, 17.5, 17.7, 18.1, 18.2, 18.5, 18.6, 18.7, 18.9, 31.5_
 
-- [ ] 17.4 Build frontend share access with envelope encryption and HMAC verification
+- [x] 17.4 Build frontend share access with envelope encryption and HMAC verification
   - Extract password-wrapped DEK, salt, and HMAC from URL fragment
   - Fetch share metadata (shareId, expiration) from server
   - Prompt for share password
@@ -824,7 +824,7 @@
   - Overwrite DEK buffer with zeros before dereferencing
   - _Requirements: 17.5, 17.6, 17.7, 17.8, 18.4, 18.5, 31.6_
 
-- [ ]* 17.5 Write property test for share keys enable file access without vault password
+- [x]* 17.5 Write property test for share keys enable file access without vault password
   - **Property 20: Share keys enable file access without vault password**
   - **Validates: Requirements 17.1, 17.4**
 
