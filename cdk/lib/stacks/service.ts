@@ -221,11 +221,16 @@ export class ServiceStack extends Stack {
             code: Code.fromAsset("../lambda/src/api"),
             environment: {
                 STAGE: this.props.stage.stageType,
-                DATA_TABLE: this.dataTable.tableName,
-                SHARES_TABLE: this.sharesTable.tableName,
-                BUCKET_NAME: this.bucket.bucketName,
-                USER_POOL_ID: this.props.userPool.userPoolId,
-                USER_POOL_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
+                // Single data table serves as vaults, items, collections, and recovery table
+                VAULTS_TABLE_NAME: this.dataTable.tableName,
+                ITEMS_TABLE_NAME: this.dataTable.tableName,
+                COLLECTIONS_TABLE_NAME: this.dataTable.tableName,
+                RECOVERY_TABLE_NAME: this.dataTable.tableName,
+                // Separate shares table for anonymous access security isolation
+                SHARES_TABLE_NAME: this.sharesTable.tableName,
+                FILES_BUCKET_NAME: this.bucket.bucketName,
+                COGNITO_USER_POOL_ID: this.props.userPool.userPoolId,
+                COGNITO_USER_POOL_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
                 POWERTOOLS_SERVICE_NAME: "cortex-api",
                 POWERTOOLS_METRICS_NAMESPACE: "Cortex",
                 LOG_LEVEL: "INFO",
