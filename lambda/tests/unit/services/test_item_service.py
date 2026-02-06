@@ -31,7 +31,7 @@ class TestCreateItem:
     """Tests for create_item method (NOTE, TASK, EVENT items)."""
 
     def test_create_note_item(self, item_service, dynamodb_stubber):
-        """Test creating a NOTE item with inline content."""
+        """Test creating a NOTE item with inline content and tags uses transact_write_items."""
         request = CreateItemRequest(
             vault_id="vault-123",
             item_type=ItemType.NOTE,
@@ -41,7 +41,7 @@ class TestCreateItem:
         )
 
         dynamodb_stubber.add_response(
-            "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
+            "transact_write_items", {}, {"TransactItems": ANY}
         )
 
         response = item_service.create_item("user-123", request)
@@ -88,6 +88,23 @@ class TestCreateItem:
 
         assert response.item_id is not None
         assert response.item_type == ItemType.EVENT
+
+    def test_create_item_without_tags_uses_put_item(self, item_service, dynamodb_stubber):
+        """Test that creating item without tags uses simple put_item."""
+        request = CreateItemRequest(
+            vault_id="vault-123",
+            item_type=ItemType.NOTE,
+            encrypted_content=b"content",
+            encrypted_metadata=b"metadata",
+        )
+
+        dynamodb_stubber.add_response(
+            "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
+        )
+
+        response = item_service.create_item("user-123", request)
+
+        assert response.item_id is not None
 
 
 class TestInitiateUpload:

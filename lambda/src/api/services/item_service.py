@@ -8,6 +8,7 @@ Requirements: 1.2, 1.4, 1.5, 2.1, 2.2, 2.4, 4.5, 7.1, 7.2, 7.4, 11.3, 24.1, 24.2
 """
 
 import uuid
+from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -120,7 +121,25 @@ class ItemService:
         item["GSI2SK"] = f"ITEM#{item_id}"
 
         # Store item in DynamoDB
-        self.items_repo.put_item(item)
+        if request.encrypted_tags:
+            # Use transact_write_items to atomically write item + tag index rows
+            transact_items = [
+                {"Put": {"TableName": self.items_repo.table_name, "Item": item}}
+            ]
+            for tag in request.encrypted_tags:
+                tag_row = {
+                    "PK": f"VAULT#{request.vault_id}#TAG#{b64encode(tag).decode('utf-8')}",
+                    "SK": f"ITEM#{item_id}",
+                    "item_id": item_id,
+                    "vault_id": request.vault_id,
+                    "user_id": user_id,
+                }
+                transact_items.append(
+                    {"Put": {"TableName": self.items_repo.table_name, "Item": tag_row}}
+                )
+            self.items_repo.transact_write_items(transact_items)
+        else:
+            self.items_repo.put_item(item)
 
         logger.info(
             "Created item",
@@ -129,6 +148,7 @@ class ItemService:
                 "vault_id": request.vault_id,
                 "item_id": item_id,
                 "item_type": request.item_type,
+                "tag_count": len(request.encrypted_tags) if request.encrypted_tags else 0,
             },
         )
 
