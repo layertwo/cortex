@@ -811,3 +811,45 @@ class TestDeleteItem:
         )
 
         item_service.delete_item("user-123", "item-1")
+
+    def test_delete_note_item_with_tags_cleans_up_tag_rows(self, item_service, dynamodb_stubber):
+        """Test that deleting item with tags also deletes tag index rows."""
+
+        tag1 = b"encrypted-tag-1"
+        tag2 = b"encrypted-tag-2"
+
+        # Stub get_item to return item with tags
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "ITEM#item-1"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "NOTE"},
+                    "vault_id": {"S": "vault-123"},
+                    "user_id": {"S": "user-123"},
+                    "encrypted_content": {"B": b"encrypted-content"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
+                    "encrypted_tags": {"L": [{"B": tag1}, {"B": tag2}]},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                    "version": {"N": "1"},
+                }
+            },
+            {"TableName": "test-items-table", "Key": ANY},
+        )
+
+        # Stub delete of item row
+        dynamodb_stubber.add_response(
+            "delete_item", {}, {"TableName": "test-items-table", "Key": ANY}
+        )
+
+        # Stub batch_write_item for tag row cleanup
+        dynamodb_stubber.add_response(
+            "batch_write_item",
+            {"UnprocessedItems": {}},
+            {"RequestItems": ANY},
+        )
+
+        item_service.delete_item("user-123", "item-1")

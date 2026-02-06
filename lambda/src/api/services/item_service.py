@@ -727,7 +727,7 @@ class ItemService:
             self._delete_media_item(user_id, item_id, item, key)
         else:
             # For NOTE/TASK/EVENT items: Delete DynamoDB record only
-            self._delete_inline_item(user_id, item_id, key)
+            self._delete_inline_item(user_id, item_id, key, item)
 
         logger.info(
             "Item deleted successfully",
@@ -815,6 +815,11 @@ class ItemService:
                 "Deleted DynamoDB metadata",
                 extra={"user_id": user_id, "item_id": item_id},
             )
+
+            # Clean up tag index rows (best-effort)
+            encrypted_tags = item.get("encrypted_tags")
+            if encrypted_tags:
+                self._delete_tag_index_rows(item["vault_id"], item_id, encrypted_tags)
         except Exception as e:
             logger.error(
                 "Failed to delete DynamoDB metadata after S3 deletion",
@@ -842,7 +847,7 @@ class ItemService:
 
             raise
 
-    def _delete_inline_item(self, user_id: str, item_id: str, item_key: dict) -> None:
+    def _delete_inline_item(self, user_id: str, item_id: str, item_key: dict, item: dict) -> None:
         """
         Delete inline item (NOTE, TASK, EVENT) from DynamoDB only.
 
@@ -850,6 +855,7 @@ class ItemService:
             user_id: Authenticated user ID
             item_id: Item ID
             item_key: DynamoDB key for the item
+            item: Item dictionary from DynamoDB
 
         Raises:
             StorageError: If deletion operation fails
@@ -866,6 +872,47 @@ class ItemService:
                 extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
             raise
+
+        # Clean up tag index rows (best-effort)
+        encrypted_tags = item.get("encrypted_tags")
+        if encrypted_tags:
+            self._delete_tag_index_rows(item["vault_id"], item_id, encrypted_tags)
+
+    def _delete_tag_index_rows(self, vault_id: str, item_id: str, encrypted_tags: list) -> None:
+        """
+        Delete tag index rows for an item. Best-effort cleanup.
+
+        Args:
+            vault_id: Vault ID
+            item_id: Item ID
+            encrypted_tags: List of encrypted tag bytes
+        """
+        from base64 import b64encode
+
+        if not encrypted_tags:
+            return
+
+        try:
+            with self.items_repo.table.batch_writer() as writer:
+                for tag in encrypted_tags:
+                    tag_bytes = bytes(tag) if hasattr(tag, "value") else tag
+                    tag_b64 = b64encode(tag_bytes).decode("utf-8")
+                    writer.delete_item(
+                        Key={
+                            "PK": f"VAULT#{vault_id}#TAG#{tag_b64}",
+                            "SK": f"ITEM#{item_id}",
+                        }
+                    )
+            logger.info(
+                "Deleted tag index rows",
+                extra={"item_id": item_id, "tag_count": len(encrypted_tags)},
+            )
+        except Exception as e:
+            # Best-effort cleanup - orphaned tag rows are harmless
+            logger.warning(
+                "Failed to delete tag index rows",
+                extra={"item_id": item_id, "error": str(e)},
+            )
 
     def search_by_tag(
         self,
