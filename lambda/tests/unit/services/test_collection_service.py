@@ -588,32 +588,25 @@ class TestAddItemToCollection:
             },
         )
 
-        # Stub query to find item by ID (single query with filter)
+        # Stub get_item for item verification (direct lookup)
         dynamodb_stubber.add_response(
-            "query",
+            "get_item",
             {
-                "Items": [
-                    {
-                        "PK": {"S": f"VAULT#{vault_id}"},
-                        "SK": {"S": f"ITEM#MEDIA#{item_id}"},
-                        "item_id": {"S": item_id},
-                        "item_type": {"S": "MEDIA"},
-                        "vault_id": {"S": vault_id},
-                        "user_id": {"S": user_id},
-                        "encrypted_metadata": {"B": b"item-metadata"},
-                        "created_at": {"N": "1234567890"},
-                        "updated_at": {"N": "1234567890"},
-                    }
-                ],
-                "Count": 1,
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": user_id},
+                    "encrypted_metadata": {"B": b"item-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                }
             },
             {
                 "TableName": items_table_name,
-                "KeyConditionExpression": ANY,
-                "FilterExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "Limit": 1,
-                "ScanIndexForward": True,
+                "Key": ANY,
             },
         )
 
@@ -688,32 +681,25 @@ class TestAddItemToCollection:
             },
         )
 
-        # Stub query to find item by ID (single query with filter)
+        # Stub get_item for item verification (direct lookup)
         dynamodb_stubber.add_response(
-            "query",
+            "get_item",
             {
-                "Items": [
-                    {
-                        "PK": {"S": f"VAULT#{vault_id}"},
-                        "SK": {"S": f"ITEM#MEDIA#{item_id}"},
-                        "item_id": {"S": item_id},
-                        "item_type": {"S": "MEDIA"},
-                        "vault_id": {"S": vault_id},
-                        "user_id": {"S": user_id},
-                        "encrypted_metadata": {"B": b"item-metadata"},
-                        "created_at": {"N": "1234567890"},
-                        "updated_at": {"N": "1234567890"},
-                    }
-                ],
-                "Count": 1,
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": user_id},
+                    "encrypted_metadata": {"B": b"item-metadata"},
+                    "created_at": {"N": "1234567890"},
+                    "updated_at": {"N": "1234567890"},
+                }
             },
             {
                 "TableName": items_table_name,
-                "KeyConditionExpression": ANY,
-                "FilterExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "Limit": 1,
-                "ScanIndexForward": True,
+                "Key": ANY,
             },
         )
 
@@ -836,18 +822,13 @@ class TestAddItemToCollectionAuthorization:
             }
         )
 
-        service.items_repo.query = MagicMock(
+        service.items_repo.get_item = MagicMock(
             return_value={
-                "Items": [
-                    {
-                        "item_id": "item-123",
-                        "item_type": "MEDIA",
-                        "vault_id": "vault-123",
-                        "user_id": "different-user",  # Different user!
-                        "upload_status": "COMPLETE",
-                    }
-                ],
-                "Count": 1,
+                "item_id": "item-123",
+                "item_type": "MEDIA",
+                "vault_id": "vault-123",
+                "user_id": "different-user",  # Different user!
+                "upload_status": "COMPLETE",
             }
         )
 
