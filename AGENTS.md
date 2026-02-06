@@ -32,9 +32,15 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - HKDF derives multiple keys from vault master key: KEK (Key Encryption Key), metadata encryption key, share key derivation key
 
 **Envelope Encryption (Media Files):**
-- Each media file encrypted with unique DEK (Data Encryption Key)
+- Each media file encrypted with unique DEK (Data Encryption Key) via ChaCha20-Poly1305
 - DEK wrapped with vault's KEK and stored in DynamoDB (not S3)
+- Wrapped DEK binary format: `[version(1)][timestamp(4)][nonce(12)][encryptedDEK(32)][authTag(16)]` = 65 bytes
+- Optional HMAC-SHA256 binding: appends 32-byte `HMAC(DEK, fileId)` for key substitution defense (97 bytes total)
 - File content encrypted with DEK, uploaded to S3
+- Implementation: `packages/encryption/src/lib/envelope-encryption.ts`
+- API: `generateDek()`, `wrapDek()`, `unwrapDek()`, `encryptFileWithDek()`, `decryptFileWithDek()`
+- Error type: `DekUnwrapError` with codes `CORRUPTED_DEK`, `WRONG_KEK_VERSION`, `AUTHENTICATION_FAILED`
+- DEK zeroed after use in `encryptFileWithDek` and `decryptFileWithDek` (try/finally)
 - Benefits:
   - Efficient key rotation: only re-wrap DEKs, not re-encrypt files
   - Fast sharing: wrap DEK with share key, no file re-upload
@@ -216,7 +222,9 @@ cortex/
 │   │   ├── src/
 │   │   │   ├── lib/
 │   │   │   │   ├── encryption.ts     # ChaCha20-Poly1305
+│   │   │   │   ├── envelope-encryption.ts # DEK generation, wrapping, file encryption
 │   │   │   │   ├── key-management.ts # Argon2id, HKDF
+│   │   │   │   ├── key-storage.ts    # IndexedDB + Web Crypto key storage
 │   │   │   │   ├── password-validation.ts
 │   │   │   │   └── sharing.ts
 │   │   │   └── index.ts

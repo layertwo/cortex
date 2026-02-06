@@ -209,8 +209,8 @@
   - **Property 27: Vault salt uniqueness**
   - **Validates: Requirements 22.4**
 
-- [ ] 6.12 Implement envelope encryption for media files
-  - [ ] 6.12.1 Create DEK generation and wrapping functions with key commitment documentation and binary format
+- [x] 6.12 Implement envelope encryption for media files
+  - [x] 6.12.1 Create DEK generation and wrapping functions with key commitment documentation and binary format
     - Add to packages/encryption/src/lib/envelope-encryption.ts
     - Generate unique 256-bit DEK per file using CSPRNG
     - Wrap DEK with KEK using ChaCha20-Poly1305
@@ -228,14 +228,14 @@
     - Export functions: generateDek(), wrapDek(dek, kek, fileId?, includeBinding?), unwrapDek(wrappedDek, kek)
     - _Requirements: 28.1, 28.2, 28.3, 28.4, 28.5, 28.6, 28.7, 28.8, 28.9, 28.10, 28.11, 28.12_
 
-  - [ ] 6.12.2 Create file encryption with DEK
+  - [x] 6.12.2 Create file encryption with DEK
     - Add to packages/encryption/src/lib/envelope-encryption.ts
     - Encrypt file content with DEK using ChaCha20-Poly1305
     - Return encrypted content and wrapped DEK
     - Export function: encryptFileWithDek(content, kek)
     - _Requirements: 28.2, 28.3_
 
-  - [ ] 6.12.3 Create file decryption with DEK and error handling
+  - [x] 6.12.3 Create file decryption with DEK and error handling
     - Add to packages/encryption/src/lib/envelope-encryption.ts
     - Unwrap DEK using KEK with error handling
     - Return specific error codes for failure types:
@@ -252,12 +252,12 @@
     - Export error types: DekUnwrapError { code: 'CORRUPTED_DEK' | 'WRONG_KEK_VERSION' | 'AUTHENTICATION_FAILED', message: string }
     - _Requirements: 29.2, 29.3, 29.4, 29.5, 29.6, 29.7, 29.8, 29.9, 29.10, 29.11_
 
-  - [ ]* 6.12.4 Write property test for envelope encryption round-trip
+  - [x]* 6.12.4 Write property test for envelope encryption round-trip
     - Create packages/encryption/tests/property/test_envelope_encryption.test.ts
     - **Property 32: Envelope encryption round-trip**
     - **Validates: Requirements 28.1, 28.2, 28.3, 29.2, 29.3**
 
-  - [ ]* 6.12.5 Write property test for DEK uniqueness
+  - [x]* 6.12.5 Write property test for DEK uniqueness
     - Add to packages/encryption/tests/property/test_envelope_encryption.test.ts
     - **Property 33: DEK uniqueness**
     - **Validates: Requirements 28.4, 28.5**
