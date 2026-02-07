@@ -87,30 +87,38 @@ class TestGetShareRoute:
         self, mock_service_provider, dynamodb_stubber, items_table_name, shares_table_name
     ):
         """Test get share route handler returns expected response."""
-        share_id = "test-share-123"
+        share_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         item_id = "test-item-789"
         vault_id = "test-vault-456"
         user_id = "test-user-123"
         s3_key = f"vaults/{vault_id}/files/{item_id}/test"
         now = int(time.time())
 
-        # Stub 1: get_item on shares table (rate limit check)
+        # Stub 1: atomic per-IP rate limit increment
         dynamodb_stubber.add_response(
-            "get_item",
-            {},  # No rate limit entry found
-            expected_params={
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
+            {
                 "TableName": shares_table_name,
-                "Key": {"PK": f"SHARE#{share_id}", "SK": "RATE#1.2.3.4"},
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
             },
         )
 
-        # Stub 2: put_item on shares table (create rate limit entry)
+        # Stub 2: atomic global rate limit increment
         dynamodb_stubber.add_response(
-            "put_item",
-            {},
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
             {
                 "TableName": shares_table_name,
-                "Item": ANY,
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
             },
         )
 
@@ -212,7 +220,7 @@ class TestRevokeShareRoute:
         self, mock_service_provider, dynamodb_stubber, shares_table_name
     ):
         """Test revoke share route handler returns expected response."""
-        share_id = "test-share-123"
+        share_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         user_id = "test-user-123"
         item_id = "test-item-789"
         vault_id = "test-vault-456"

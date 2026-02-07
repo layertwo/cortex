@@ -140,19 +140,32 @@ class TestGetShare:
         client_ip = "192.168.1.1"
         s3_key = "vaults/vault-123/files/item-456/test"
 
-        # Stub rate limit check (get_item returns empty = no prior attempts)
+        # Stub atomic per-IP rate limit increment
         dynamodb_stubber.add_response(
-            "get_item",
-            {},
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
             {
                 "TableName": "test-shares-table",
-                "Key": {"PK": f"SHARE#{share_id}", "SK": f"RATE#{client_ip}"},
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
             },
         )
 
-        # Stub rate limit put_item (create new rate entry)
+        # Stub atomic global rate limit increment
         dynamodb_stubber.add_response(
-            "put_item", {}, {"TableName": "test-shares-table", "Item": ANY}
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
+            {
+                "TableName": "test-shares-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
         )
 
         # Stub get share metadata
@@ -220,19 +233,32 @@ class TestGetShare:
         share_id = "share-123"
         client_ip = "192.168.1.1"
 
-        # Stub rate limit check (no prior attempts)
+        # Stub atomic per-IP rate limit increment
         dynamodb_stubber.add_response(
-            "get_item",
-            {},
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
             {
                 "TableName": "test-shares-table",
-                "Key": {"PK": f"SHARE#{share_id}", "SK": f"RATE#{client_ip}"},
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
             },
         )
 
-        # Stub rate limit put_item
+        # Stub atomic global rate limit increment
         dynamodb_stubber.add_response(
-            "put_item", {}, {"TableName": "test-shares-table", "Item": ANY}
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
+            {
+                "TableName": "test-shares-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
         )
 
         # Stub get share metadata (revoked)
@@ -266,19 +292,32 @@ class TestGetShare:
         client_ip = "192.168.1.1"
         expired_time = int(time.time()) - 3600  # 1 hour ago
 
-        # Stub rate limit check (no prior attempts)
+        # Stub atomic per-IP rate limit increment
         dynamodb_stubber.add_response(
-            "get_item",
-            {},
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
             {
                 "TableName": "test-shares-table",
-                "Key": {"PK": f"SHARE#{share_id}", "SK": f"RATE#{client_ip}"},
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
             },
         )
 
-        # Stub rate limit put_item
+        # Stub atomic global rate limit increment
         dynamodb_stubber.add_response(
-            "put_item", {}, {"TableName": "test-shares-table", "Item": ANY}
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "1"}}},
+            {
+                "TableName": "test-shares-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
         )
 
         # Stub get share metadata (expired)

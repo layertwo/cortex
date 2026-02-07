@@ -7,6 +7,9 @@ access, and revocation.
 Requirements: 17.3, 17.4, 17.5, 18.2, 18.5
 """
 
+import hashlib
+import re
+
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver
 from aws_lambda_powertools.event_handler.exceptions import BadRequestError
@@ -18,6 +21,10 @@ from src.shared.auth import get_user_from_context
 from src.shared.models import CreateShareRequest
 
 logger = Logger(child=True)
+
+UUID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
 
 
 class CreateShareRoute(BaseRoute):
@@ -83,6 +90,9 @@ class GetShareRoute(BaseRoute):
 
             Requirements: 17.4, 18.2
             """
+            if not UUID_PATTERN.match(share_id):
+                raise BadRequestError("Invalid share ID format")
+
             # Extract client IP from request context (no auth required)
             request_context = app.current_event.get("requestContext", {})
             identity = request_context.get("identity", {})
@@ -91,11 +101,12 @@ class GetShareRoute(BaseRoute):
             # Access share
             response = self.share_service.get_share(share_id, client_ip)
 
+            ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:12]
             logger.info(
                 "Share accessed successfully",
                 extra={
                     "share_id": share_id,
-                    "client_ip": client_ip,
+                    "client_ip_hash": ip_hash,
                 },
             )
 
@@ -126,6 +137,9 @@ class RevokeShareRoute(BaseRoute):
 
             Requirements: 17.5, 18.5
             """
+            if not UUID_PATTERN.match(share_id):
+                raise BadRequestError("Invalid share ID format")
+
             # Extract user identity from context
             user_id = get_user_from_context(app.current_event)
 

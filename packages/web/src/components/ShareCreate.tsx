@@ -22,8 +22,23 @@ const EXPIRATION_OPTIONS: ExpirationOption[] = [
 ];
 
 const MIN_PASSWORD_LENGTH = 16;
+const MIN_ENTROPY_BITS = 80;
 const SALT_SIZE = 16;
 const BLOB_VERSION = 0x01;
+
+/**
+ * Estimate Shannon entropy of a password in bits.
+ * Counts unique character classes and uses charset size * length.
+ */
+function estimatePasswordEntropy(password: string): number {
+  let charsetSize = 0;
+  if (/[a-z]/.test(password)) charsetSize += 26;
+  if (/[A-Z]/.test(password)) charsetSize += 26;
+  if (/[0-9]/.test(password)) charsetSize += 10;
+  if (/[^a-zA-Z0-9]/.test(password)) charsetSize += 32;
+  if (charsetSize === 0) return 0;
+  return Math.floor(password.length * Math.log2(charsetSize));
+}
 
 interface ShareCreateProps {
   itemId: string;
@@ -50,7 +65,8 @@ export function ShareCreate({
   const [result, setResult] = useState<ShareResult | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const isPasswordValid = password.length >= MIN_PASSWORD_LENGTH;
+  const passwordEntropy = estimatePasswordEntropy(password);
+  const isPasswordValid = password.length >= MIN_PASSWORD_LENGTH && passwordEntropy >= MIN_ENTROPY_BITS;
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -88,9 +104,8 @@ export function ShareCreate({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            itemId,
-            wrappedDek: uint8ToBase64(shareWrappedDek),
-            expiresAt: expiresAt ?? null,
+            item_id: itemId,
+            expires_at: expiresAt ?? null,
           }),
         });
 
@@ -99,7 +114,7 @@ export function ShareCreate({
           throw new Error(`Failed to create share: ${response.status} ${body}`);
         }
 
-        const { shareId } = (await response.json()) as { shareId: string };
+        const { share_id: shareId } = (await response.json()) as { share_id: string };
 
         // 7. Compute HMAC over shareId (and optional expiry)
         const hmacValue = computeShareHmac(
@@ -210,8 +225,9 @@ export function ShareCreate({
         />
         {password.length > 0 && !isPasswordValid && (
           <p style={{ color: 'red', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
-            Password must be at least {MIN_PASSWORD_LENGTH} characters
-            ({password.length}/{MIN_PASSWORD_LENGTH})
+            {password.length < MIN_PASSWORD_LENGTH
+              ? `Password must be at least ${MIN_PASSWORD_LENGTH} characters (${password.length}/${MIN_PASSWORD_LENGTH})`
+              : `Password too weak — use a mix of upper/lowercase, numbers, and symbols (${passwordEntropy}/${MIN_ENTROPY_BITS} bits)`}
           </p>
         )}
       </div>
@@ -242,13 +258,4 @@ export function ShareCreate({
       </button>
     </form>
   );
-}
-
-/** Convert Uint8Array to standard base64 */
-function uint8ToBase64(bytes: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
 }

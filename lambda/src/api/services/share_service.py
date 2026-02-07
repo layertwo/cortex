@@ -7,6 +7,7 @@ creating shares, accessing shared items, revoking shares, and rate limiting.
 Requirements: 6.12
 """
 
+import hashlib
 import time
 import uuid
 
@@ -28,7 +29,8 @@ logger = Logger(child=True)
 
 # Constants
 PRESIGNED_URL_EXPIRATION = 900  # 15 minutes
-RATE_LIMIT_MAX_ATTEMPTS = 5
+RATE_LIMIT_MAX_ATTEMPTS_PER_IP = 5
+RATE_LIMIT_MAX_ATTEMPTS_GLOBAL = 50
 RATE_LIMIT_WINDOW_SECONDS = 3600  # 1 hour
 TTL_GRACE_PERIOD = 86400  # 24 hours
 TTL_REVOKED_CLEANUP = 604800  # 7 days
@@ -230,12 +232,13 @@ class ShareService:
                 extra={"share_id": share_id},
             )
 
+        ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:12]
         logger.info(
             "Share accessed",
             extra={
                 "share_id": share_id,
                 "item_id": item_id,
-                "client_ip": client_ip,
+                "client_ip_hash": ip_hash,
             },
         )
 
@@ -302,50 +305,61 @@ class ShareService:
 
     def _check_rate_limit(self, share_id: str, client_ip: str) -> None:
         """
-        Check rate limit for share access per IP per share per hour.
+        Check rate limit for share access.
 
-        Uses a DynamoDB item to track access attempts. Max 5 attempts
-        per hour per IP per share.
+        Two limits enforced atomically via DynamoDB ADD:
+        1. Per-IP: max 5 attempts per IP per share per hour
+        2. Global: max 50 attempts per share per hour (across all IPs)
 
         Args:
             share_id: Share identifier
             client_ip: Client IP address
 
         Raises:
-            RateLimitExceededError: If rate limit exceeded
+            RateLimitExceededError: If either rate limit exceeded
         """
         now = int(time.time())
-        rate_key = {"PK": f"SHARE#{share_id}", "SK": f"RATE#{client_ip}"}
+        window_start = now - (now % RATE_LIMIT_WINDOW_SECONDS)
+        window_ttl = window_start + RATE_LIMIT_WINDOW_SECONDS + TTL_RATE_LIMIT_CLEANUP
 
-        rate_item = self.shares_repo.get_item(rate_key)
+        # Atomic increment for per-IP rate limit
+        ip_key = {"PK": f"SHARE#{share_id}", "SK": f"RATE#{client_ip}#{window_start}"}
+        ip_result = self.shares_repo.update_item(
+            key=ip_key,
+            update_expression="ADD attempt_count :inc SET #ttl_attr = :ttl",
+            expression_attribute_values={":inc": 1, ":ttl": window_ttl},
+            expression_attribute_names={"#ttl_attr": "ttl"},
+        )
+        ip_count = int(ip_result.get("attempt_count", 1))
 
-        if rate_item:
-            window_start = int(rate_item.get("window_start", 0))
-            attempt_count = int(rate_item.get("attempt_count", 0))
+        if ip_count > RATE_LIMIT_MAX_ATTEMPTS_PER_IP:
+            retry_after = window_start + RATE_LIMIT_WINDOW_SECONDS - now
+            logger.warning(
+                "Per-IP rate limit exceeded",
+                extra={"share_id": share_id, "attempt_count": ip_count},
+            )
+            raise RateLimitExceededError(
+                message="Rate limit exceeded",
+                retry_after=max(retry_after, 1),
+            )
 
-            # Check if we're still within the rate limit window
-            if now - window_start < RATE_LIMIT_WINDOW_SECONDS:
-                if attempt_count >= RATE_LIMIT_MAX_ATTEMPTS:
-                    retry_after = RATE_LIMIT_WINDOW_SECONDS - (now - window_start)
-                    raise RateLimitExceededError(
-                        message="Rate limit exceeded",
-                        retry_after=max(retry_after, 1),
-                    )
+        # Atomic increment for global per-share rate limit
+        global_key = {"PK": f"SHARE#{share_id}", "SK": f"RATE#GLOBAL#{window_start}"}
+        global_result = self.shares_repo.update_item(
+            key=global_key,
+            update_expression="ADD attempt_count :inc SET #ttl_attr = :ttl",
+            expression_attribute_values={":inc": 1, ":ttl": window_ttl},
+            expression_attribute_names={"#ttl_attr": "ttl"},
+        )
+        global_count = int(global_result.get("attempt_count", 1))
 
-                # Increment attempt count
-                self.shares_repo.update_item(
-                    key=rate_key,
-                    update_expression="SET attempt_count = attempt_count + :inc",
-                    expression_attribute_values={":inc": 1},
-                )
-                return
-
-        # Create or reset rate limit entry
-        rate_limit_item = {
-            "PK": f"SHARE#{share_id}",
-            "SK": f"RATE#{client_ip}",
-            "window_start": now,
-            "attempt_count": 1,
-            "ttl": now + TTL_RATE_LIMIT_CLEANUP,
-        }
-        self.shares_repo.put_item(rate_limit_item)
+        if global_count > RATE_LIMIT_MAX_ATTEMPTS_GLOBAL:
+            retry_after = window_start + RATE_LIMIT_WINDOW_SECONDS - now
+            logger.warning(
+                "Global rate limit exceeded",
+                extra={"share_id": share_id, "attempt_count": global_count},
+            )
+            raise RateLimitExceededError(
+                message="Rate limit exceeded",
+                retry_after=max(retry_after, 1),
+            )
