@@ -9,14 +9,12 @@ Schema: PK: SHARE#{shareId}, SK: METADATA (share metadata)
 """
 
 import time
-from unittest.mock import patch
 
 import pytest
 from aws_lambda_powertools.event_handler.exceptions import NotFoundError
 from botocore.stub import ANY
 
 from src.api.services.share_service import (
-    RateLimitExceededError,
     ShareExpiredError,
     ShareRevokedError,
 )
@@ -98,9 +96,7 @@ class TestCreateShare:
     def test_create_share_item_not_found(self, share_service, dynamodb_stubber):
         """Test creating a share when item doesn't exist."""
         # Stub get_item returning empty (item not found)
-        dynamodb_stubber.add_response(
-            "get_item", {}, {"TableName": "test-items-table", "Key": ANY}
-        )
+        dynamodb_stubber.add_response("get_item", {}, {"TableName": "test-items-table", "Key": ANY})
 
         request = CreateShareRequest(item_id="nonexistent-item")
 
@@ -135,7 +131,9 @@ class TestCreateShare:
 class TestGetShare:
     """Tests for get_share method."""
 
-    def test_get_share_success(self, share_service, dynamodb_stubber, s3_stubber, files_bucket_name):
+    def test_get_share_success(
+        self, share_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
         """Test successfully accessing a share."""
         share_id = "share-123"
         item_id = "item-456"

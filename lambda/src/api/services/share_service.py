@@ -9,7 +9,6 @@ Requirements: 6.12
 
 import time
 import uuid
-from typing import Optional
 
 import boto3
 from aws_lambda_powertools import Logger
