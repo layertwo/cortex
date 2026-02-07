@@ -410,59 +410,40 @@ class GetVaultSaltResponse(BaseModel):
 
 
 # ============================================================================
-# Share Models
+# Share Request/Response Models
 # ============================================================================
 
 
 class CreateShareRequest(BaseModel):
-    """Request model for creating a file share."""
+    """Request model for creating a share."""
 
-    file_id: str = Field(..., description="File identifier to share")
-    vault_id: str = Field(..., description="Vault ID")
-    expires_at: Optional[datetime] = Field(
-        default=None, description="Optional expiration timestamp"
-    )
-    is_password_protected: bool = Field(
-        default=False, description="Whether share requires password"
-    )
+    item_id: str = Field(..., description="Item to share")
+    expires_at: Optional[int] = Field(default=None, description="Expiration timestamp (Unix epoch)")
 
 
 class CreateShareResponse(BaseModel):
     """Response model for share creation."""
 
-    share_id: str = Field(..., description="Unique share identifier")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    expires_at: Optional[datetime] = Field(default=None, description="Expiration timestamp")
-
-
-class GetShareRequest(BaseModel):
-    """Request model for accessing a share."""
-
     share_id: str = Field(..., description="Share identifier")
+    created_at: int = Field(..., description="Creation timestamp (Unix epoch)")
+    expires_at: Optional[int] = Field(default=None, description="Expiration timestamp")
 
 
 class GetShareResponse(BaseModel):
     """Response model for share access."""
 
     share_id: str = Field(..., description="Share identifier")
-    file_id: str = Field(..., description="File identifier")
-    download_url: str = Field(..., description="Presigned download URL")
-    encrypted_metadata: bytes = Field(..., description="Encrypted file metadata")
-    expires_at: datetime = Field(..., description="URL expiration")
-    is_password_protected: bool = Field(default=False, description="Whether password is required")
-
-
-class RevokeShareRequest(BaseModel):
-    """Request model for revoking a share."""
-
-    share_id: str = Field(..., description="Share identifier")
+    item_id: str = Field(..., description="Item identifier")
+    download_url: str = Field(..., description="Presigned S3 download URL")
+    url_expires_at: int = Field(..., description="URL expiration (Unix epoch)")
+    expires_at: Optional[int] = Field(default=None, description="Share expiration (Unix epoch)")
 
 
 class RevokeShareResponse(BaseModel):
     """Response model for share revocation."""
 
-    share_id: str = Field(..., description="Share identifier")
-    revoked_at: datetime = Field(..., description="Revocation timestamp")
+    message: str = Field(..., description="Confirmation message")
+    revoked_at: int = Field(..., description="Revocation timestamp (Unix epoch)")
 
 
 # ============================================================================
@@ -610,15 +591,15 @@ class DynamoDBShareItem(BaseModel):
     PK: str = Field(..., description="Partition key: SHARE#{shareId}")
     SK: str = Field(..., description="Sort key: METADATA")
     share_id: str = Field(..., description="Share identifier")
-    file_id: str = Field(..., description="File identifier")
+    item_id: str = Field(..., description="Item identifier")
     vault_id: str = Field(..., description="Vault identifier")
     user_id: str = Field(..., description="Owner user identifier")
     created_at: int = Field(..., description="Creation timestamp (Unix epoch)")
     expires_at: Optional[int] = Field(default=None, description="Expiration timestamp (Unix epoch)")
-    is_password_protected: bool = Field(default=False, description="Password protection flag")
     is_revoked: bool = Field(default=False, description="Revocation flag")
     access_count: int = Field(default=0, description="Access counter")
     last_accessed_at: Optional[int] = Field(default=None, description="Last access timestamp")
+    ttl: Optional[int] = Field(default=None, description="DynamoDB TTL for auto-cleanup")
 
 
 class DynamoDBRecoveryCodeItem(BaseModel):

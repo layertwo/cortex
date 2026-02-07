@@ -9,6 +9,7 @@ import pytest
 from src.api.services.auth_service import AuthService
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
+from src.api.services.share_service import ShareService
 from src.api.services.vault_service import VaultService
 from src.environment.service_provider import ServiceProvider
 from tests.fixtures.boto import *  # noqa: F403,F401
@@ -111,6 +112,17 @@ def item_service(boto_session, items_table_name, files_bucket_name):
     """Create an ItemService instance for testing."""
     return ItemService(
         session=boto_session,
+        items_table_name=items_table_name,
+        s3_bucket_name=files_bucket_name,
+    )
+
+
+@pytest.fixture
+def share_service(boto_session, shares_table_name, items_table_name, files_bucket_name):
+    """Create a ShareService instance for testing."""
+    return ShareService(
+        session=boto_session,
+        shares_table_name=shares_table_name,
         items_table_name=items_table_name,
         s3_bucket_name=files_bucket_name,
     )

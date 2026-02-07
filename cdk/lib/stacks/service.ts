@@ -196,7 +196,7 @@ export class ServiceStack extends Stack {
         //
         // Note: Share key is NOT stored (embedded in URL fragment)
         // Requirements: 17.3
-        return new TableV2(this, "SharesTable", {
+        const table = new TableV2(this, "SharesTable", {
             tableName: this.resourceName("shares"),
             partitionKey: {
                 name: "PK",
@@ -206,8 +206,10 @@ export class ServiceStack extends Stack {
                 name: "SK",
                 type: AttributeType.STRING,
             },
+            timeToLiveAttribute: "ttl",
             ...DYNAMODB_DEFAULT_PROPS,
         });
+        return table;
     }
 
     private createApiHandler(): Lambda {
@@ -221,11 +223,16 @@ export class ServiceStack extends Stack {
             code: Code.fromAsset("../lambda/src/api"),
             environment: {
                 STAGE: this.props.stage.stageType,
-                DATA_TABLE: this.dataTable.tableName,
-                SHARES_TABLE: this.sharesTable.tableName,
-                BUCKET_NAME: this.bucket.bucketName,
-                USER_POOL_ID: this.props.userPool.userPoolId,
-                USER_POOL_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
+                // Single data table serves as vaults, items, collections, and recovery table
+                VAULTS_TABLE_NAME: this.dataTable.tableName,
+                ITEMS_TABLE_NAME: this.dataTable.tableName,
+                COLLECTIONS_TABLE_NAME: this.dataTable.tableName,
+                RECOVERY_TABLE_NAME: this.dataTable.tableName,
+                // Separate shares table for anonymous access security isolation
+                SHARES_TABLE_NAME: this.sharesTable.tableName,
+                FILES_BUCKET_NAME: this.bucket.bucketName,
+                COGNITO_USER_POOL_ID: this.props.userPool.userPoolId,
+                COGNITO_USER_POOL_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
                 POWERTOOLS_SERVICE_NAME: "cortex-api",
                 POWERTOOLS_METRICS_NAMESPACE: "Cortex",
                 LOG_LEVEL: "INFO",
