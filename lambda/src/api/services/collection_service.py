@@ -9,7 +9,7 @@ Requirements: 12.1, 12.2, 12.3, 12.5, 13.1, 13.2, 13.3, 13.4, 13.5
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import boto3
 
@@ -320,7 +320,7 @@ class CollectionService:
                 ":pk": f"COLLECTION#{collection_id}",
             }
 
-            query_params = {
+            query_params: dict[str, Any] = {
                 "key_condition_expression": key_condition_expression,
                 "expression_attribute_values": expression_attribute_values,
                 "limit": 100,  # Process 100 items per query iteration

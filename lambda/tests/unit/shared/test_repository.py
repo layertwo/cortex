@@ -639,6 +639,7 @@ class TestEncodePaginationToken:
         key = {"PK": "VAULT#v1", "SK": "FILE#f1"}
 
         token = encode_pagination_token(key)
+        assert token is not None
 
         decoded = json.loads(base64.b64decode(token))
         assert decoded == key

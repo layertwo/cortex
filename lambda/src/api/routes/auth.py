@@ -160,7 +160,9 @@ class RecoverRoute(BaseRoute):
             """
             logger.info(
                 "Account recovery request received",
-                email_domain=(recovery.email.split("@")[-1] if "@" in recovery.email else "unknown"),
+                email_domain=(
+                    recovery.email.split("@")[-1] if "@" in recovery.email else "unknown"
+                ),
             )
 
             result = self.auth_service.initiate_recovery(recovery.email, recovery.recovery_code)

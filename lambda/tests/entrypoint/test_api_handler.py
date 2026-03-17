@@ -4,8 +4,6 @@ Tests for the API entrypoint and app configuration.
 
 from fastapi.testclient import TestClient
 
-from src.environment.service_provider import ServiceProvider
-
 
 class TestAppConfiguration:
     def test_health_endpoint(self, mock_service_provider):

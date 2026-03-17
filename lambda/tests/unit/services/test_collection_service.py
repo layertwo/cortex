@@ -812,7 +812,7 @@ class TestAddItemToCollectionAuthorization:
         )
 
         # Mock the repositories
-        service.collections_repo.get_item = MagicMock(
+        service.collections_repo.get_item = MagicMock(  # type: ignore[method-assign]
             return_value={
                 "collection_id": "collection-123",
                 "vault_id": "vault-123",
@@ -820,7 +820,7 @@ class TestAddItemToCollectionAuthorization:
             }
         )
 
-        service.items_repo.get_item = MagicMock(
+        service.items_repo.get_item = MagicMock(  # type: ignore[method-assign]
             return_value={
                 "item_id": "item-123",
                 "item_type": "MEDIA",
@@ -864,7 +864,7 @@ class TestRemoveItemFromCollectionValidation:
                 # Return no association
                 return None
 
-        service.collections_repo.get_item = MagicMock(side_effect=mock_get_item)
+        service.collections_repo.get_item = MagicMock(side_effect=mock_get_item)  # type: ignore[method-assign]
 
         with pytest.raises(NotFoundError, match="Item not in collection"):
             service.remove_item_from_collection(

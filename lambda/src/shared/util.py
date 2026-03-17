@@ -18,7 +18,7 @@ def _encode_binary(value: bytes | Binary | None) -> str | None:
     if value is None:  # pragma: nocover
         return None
     if isinstance(value, Binary):
-        return b64encode(bytes(value)).decode("utf-8")
+        return b64encode(value.value).decode("utf-8")  # type: ignore[attr-defined]
     return b64encode(value).decode("utf-8")
 
 
@@ -35,5 +35,5 @@ def _decode_binary(value: bytes | Binary) -> str:
         Base64-encoded string
     """
     if isinstance(value, Binary):
-        return bytes(value).decode()
+        return value.value.decode()  # type: ignore[attr-defined]
     return value.decode()

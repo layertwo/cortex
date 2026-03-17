@@ -8,7 +8,7 @@ Requirements: 12.1, 12.2, 12.3, 12.5, 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -129,7 +129,7 @@ class ListCollectionsRoute(BaseRoute):
                 count=len(response_collections),
             )
 
-            response = {"collections": response_collections}
+            response: dict[str, Any] = {"collections": response_collections}
             if next_page_token:
                 response["next_token"] = next_page_token
 

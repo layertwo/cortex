@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
-from src.api.routes.tags import SearchTagsRoute
 from src.environment.service_provider import ServiceProvider
 from src.shared.auth import get_current_user
 from src.shared.models import ItemMetadata, SearchByTagResponse

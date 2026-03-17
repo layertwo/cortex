@@ -16,7 +16,7 @@ Validates: Requirements 19.2, 19.3
 import hashlib
 import secrets
 import time
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import pytest
 from hypothesis import given, settings
@@ -82,7 +82,7 @@ class RecoveryCodeStore:
 
     def __init__(self):
         """Initialize the recovery code store."""
-        self.codes: Dict[str, Dict[str, any]] = {}  # code_hash -> code_data
+        self.codes: Dict[str, Dict[str, Any]] = {}  # code_hash -> code_data
 
     def store_codes(self, user_id: str, codes: List[str], timestamp: int) -> None:
         """
@@ -173,7 +173,7 @@ class RecoveryCodeStore:
                 count += 1
         return count
 
-    def get_all_codes(self, user_id: str) -> List[Dict[str, any]]:
+    def get_all_codes(self, user_id: str) -> List[Dict[str, Any]]:
         """
         Get all codes for a user.
 

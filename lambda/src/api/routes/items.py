@@ -8,7 +8,7 @@ Requirements: 1.4, 1.5, 2.3, 4.1, 5.1, 7.1, 7.2, 10.1, 10.2, 24.1, 24.2
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -237,7 +237,7 @@ class ListItemsRoute(BaseRoute):
                 count=len(response_items),
             )
 
-            response = {"items": response_items}
+            response: dict[str, Any] = {"items": response_items}
             if next_page_token:
                 response["next_token"] = next_page_token
 
@@ -271,6 +271,9 @@ class GetItemRoute(BaseRoute):
             """
             # Get item
             item = self.item_service.get_item(user_id, item_id)
+
+            if item is None:
+                raise NotFoundError(f"Item {item_id} not found")
 
             # Convert item to response format
             response = {

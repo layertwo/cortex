@@ -162,7 +162,7 @@ class VaultService:
 
             # Convert Binary type to bytes if necessary
             if isinstance(vault_salt, Binary):
-                vault_salt = bytes(vault_salt)
+                vault_salt = vault_salt.value  # type: ignore[attr-defined]
 
             # Validate salt format
             if not isinstance(vault_salt, bytes) or len(vault_salt) != 16:

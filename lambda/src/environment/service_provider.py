@@ -11,9 +11,9 @@ from functools import cached_property
 
 import boto3
 from fastapi import APIRouter, FastAPI, Request
-from mangum import Mangum
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from mangum import Mangum
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -200,7 +200,7 @@ class ServiceProvider:
         # Rate limiter
         limiter = Limiter(key_func=get_remote_address)
         app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore[arg-type]
 
         # Security headers
         app.add_middleware(SecurityHeadersMiddleware)

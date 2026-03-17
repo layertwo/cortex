@@ -6,7 +6,7 @@ This module implements tag-related endpoints for searching items by encrypted ta
 Requirements: 11.4, 11.5
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
 
@@ -86,7 +86,7 @@ class SearchTagsRoute(BaseRoute):
             )
 
             # Build response
-            result = {
+            result: dict[str, Any] = {
                 "items": [
                     {
                         "item_id": item.item_id,

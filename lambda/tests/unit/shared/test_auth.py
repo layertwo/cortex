@@ -1,7 +1,9 @@
 """Tests for authentication utilities."""
 
+from typing import Any
+
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
 from src.shared.auth import get_current_user
 from src.shared.exceptions import UnauthorizedError
@@ -14,7 +16,7 @@ class TestGetCurrentUser:
         app = FastAPI()
 
         @app.get("/test")
-        def test_route(user_id: str = get_current_user):
+        def test_route(user_id: str = Depends(get_current_user)):
             return {"user_id": user_id}
 
         return app
@@ -48,20 +50,20 @@ class TestGetCurrentUser:
     def test_raises_when_no_user_id(self):
         from src.shared.auth import extract_user_id
 
-        event = {"requestContext": {"authorizer": {}}}
+        event: dict[str, Any] = {"requestContext": {"authorizer": {}}}
         with pytest.raises(UnauthorizedError, match="User identity not found"):
             extract_user_id(event)
 
     def test_raises_when_no_authorizer(self):
         from src.shared.auth import extract_user_id
 
-        event = {"requestContext": {}}
+        event: dict[str, Any] = {"requestContext": {}}
         with pytest.raises(UnauthorizedError, match="User identity not found"):
             extract_user_id(event)
 
     def test_raises_when_no_request_context(self):
         from src.shared.auth import extract_user_id
 
-        event = {}
+        event: dict[str, Any] = {}
         with pytest.raises(UnauthorizedError, match="User identity not found"):
             extract_user_id(event)

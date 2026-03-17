@@ -400,7 +400,7 @@ class ItemService:
             },
         )
 
-        return CompleteUploadResponse(item_id=request.item_id, uploaded_at=now.timestamp())
+        return CompleteUploadResponse(item_id=request.item_id, uploaded_at=now)
 
     def cleanup_failed_upload(
         self, item_id: str, s3_key: Optional[str], upload_id: Optional[str] = None

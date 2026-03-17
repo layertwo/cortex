@@ -72,7 +72,7 @@ class DynamoDBRepository:
             StorageError: If DynamoDB operation fails
         """
         try:
-            kwargs = {"Item": item}
+            kwargs: Dict[str, Any] = {"Item": item}
             if condition_expression:
                 kwargs["ConditionExpression"] = condition_expression
 

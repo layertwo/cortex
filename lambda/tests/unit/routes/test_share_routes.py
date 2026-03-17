@@ -9,7 +9,6 @@ import time
 from botocore.stub import ANY
 from fastapi.testclient import TestClient
 
-from src.api.routes.shares import GetShareRoute
 from src.environment.service_provider import ServiceProvider
 
 
@@ -75,8 +74,6 @@ class TestGetShareRoute:
         self, share_service, dynamodb_stubber, items_table_name, shares_table_name
     ):
         """Test get share route handler returns expected response."""
-        # Create a minimal app with just the GetShareRoute (no auth override needed)
-        routes = [GetShareRoute(share_service=share_service)]
         app = ServiceProvider().app
         client = TestClient(app)
 
