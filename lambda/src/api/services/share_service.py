@@ -12,11 +12,9 @@ import time
 import uuid
 
 import boto3
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import (
-    NotFoundError,
-)
 
+from src.shared.exceptions import NotFoundError
+from src.shared.logger import get_logger
 from src.shared.models import (
     CreateShareRequest,
     CreateShareResponse,
@@ -25,7 +23,7 @@ from src.shared.models import (
 )
 from src.shared.repository import DynamoDBRepository, S3Repository
 
-logger = Logger(child=True)
+logger = get_logger("share_service")
 
 # Constants
 PRESIGNED_URL_EXPIRATION = 900  # 15 minutes
@@ -151,7 +149,7 @@ class ShareService:
 
         logger.info(
             "Created share",
-            extra={
+            **{
                 "user_id": user_id,
                 "share_id": share_id,
                 "item_id": request.item_id,
@@ -229,13 +227,13 @@ class ShareService:
         except Exception:
             logger.warning(
                 "Failed to update access count",
-                extra={"share_id": share_id},
+                **{"share_id": share_id},
             )
 
         ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:12]
         logger.info(
             "Share accessed",
-            extra={
+            **{
                 "share_id": share_id,
                 "item_id": item_id,
                 "client_ip_hash": ip_hash,
@@ -292,7 +290,7 @@ class ShareService:
 
         logger.info(
             "Share revoked",
-            extra={
+            **{
                 "user_id": user_id,
                 "share_id": share_id,
             },
@@ -336,7 +334,7 @@ class ShareService:
             retry_after = window_start + RATE_LIMIT_WINDOW_SECONDS - now
             logger.warning(
                 "Per-IP rate limit exceeded",
-                extra={"share_id": share_id, "attempt_count": ip_count},
+                **{"share_id": share_id, "attempt_count": ip_count},
             )
             raise RateLimitExceededError(
                 message="Rate limit exceeded",
@@ -357,7 +355,7 @@ class ShareService:
             retry_after = window_start + RATE_LIMIT_WINDOW_SECONDS - now
             logger.warning(
                 "Global rate limit exceeded",
-                extra={"share_id": share_id, "attempt_count": global_count},
+                **{"share_id": share_id, "attempt_count": global_count},
             )
             raise RateLimitExceededError(
                 message="Rate limit exceeded",

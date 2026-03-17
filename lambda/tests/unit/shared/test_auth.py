@@ -1,69 +1,67 @@
-"""
-Unit tests for shared/auth.py module.
-
-Tests authentication and authorization utilities.
-"""
+"""Tests for authentication utilities."""
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import UnauthorizedError
+from fastapi import FastAPI
 
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.exceptions import UnauthorizedError
 
 
-class TestGetUserFromContext:
-    """Tests for get_user_from_context function."""
+class TestGetCurrentUser:
+    """Test the FastAPI auth dependency."""
 
-    def test_extracts_user_id_from_claims(self):
-        """Should extract user ID from authorizer claims."""
-        event = {"requestContext": {"authorizer": {"claims": {"sub": "user-123-abc"}}}}
+    def _make_app(self):
+        app = FastAPI()
 
-        result = get_user_from_context(event)
+        @app.get("/test")
+        def test_route(user_id: str = get_current_user):
+            return {"user_id": user_id}
 
-        assert result == "user-123-abc"
+        return app
 
-    def test_extracts_user_id_from_principal_id(self):
-        """Should fall back to principalId if claims.sub not present."""
-        event = {"requestContext": {"authorizer": {"principalId": "user-456-def"}}}
+    def test_extracts_user_from_cognito_claims(self):
+        """Mangum forwards API Gateway context via scope['aws.event']."""
+        from src.shared.auth import extract_user_id
 
-        result = get_user_from_context(event)
+        event = {"requestContext": {"authorizer": {"claims": {"sub": "user-123"}}}}
+        assert extract_user_id(event) == "user-123"
 
-        assert result == "user-456-def"
+    def test_extracts_user_from_principal_id(self):
+        from src.shared.auth import extract_user_id
 
-    def test_raises_error_when_no_user_id(self):
-        """Should raise AuthenticationError when user ID not found."""
-        event = {"requestContext": {"authorizer": {}}}
-
-        with pytest.raises(UnauthorizedError) as exc_info:
-            get_user_from_context(event)
-
-        assert "User identity not found" in str(exc_info.value.msg)
-
-    def test_raises_error_when_no_authorizer(self):
-        """Should raise AuthenticationError when authorizer missing."""
-        event = {"requestContext": {}}
-
-        with pytest.raises(UnauthorizedError) as exc_info:
-            get_user_from_context(event)
-
-        assert "User identity not found" in str(exc_info.value.msg)
-
-    def test_raises_error_when_no_request_context(self):
-        """Should raise AuthenticationError when requestContext missing."""
-        event = {}
-
-        with pytest.raises(UnauthorizedError) as exc_info:
-            get_user_from_context(event)
-
-        assert "User identity not found" in str(exc_info.value.msg)
+        event = {"requestContext": {"authorizer": {"principalId": "user-456"}}}
+        assert extract_user_id(event) == "user-456"
 
     def test_prefers_claims_sub_over_principal_id(self):
-        """Should prefer claims.sub over principalId."""
+        from src.shared.auth import extract_user_id
+
         event = {
             "requestContext": {
-                "authorizer": {"claims": {"sub": "claims-user"}, "principalId": "principal-user"}
+                "authorizer": {
+                    "claims": {"sub": "user-from-claims"},
+                    "principalId": "user-from-principal",
+                }
             }
         }
+        assert extract_user_id(event) == "user-from-claims"
 
-        result = get_user_from_context(event)
+    def test_raises_when_no_user_id(self):
+        from src.shared.auth import extract_user_id
 
-        assert result == "claims-user"
+        event = {"requestContext": {"authorizer": {}}}
+        with pytest.raises(UnauthorizedError, match="User identity not found"):
+            extract_user_id(event)
+
+    def test_raises_when_no_authorizer(self):
+        from src.shared.auth import extract_user_id
+
+        event = {"requestContext": {}}
+        with pytest.raises(UnauthorizedError, match="User identity not found"):
+            extract_user_id(event)
+
+    def test_raises_when_no_request_context(self):
+        from src.shared.auth import extract_user_id
+
+        event = {}
+        with pytest.raises(UnauthorizedError, match="User identity not found"):
+            extract_user_id(event)

@@ -8,12 +8,10 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import (
-    NotFoundError,
-)
 from botocore.stub import ANY
 
 from src.api.services.collection_service import CollectionService
+from src.shared.exceptions import NotFoundError
 from src.shared.models import (
     AddItemToCollectionRequest,
     CreateCollectionRequest,

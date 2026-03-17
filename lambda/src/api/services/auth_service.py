@@ -13,10 +13,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import boto3
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError, UnauthorizedError
 
-logger = Logger(child=True)
+from src.shared.exceptions import BadRequestError, UnauthorizedError
+from src.shared.logger import get_logger
+
+logger = get_logger("auth_service")
 
 # Recovery code configuration
 RECOVERY_CODE_COUNT = 10
@@ -75,7 +76,7 @@ class AuthService:
 
         # In production, this would call Cognito's InitiateAuth
         # For now, we return a placeholder indicating the flow
-        logger.info("Login validation requested", extra={"email_domain": email.split("@")[-1]})
+        logger.info("Login validation requested", **{"email_domain": email.split("@")[-1]})
 
         # The actual authentication is handled by Cognito via API Gateway
         # This endpoint is for initiating custom auth flows
@@ -133,7 +134,7 @@ class AuthService:
 
         logger.info(
             "Account recovery initiated",
-            extra={"email_domain": email.split("@")[-1]},
+            **{"email_domain": email.split("@")[-1]},
         )
 
         # Normalize the recovery code (remove dashes, uppercase)
@@ -167,7 +168,7 @@ class AuthService:
         if not user_id:
             raise BadRequestError("User ID is required")
 
-        logger.info("Generating recovery codes", extra={"user_id": user_id})
+        logger.info("Generating recovery codes", **{"user_id": user_id})
 
         # Generate recovery codes
         codes = []
@@ -216,7 +217,7 @@ class AuthService:
             if not item:
                 logger.warning(
                     "Recovery code not found",
-                    extra={"user_id": user_id},
+                    **{"user_id": user_id},
                 )
                 raise UnauthorizedError("Recovery code is invalid or already used")
 
@@ -226,7 +227,7 @@ class AuthService:
             if not secrets.compare_digest(stored_hash, code_hash):
                 logger.warning(
                     "Recovery code hash mismatch",
-                    extra={"user_id": user_id},
+                    **{"user_id": user_id},
                 )
                 raise UnauthorizedError("Recovery code is invalid or already used")
 
@@ -234,7 +235,7 @@ class AuthService:
             if not item.get("is_valid", False):
                 logger.warning(
                     "Recovery code already used",
-                    extra={"user_id": user_id},
+                    **{"user_id": user_id},
                 )
                 raise UnauthorizedError("Recovery code has already been used")
 
@@ -243,7 +244,7 @@ class AuthService:
 
             logger.info(
                 "Recovery code validated successfully",
-                extra={"user_id": user_id},
+                **{"user_id": user_id},
             )
 
             return True
@@ -253,7 +254,7 @@ class AuthService:
         except Exception as e:
             logger.error(
                 "Error validating recovery code",
-                extra={"user_id": user_id, "error": str(e)},
+                **{"user_id": user_id, "error": str(e)},
             )
             raise UnauthorizedError("Recovery code is invalid or already used")
 
@@ -326,7 +327,7 @@ class AuthService:
 
         logger.info(
             "Stored recovery codes",
-            extra={"user_id": user_id, "code_count": len(codes)},
+            **{"user_id": user_id, "code_count": len(codes)},
         )
 
     def _invalidate_recovery_code(self, user_id: str, code_hash: str) -> None:
@@ -350,5 +351,5 @@ class AuthService:
 
         logger.info(
             "Recovery code invalidated",
-            extra={"user_id": user_id},
+            **{"user_id": user_id},
         )

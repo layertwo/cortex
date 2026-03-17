@@ -13,16 +13,13 @@ import uuid
 from typing import Dict, Optional
 
 import boto3
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import (
-    BadRequestError,
-    InternalServerError,
-    NotFoundError,
-)
 from boto3.dynamodb.types import Binary
 from botocore.exceptions import ClientError
 
-logger = Logger(child=True)
+from src.shared.exceptions import BadRequestError, InternalError, NotFoundError
+from src.shared.logger import get_logger
+
+logger = get_logger("vault_service")
 
 
 class VaultService:
@@ -66,7 +63,7 @@ class VaultService:
         if vault_salt is None:
             # Generate 16-byte cryptographically secure random salt
             vault_salt = secrets.token_bytes(16)
-            logger.info("Generated vault salt", extra={"vault_id": vault_id, "user_id": user_id})
+            logger.info("Generated vault salt", **{"vault_id": vault_id, "user_id": user_id})
         else:
             # Validate provided salt
             if not isinstance(vault_salt, bytes) or len(vault_salt) != 16:
@@ -95,7 +92,7 @@ class VaultService:
 
             logger.info(
                 "Vault created successfully",
-                extra={"vault_id": vault_id, "user_id": user_id, "salt_length": len(vault_salt)},
+                **{"vault_id": vault_id, "user_id": user_id, "salt_length": len(vault_salt)},
             )
 
             return {"vault_id": vault_id, "vault_salt": vault_salt, "created_at": created_at}
@@ -107,14 +104,14 @@ class VaultService:
                 # Extremely unlikely UUID collision - retry with new ID
                 logger.warning(
                     "Vault ID collision detected, retrying",
-                    extra={"vault_id": vault_id, "user_id": user_id},
+                    **{"vault_id": vault_id, "user_id": user_id},
                 )
                 # Recursive retry (UUID collision is astronomically unlikely)
                 return self.create_vault(user_id, vault_salt)
 
             logger.error(
                 "Failed to create vault",
-                extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
+                **{"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
             raise
 
@@ -150,7 +147,7 @@ class VaultService:
             if not item:
                 logger.warning(
                     "Vault not found",
-                    extra={"vault_id": vault_id, "user_id": user_id, "operation": "get_salt"},
+                    **{"vault_id": vault_id, "user_id": user_id, "operation": "get_salt"},
                 )
                 raise NotFoundError(f"Vault {vault_id} not found")
 
@@ -159,9 +156,9 @@ class VaultService:
             if not vault_salt:
                 logger.error(
                     "Vault salt missing from vault item",
-                    extra={"vault_id": vault_id, "user_id": user_id},
+                    **{"vault_id": vault_id, "user_id": user_id},
                 )
-                raise InternalServerError("Vault data integrity error: missing salt")
+                raise InternalError("Vault data integrity error: missing salt")
 
             # Convert Binary type to bytes if necessary
             if isinstance(vault_salt, Binary):
@@ -171,18 +168,18 @@ class VaultService:
             if not isinstance(vault_salt, bytes) or len(vault_salt) != 16:
                 logger.error(
                     "Invalid vault salt format",
-                    extra={
+                    **{
                         "vault_id": vault_id,
                         "user_id": user_id,
                         "salt_type": type(vault_salt).__name__,
                         "salt_length": len(vault_salt) if isinstance(vault_salt, bytes) else None,
                     },
                 )
-                raise InternalServerError("Vault data integrity error: invalid salt format")
+                raise InternalError("Vault data integrity error: invalid salt format")
 
             logger.info(
                 "Vault salt retrieved successfully",
-                extra={"vault_id": vault_id, "user_id": user_id, "salt_length": len(vault_salt)},
+                **{"vault_id": vault_id, "user_id": user_id, "salt_length": len(vault_salt)},
             )
 
             return vault_salt
@@ -190,7 +187,7 @@ class VaultService:
         except ClientError as e:
             logger.error(
                 "Failed to retrieve vault salt",
-                extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
+                **{"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
             raise
 
@@ -213,7 +210,7 @@ class VaultService:
         except ClientError as e:
             logger.error(
                 "Failed to check vault existence",
-                extra={"error": str(e), "vault_id": vault_id, "user_id": user_id},
+                **{"error": str(e), "vault_id": vault_id, "user_id": user_id},
             )
             raise NotFoundError("Vault not found")
 
@@ -247,9 +244,9 @@ class VaultService:
                     }
                 )
 
-            logger.info("Listed user vaults", extra={"user_id": user_id, "count": len(vaults)})
+            logger.info("Listed user vaults", **{"user_id": user_id, "count": len(vaults)})
             return vaults
 
         except ClientError as e:
-            logger.error("Failed to list user vaults", extra={"error": str(e), "user_id": user_id})
+            logger.error("Failed to list user vaults", **{"error": str(e), "user_id": user_id})
             raise

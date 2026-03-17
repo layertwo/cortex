@@ -12,12 +12,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import boto3
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import (
-    BadRequestError,
-    NotFoundError,
-)
 
+from src.shared.exceptions import BadRequestError, NotFoundError
+from src.shared.logger import get_logger
 from src.shared.models import (
     AddItemToCollectionRequest,
     AddItemToCollectionResponse,
@@ -32,7 +29,7 @@ from src.shared.repository import (
     parse_pagination_token,
 )
 
-logger = Logger(child=True)
+logger = get_logger("collection_service")
 
 
 class CollectionService:
@@ -96,7 +93,7 @@ class CollectionService:
 
         logger.info(
             "Created collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": request.vault_id,
                 "collection_id": collection_id,
@@ -160,7 +157,7 @@ class CollectionService:
 
         logger.info(
             "Listed collections",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "count": len(collections),
@@ -199,7 +196,7 @@ class CollectionService:
         if not collection:
             logger.info(
                 "Collection not found",
-                extra={"user_id": user_id, "vault_id": vault_id, "collection_id": collection_id},
+                **{"user_id": user_id, "vault_id": vault_id, "collection_id": collection_id},
             )
             return None
 
@@ -207,7 +204,7 @@ class CollectionService:
         if collection["user_id"] != user_id:
             logger.warning(
                 "User does not own collection",
-                extra={
+                **{
                     "user_id": user_id,
                     "collection_id": collection_id,
                     "collection_user_id": collection["user_id"],
@@ -217,7 +214,7 @@ class CollectionService:
 
         logger.info(
             "Retrieved collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
@@ -274,7 +271,7 @@ class CollectionService:
 
         logger.info(
             "Updated collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": request.vault_id,
                 "collection_id": request.collection_id,
@@ -357,7 +354,7 @@ class CollectionService:
 
         logger.info(
             "Deleted item-collection associations",
-            extra={
+            **{
                 "user_id": user_id,
                 "collection_id": collection_id,
                 "count": total_deleted,
@@ -374,7 +371,7 @@ class CollectionService:
 
         logger.info(
             "Deleted collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
@@ -418,7 +415,7 @@ class CollectionService:
         if item["user_id"] != user_id:
             logger.warning(
                 "User does not own item",
-                extra={
+                **{
                     "user_id": user_id,
                     "item_id": request.item_id,
                     "item_user_id": item["user_id"],
@@ -476,7 +473,7 @@ class CollectionService:
             # Association already exists - this is idempotent, don't increment
             logger.info(
                 "Item already in collection (idempotent operation)",
-                extra={
+                **{
                     "user_id": user_id,
                     "vault_id": request.vault_id,
                     "collection_id": request.collection_id,
@@ -492,7 +489,7 @@ class CollectionService:
 
         logger.info(
             "Added item to collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": request.vault_id,
                 "collection_id": request.collection_id,
@@ -566,7 +563,7 @@ class CollectionService:
 
         logger.info(
             "Removed item from collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
@@ -634,7 +631,7 @@ class CollectionService:
 
         logger.info(
             "Listed items in collection",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
@@ -698,7 +695,7 @@ class CollectionService:
 
         logger.info(
             "Listed collections for item",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "item_id": item_id,

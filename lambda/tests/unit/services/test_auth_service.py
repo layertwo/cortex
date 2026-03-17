@@ -3,10 +3,10 @@
 import hashlib
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError, UnauthorizedError
 from botocore.stub import ANY
 
 from src.api.services.auth_service import RECOVERY_CODE_COUNT
+from src.shared.exceptions import BadRequestError, UnauthorizedError
 
 
 class TestValidateLogin:

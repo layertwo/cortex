@@ -219,7 +219,7 @@ export class ServiceStack extends Stack {
         const fn = new Lambda(this, "ApiHandler", {
             functionName: resourceName,
             runtime: Runtime.PYTHON_3_11,
-            handler: "handler.lambda_handler",
+            handler: "src.entrypoint.api.handler",
             code: Code.fromAsset("../lambda/src/api"),
             environment: {
                 STAGE: this.props.stage.stageType,
@@ -233,8 +233,6 @@ export class ServiceStack extends Stack {
                 FILES_BUCKET_NAME: this.bucket.bucketName,
                 COGNITO_USER_POOL_ID: this.props.userPool.userPoolId,
                 COGNITO_USER_POOL_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
-                POWERTOOLS_SERVICE_NAME: "cortex-api",
-                POWERTOOLS_METRICS_NAMESPACE: "Cortex",
                 LOG_LEVEL: "INFO",
             },
             timeout: Duration.seconds(30),

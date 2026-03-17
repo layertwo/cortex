@@ -1,14 +1,23 @@
 """
 Service Provider for Cortex API.
 
-This module provides dependency injection and service initialization
-for the Cortex API Lambda functions.
+This module provides dependency injection, service initialization,
+and FastAPI application creation for the Cortex API.
 """
 
+import functools
 import os
 from functools import cached_property
 
 import boto3
+from fastapi import APIRouter, FastAPI, Request
+from mangum import Mangum
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.api.routes.auth import LoginRoute, RecoverRoute, RefreshRoute
 from src.api.routes.collections import (
@@ -35,12 +44,52 @@ from src.api.routes.recovery import GenerateRecoveryCodesRoute, ValidateRecovery
 from src.api.routes.shares import CreateShareRoute, GetShareRoute, RevokeShareRoute
 from src.api.routes.tags import SearchTagsRoute
 from src.api.routes.vaults import CreateVaultRoute, GetVaultSaltRoute
-from src.api.services.api_router import ApiRouter
 from src.api.services.auth_service import AuthService
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
 from src.api.services.vault_service import VaultService
+from src.shared.exceptions import CortexError
+from src.shared.logger import get_logger
+
+_logger = get_logger("service_provider")
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Content-Security-Policy"] = "default-src 'none'"
+        return response
+
+
+@functools.lru_cache(maxsize=1)
+def create_service_provider() -> "ServiceProvider":  # pragma: nocover
+    """Create a cached ServiceProvider singleton.
+
+    Uses lru_cache so the same instance is reused across warm Lambda invocations.
+    In tests, pass service_provider directly to bypass this.
+    """
+    return ServiceProvider()
+
+
+def lambda_entrypoint(fn):
+    """Decorator that injects a cached ServiceProvider when none is provided.
+
+    In production, creates/reuses a cached ServiceProvider via lru_cache.
+    In tests, pass service_provider directly to inject a mock.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(event, context, service_provider=None):
+        if service_provider is None:  # pragma: nocover
+            service_provider = create_service_provider()
+        return fn(event, context, service_provider)
+
+    return wrapper
 
 
 class ServiceProvider:
@@ -138,64 +187,107 @@ class ServiceProvider:
             s3_bucket_name=self.files_bucket_name,
         )
 
-    # API Router with all routes
     @cached_property
-    def api_router(self):
+    def app(self) -> FastAPI:
         """
-        Create API router with all registered routes.
+        Create FastAPI app with all routes, middleware, and exception handlers.
 
         Returns:
-            ApiRouter instance with all routes registered
+            Configured FastAPI application
         """
-        return ApiRouter(
-            routes=[
-                # Auth routes (with service injection)
-                LoginRoute(auth_service=self.auth_service),
-                RefreshRoute(auth_service=self.auth_service),
-                RecoverRoute(auth_service=self.auth_service),
-                # Vault routes
-                CreateVaultRoute(vault_service=self.vault_service),
-                GetVaultSaltRoute(vault_service=self.vault_service),
-                # Item routes
-                CreateItemRoute(item_service=self.item_service),
-                InitiateUploadRoute(item_service=self.item_service),
-                CompleteUploadRoute(item_service=self.item_service),
-                ListItemsRoute(item_service=self.item_service, vault_service=self.vault_service),
-                GetItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-                UpdateItemRoute(),
-                DeleteItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-                DownloadItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-                SearchItemsRoute(),
-                # Collection routes
-                CreateCollectionRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                ListCollectionsRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                GetCollectionRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                UpdateCollectionRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                DeleteCollectionRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                AddItemToCollectionRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                RemoveItemFromCollectionRoute(
-                    collection_service=self.collection_service, vault_service=self.vault_service
-                ),
-                # Tag routes
-                SearchTagsRoute(item_service=self.item_service, vault_service=self.vault_service),
-                # Share routes
-                CreateShareRoute(share_service=self.share_service),
-                GetShareRoute(share_service=self.share_service),
-                RevokeShareRoute(share_service=self.share_service),
-                # Recovery routes (with service injection)
-                GenerateRecoveryCodesRoute(auth_service=self.auth_service),
-                ValidateRecoveryCodeRoute(auth_service=self.auth_service),
-            ]
-        )
+        app = FastAPI(title="Cortex API", version="1.0.0")
+
+        # Rate limiter
+        limiter = Limiter(key_func=get_remote_address)
+        app.state.limiter = limiter
+        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+        # Security headers
+        app.add_middleware(SecurityHeadersMiddleware)
+
+        # CORS (Lambda gets this from API Gateway; containers need it explicitly)
+        cors_origins = os.environ.get("CORS_ORIGINS", "").split(",")
+        cors_origins = [o.strip() for o in cors_origins if o.strip()]
+        if cors_origins:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=cors_origins,
+                allow_credentials=True,
+                allow_methods=["GET", "POST", "PUT", "DELETE"],
+                allow_headers=["Content-Type", "Authorization"],
+            )
+
+        @app.exception_handler(CortexError)
+        async def cortex_error_handler(request: Request, exc: CortexError):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"message": exc.message},
+            )
+
+        @app.exception_handler(Exception)
+        async def unhandled_error_handler(request: Request, exc: Exception):
+            _logger.exception("Unhandled exception")
+            return JSONResponse(
+                status_code=500,
+                content={"message": "Internal server error"},
+            )
+
+        # Register routes
+        router = APIRouter()
+        routes = [
+            LoginRoute(auth_service=self.auth_service),
+            RefreshRoute(auth_service=self.auth_service),
+            RecoverRoute(auth_service=self.auth_service),
+            CreateVaultRoute(vault_service=self.vault_service),
+            GetVaultSaltRoute(vault_service=self.vault_service),
+            CreateItemRoute(item_service=self.item_service),
+            InitiateUploadRoute(item_service=self.item_service),
+            CompleteUploadRoute(item_service=self.item_service),
+            ListItemsRoute(item_service=self.item_service, vault_service=self.vault_service),
+            GetItemRoute(item_service=self.item_service, vault_service=self.vault_service),
+            UpdateItemRoute(item_service=self.item_service),
+            DeleteItemRoute(item_service=self.item_service, vault_service=self.vault_service),
+            DownloadItemRoute(item_service=self.item_service, vault_service=self.vault_service),
+            SearchItemsRoute(item_service=self.item_service),
+            CreateCollectionRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            ListCollectionsRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            GetCollectionRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            UpdateCollectionRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            DeleteCollectionRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            AddItemToCollectionRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            RemoveItemFromCollectionRoute(
+                collection_service=self.collection_service, vault_service=self.vault_service
+            ),
+            SearchTagsRoute(item_service=self.item_service, vault_service=self.vault_service),
+            GenerateRecoveryCodesRoute(auth_service=self.auth_service),
+            ValidateRecoveryCodeRoute(auth_service=self.auth_service),
+            CreateShareRoute(share_service=self.share_service),
+            GetShareRoute(share_service=self.share_service),
+            RevokeShareRoute(share_service=self.share_service),
+        ]
+        for route in routes:
+            route.register(router)
+        app.include_router(router)
+
+        @app.get("/health")
+        def health():
+            return {"status": "ok"}
+
+        return app
+
+    @cached_property
+    def handler(self):
+        """Create Mangum handler for AWS Lambda."""
+        return Mangum(self.app, lifespan="off")

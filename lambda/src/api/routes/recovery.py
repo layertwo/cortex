@@ -7,17 +7,15 @@ generation and validation.
 Requirements: 19.1, 19.2, 19.3, 19.5
 """
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.auth_service import AuthService
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.logger import get_logger
 
-logger = Logger(child=True)
+logger = get_logger("recovery_routes")
 
 
 # Request/Response models
@@ -59,10 +57,11 @@ class GenerateRecoveryCodesRoute(BaseRoute):
         """
         self.auth_service = auth_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/recovery/codes")
-        def handle():
+        def handle(
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Generate account recovery codes.
 
@@ -74,17 +73,15 @@ class GenerateRecoveryCodesRoute(BaseRoute):
 
             Requirements: 19.1
             """
-            # Extract user ID from API Gateway context
-            user_id = get_user_from_context(app.current_event)
-
-            logger.info("Generating recovery codes", extra={"user_id": user_id})
+            logger.info("Generating recovery codes", user_id=user_id)
 
             # Generate recovery codes
             codes, timestamp = self.auth_service.generate_recovery_codes(user_id)
 
             logger.info(
                 "Recovery codes generated successfully",
-                extra={"user_id": user_id, "code_count": len(codes)},
+                user_id=user_id,
+                code_count=len(codes),
             )
 
             return GenerateRecoveryCodesResponse(
@@ -104,43 +101,32 @@ class ValidateRecoveryCodeRoute(BaseRoute):
         """
         self.auth_service = auth_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/recovery/validate")
-        def handle():
+        def handle(
+            body: ValidateRecoveryCodeRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Validate recovery code.
 
             Validates a recovery code and marks it as used if valid.
             Each code can only be used once.
 
-            Request Body:
-                recovery_code: Recovery code to validate (format: XXXX-XXXX-XXXX-XXXX)
-
             Returns:
                 Validation result with user ID
 
             Requirements: 19.2, 19.3, 19.5
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body or {}
-                request = ValidateRecoveryCodeRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user ID from API Gateway context
-            user_id = get_user_from_context(app.current_event)
-
-            logger.info("Validating recovery code", extra={"user_id": user_id})
+            logger.info("Validating recovery code", user_id=user_id)
 
             # Validate recovery code (marks as used if valid)
-            is_valid = self.auth_service.validate_recovery_code(user_id, request.recovery_code)
+            is_valid = self.auth_service.validate_recovery_code(user_id, body.recovery_code)
 
             logger.info(
                 "Recovery code validation completed",
-                extra={"user_id": user_id, "valid": is_valid},
+                user_id=user_id,
+                valid=is_valid,
             )
 
             return ValidateRecoveryCodeResponse(valid=is_valid, user_id=user_id).model_dump()

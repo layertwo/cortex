@@ -11,13 +11,13 @@ Schema: PK: SHARE#{shareId}, SK: METADATA (share metadata)
 import time
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import NotFoundError
 from botocore.stub import ANY
 
 from src.api.services.share_service import (
     ShareExpiredError,
     ShareRevokedError,
 )
+from src.shared.exceptions import NotFoundError
 from src.shared.models import CreateShareRequest
 
 

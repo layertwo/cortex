@@ -1,25 +1,20 @@
 """
 Unit tests for collection route handlers.
 
-Tests verify that collection routes work correctly through the lambda handler entrypoint.
+Tests verify that collection routes work correctly through the FastAPI test client.
 """
 
-import json
 from datetime import datetime
 
 from botocore.stub import ANY
 
-from src.entrypoint.api import lambda_handler
-
 
 class TestCreateCollectionRoute:
-    """Test suite for CreateCollectionRoute through lambda handler."""
+    """Test suite for CreateCollectionRoute through FastAPI test client."""
 
-    def test_create_collection_route_handler(
-        self, mock_service_provider, dynamodb_stubber, vaults_table_name
-    ):
+    def test_create_collection_route_handler(self, client, dynamodb_stubber, vaults_table_name):
         """Test create collection route handler returns expected response."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         vault_id = "test-vault-456"
 
         # Stub vault ownership check (get_item for vault)
@@ -49,38 +44,22 @@ class TestCreateCollectionRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/collections",
-            "path": "/v1/collections",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(
-                {
-                    "vault_id": vault_id,
-                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",  # base64 encoded
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
+        response = client.post(
+            "/v1/collections",
+            json={
+                "vault_id": vault_id,
+                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify status code
-        assert response["statusCode"] == 200
-
-        # Verify response payload structure
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert "collection_id" in body, "Response should include collection_id"
         assert "created_at" in body, "Response should include created_at"
 
-        # Verify response values
         assert isinstance(body["collection_id"], str), "collection_id should be a string"
         assert len(body["collection_id"]) > 0, "collection_id should not be empty"
 
-        # Validate created_at is ISO format datetime string
         try:
             datetime.fromisoformat(body["created_at"])
         except ValueError:
@@ -88,241 +67,117 @@ class TestCreateCollectionRoute:
                 f"created_at should be ISO format datetime, got {body['created_at']}"
             )
 
-    def test_create_collection_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_create_collection_route_handler_missing_vault_id(self, client):
         """Test create collection route handler returns error when vault_id is missing."""
-        event = {
-            "resource": "/v1/collections",
-            "path": "/v1/collections",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(
-                {
-                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+        response = client.post(
+            "/v1/collections",
+            json={
+                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "..."}
-        assert body["statusCode"] == 400
-        assert "message" in body
+        # FastAPI returns 422 for Pydantic validation errors (missing required field)
+        assert response.status_code == 422
 
 
 class TestListCollectionsRoute:
-    """Test suite for ListCollectionsRoute through lambda handler."""
+    """Test suite for ListCollectionsRoute through FastAPI test client."""
 
-    def test_list_collections_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_list_collections_route_handler_missing_vault_id(self, client):
         """Test list collections route handler returns error when vault_id is missing."""
-        event = {
-            "resource": "/v1/collections",
-            "path": "/v1/collections",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
+        response = client.get("/v1/collections")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
+        # FastAPI returns 422 for missing required query params
+        assert response.status_code == 422
 
 
 class TestGetCollectionRoute:
-    """Test suite for GetCollectionRoute through lambda handler."""
+    """Test suite for GetCollectionRoute through FastAPI test client."""
 
-    def test_get_collection_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_get_collection_route_handler_missing_vault_id(self, client):
         """Test get collection route handler returns error when vault_id is missing."""
         collection_id = "test-collection-123"
-        event = {
-            "resource": "/v1/collections/{collection_id}",
-            "path": f"/v1/collections/{collection_id}",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"collection_id": collection_id},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        response = client.get(f"/v1/collections/{collection_id}")
 
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
+        # FastAPI returns 422 for missing required query params
+        assert response.status_code == 422
 
 
 class TestUpdateCollectionRoute:
-    """Test suite for UpdateCollectionRoute through lambda handler."""
+    """Test suite for UpdateCollectionRoute through FastAPI test client."""
 
-    def test_update_collection_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_update_collection_route_handler_missing_vault_id(self, client):
         """Test update collection route handler returns error when vault_id is missing."""
         collection_id = "test-collection-123"
-        event = {
-            "resource": "/v1/collections/{collection_id}",
-            "path": f"/v1/collections/{collection_id}",
-            "httpMethod": "PUT",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"collection_id": collection_id},
-            "body": json.dumps(
-                {
-                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+
+        response = client.put(
+            f"/v1/collections/{collection_id}",
+            json={
+                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "..."}
-        assert body["statusCode"] == 400
-        assert "message" in body
+        # FastAPI returns 422 for Pydantic validation errors (missing required field)
+        assert response.status_code == 422
 
 
 class TestDeleteCollectionRoute:
-    """Test suite for DeleteCollectionRoute through lambda handler."""
+    """Test suite for DeleteCollectionRoute through FastAPI test client."""
 
-    def test_delete_collection_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_delete_collection_route_handler_missing_vault_id(self, client):
         """Test delete collection route handler returns error when vault_id is missing."""
         collection_id = "test-collection-123"
-        event = {
-            "resource": "/v1/collections/{collection_id}",
-            "path": f"/v1/collections/{collection_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"collection_id": collection_id},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        response = client.delete(f"/v1/collections/{collection_id}")
 
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
+        # FastAPI returns 422 for missing required query params
+        assert response.status_code == 422
 
 
 class TestAddItemToCollectionRoute:
-    """Test suite for AddItemToCollectionRoute through lambda handler."""
+    """Test suite for AddItemToCollectionRoute through FastAPI test client."""
 
-    def test_add_item_to_collection_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_add_item_to_collection_route_handler_missing_vault_id(self, client):
         """Test add item to collection route handler returns error when vault_id is missing."""
         collection_id = "test-collection-123"
-        event = {
-            "resource": "/v1/collections/{collection_id}/items",
-            "path": f"/v1/collections/{collection_id}/items",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"collection_id": collection_id},
-            "body": json.dumps(
-                {
-                    "item_id": "item-456",
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+
+        response = client.post(
+            f"/v1/collections/{collection_id}/items",
+            json={
+                "item_id": "item-456",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        # FastAPI returns 422 for Pydantic validation errors (missing required field)
+        assert response.status_code == 422
 
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "..."}
-        assert body["statusCode"] == 400
-        assert "message" in body
-
-    def test_add_item_to_collection_route_handler_missing_item_id(self, mock_service_provider):
+    def test_add_item_to_collection_route_handler_missing_item_id(self, client):
         """Test add item to collection route handler returns error when item_id is missing."""
         collection_id = "test-collection-123"
-        event = {
-            "resource": "/v1/collections/{collection_id}/items",
-            "path": f"/v1/collections/{collection_id}/items",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"collection_id": collection_id},
-            "body": json.dumps(
-                {
-                    "vault_id": "vault-123",
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
+
+        response = client.post(
+            f"/v1/collections/{collection_id}/items",
+            json={
+                "vault_id": "vault-123",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "..."}
-        assert body["statusCode"] == 400
-        assert "message" in body
+        # FastAPI returns 422 for Pydantic validation errors (missing required field)
+        assert response.status_code == 422
 
 
 class TestRemoveItemFromCollectionRoute:
-    """Test suite for RemoveItemFromCollectionRoute through lambda handler."""
+    """Test suite for RemoveItemFromCollectionRoute through FastAPI test client."""
 
-    def test_remove_item_from_collection_route_handler_missing_vault_id(
-        self, mock_service_provider
-    ):
+    def test_remove_item_from_collection_route_handler_missing_vault_id(self, client):
         """Test remove item from collection route handler returns error when vault_id is missing."""
         collection_id = "test-collection-123"
         item_id = "test-item-456"
-        event = {
-            "resource": "/v1/collections/{collection_id}/items/{item_id}",
-            "path": f"/v1/collections/{collection_id}/items/{item_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"collection_id": collection_id, "item_id": item_id},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        response = client.delete(
+            f"/v1/collections/{collection_id}/items/{item_id}",
+        )
 
-        # Verify error response
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
+        # FastAPI returns 422 for missing required query params
+        assert response.status_code == 422

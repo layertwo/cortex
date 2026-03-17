@@ -5,6 +5,7 @@ Pytest configuration and shared fixtures for Cortex tests.
 from datetime import datetime, timezone
 
 import pytest
+from fastapi.testclient import TestClient
 
 from src.api.services.auth_service import AuthService
 from src.api.services.collection_service import CollectionService
@@ -12,6 +13,7 @@ from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
 from src.api.services.vault_service import VaultService
 from src.environment.service_provider import ServiceProvider
+from src.shared.auth import get_current_user
 from tests.fixtures.boto import *  # noqa: F403,F401
 
 
@@ -126,3 +128,17 @@ def share_service(boto_session, shares_table_name, items_table_name, files_bucke
         items_table_name=items_table_name,
         s3_bucket_name=files_bucket_name,
     )
+
+
+@pytest.fixture
+def app(mock_service_provider):
+    """Create FastAPI test app via ServiceProvider."""
+    app = mock_service_provider.app
+    app.dependency_overrides[get_current_user] = lambda: "test-user-id"
+    return app
+
+
+@pytest.fixture
+def client(app):
+    """FastAPI test client."""
+    return TestClient(app)
