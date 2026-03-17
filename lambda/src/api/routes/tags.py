@@ -6,17 +6,19 @@ This module implements tag-related endpoints for searching items by encrypted ta
 Requirements: 11.4, 11.5
 """
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, Query
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.exceptions import BadRequestError
+from src.shared.logger import get_logger
 from src.shared.util import _encode_binary
 
-logger = Logger(child=True)
+logger = get_logger("tag_routes")
 
 
 class SearchTagsRoute(BaseRoute):
@@ -33,9 +35,17 @@ class SearchTagsRoute(BaseRoute):
         self.item_service = item_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.get("/v1/tags/search")
-        def handle():
+        def handle(
+            vault_id: str = Query(..., description="Vault ID to search within"),
+            encrypted_tag: str = Query(
+                ..., description="Base64-encoded encrypted tag to search for"
+            ),
+            page_size: int = Query(50, ge=1, le=100),
+            next_token: Optional[str] = Query(None),
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Search by encrypted tag.
 
@@ -50,37 +60,13 @@ class SearchTagsRoute(BaseRoute):
 
             Requirements: 11.4, 11.5
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-
-            vault_id = query_params.get("vault_id")
-            encrypted_tag = query_params.get("encrypted_tag")
-            page_size = int(query_params.get("page_size", "50"))
-            next_token = query_params.get("next_token")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("Missing required parameter: vault_id")
-
-            if not encrypted_tag:
-                raise BadRequestError("Missing required parameter: encrypted_tag")
-
-            # Validate page size
-            if page_size < 1 or page_size > 100:
-                raise BadRequestError("page_size must be between 1 and 100")
-
             # Verify vault ownership (CRITICAL - OWASP A01:2021)
             if not self.vault_service.vault_exists(user_id, vault_id):
                 logger.warning(
                     "Vault access denied - user does not own vault",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "operation": "tag_search",
-                    },
+                    user_id=user_id,
+                    vault_id=vault_id,
+                    operation="tag_search",
                 )
                 raise BadRequestError("Invalid vault_id")
 
@@ -94,15 +80,13 @@ class SearchTagsRoute(BaseRoute):
 
             logger.info(
                 "Tag search completed",
-                extra={
-                    "user_id": user_id,
-                    "vault_id": vault_id,
-                    "result_count": len(response.items),
-                },
+                user_id=user_id,
+                vault_id=vault_id,
+                result_count=len(response.items),
             )
 
             # Build response
-            result = {
+            result: dict[str, Any] = {
                 "items": [
                     {
                         "item_id": item.item_id,

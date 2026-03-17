@@ -14,11 +14,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import boto3
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
 from botocore.exceptions import ClientError
 
-logger = Logger(child=True)
+from src.shared.exceptions import BadRequestError
+from src.shared.logger import get_logger
+
+logger = get_logger("repository")
 
 
 class DynamoDBRepository:
@@ -55,7 +56,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB get_item failed",
-                extra={"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name, "key": key},
             )
             raise
 
@@ -71,7 +72,7 @@ class DynamoDBRepository:
             StorageError: If DynamoDB operation fails
         """
         try:
-            kwargs = {"Item": item}
+            kwargs: Dict[str, Any] = {"Item": item}
             if condition_expression:
                 kwargs["ConditionExpression"] = condition_expression
 
@@ -84,13 +85,11 @@ class DynamoDBRepository:
             if error_code == "ConditionalCheckFailedException":
                 logger.info(
                     "DynamoDB conditional check failed",
-                    extra={"table": self.table_name, "condition": condition_expression},
+                    **{"table": self.table_name, "condition": condition_expression},
                 )
                 raise BadRequestError(f"Conditional check failed in {self.table_name}")
 
-            logger.error(
-                "DynamoDB put_item failed", extra={"error": str(e), "table": self.table_name}
-            )
+            logger.error("DynamoDB put_item failed", **{"error": str(e), "table": self.table_name})
             raise
 
     def update_item(
@@ -132,7 +131,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB update_item failed",
-                extra={"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name, "key": key},
             )
             raise
 
@@ -184,13 +183,13 @@ class DynamoDBRepository:
             if error_code == "ConditionalCheckFailedException":
                 logger.warning(
                     "DynamoDB conditional update failed - condition not met",
-                    extra={"table": self.table_name, "key": key},
+                    **{"table": self.table_name, "key": key},
                 )
                 raise
 
             logger.error(
                 "DynamoDB update_item_conditional failed",
-                extra={"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name, "key": key},
             )
             raise
 
@@ -210,7 +209,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB delete_item failed",
-                extra={"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name, "key": key},
             )
             raise
 
@@ -231,7 +230,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB transact_write_items failed",
-                extra={
+                **{
                     "error": str(e),
                     "table": self.table_name,
                     "item_count": len(transact_items),
@@ -274,7 +273,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB batch_get_item failed",
-                extra={"error": str(e), "table": self.table_name, "key_count": len(keys)},
+                **{"error": str(e), "table": self.table_name, "key_count": len(keys)},
             )
             raise
 
@@ -340,7 +339,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB query failed",
-                extra={"error": str(e), "table": self.table_name, "index": index_name},
+                **{"error": str(e), "table": self.table_name, "index": index_name},
             )
             raise
 
@@ -386,7 +385,7 @@ class S3Repository:
             )
 
             logger.debug(
-                "Generated upload URL", extra={"object_key": object_key, "expiration": expiration}
+                "Generated upload URL", **{"object_key": object_key, "expiration": expiration}
             )
 
             return url
@@ -394,7 +393,7 @@ class S3Repository:
         except ClientError as e:
             logger.error(
                 "Failed to generate upload URL",
-                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise
 
@@ -423,7 +422,7 @@ class S3Repository:
             )
 
             logger.debug(
-                "Generated download URL", extra={"object_key": object_key, "expiration": expiration}
+                "Generated download URL", **{"object_key": object_key, "expiration": expiration}
             )
 
             return url
@@ -431,7 +430,7 @@ class S3Repository:
         except ClientError as e:
             logger.error(
                 "Failed to generate download URL",
-                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise
 
@@ -476,7 +475,7 @@ class S3Repository:
         except ClientError as e:
             logger.error(
                 "Failed to generate multipart upload URL",
-                extra={
+                **{
                     "error": str(e),
                     "bucket": self.bucket_name,
                     "key": object_key,
@@ -511,7 +510,7 @@ class S3Repository:
 
             logger.info(
                 "Initiated multipart upload",
-                extra={"object_key": object_key, "upload_id": upload_id},
+                **{"object_key": object_key, "upload_id": upload_id},
             )
 
             return upload_id
@@ -519,7 +518,7 @@ class S3Repository:
         except ClientError as e:
             logger.error(
                 "Failed to initiate multipart upload",
-                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise
 
@@ -543,13 +542,13 @@ class S3Repository:
 
             logger.info(
                 "Aborted multipart upload",
-                extra={"object_key": object_key, "upload_id": upload_id},
+                **{"object_key": object_key, "upload_id": upload_id},
             )
 
         except ClientError as e:
             logger.error(
                 "Failed to abort multipart upload",
-                extra={
+                **{
                     "error": str(e),
                     "bucket": self.bucket_name,
                     "key": object_key,
@@ -571,12 +570,12 @@ class S3Repository:
         try:
             self._client.delete_object(Bucket=self.bucket_name, Key=object_key)
 
-            logger.info("Deleted S3 object", extra={"object_key": object_key})
+            logger.info("Deleted S3 object", **{"object_key": object_key})
 
         except ClientError as e:
             logger.error(
                 "Failed to delete S3 object",
-                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise
 
@@ -600,7 +599,7 @@ class S3Repository:
 
             logger.error(
                 "Failed to check object existence",
-                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise
 
@@ -642,7 +641,7 @@ class S3Repository:
 
             logger.error(
                 "Failed to get object metadata",
-                extra={"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
             )
             raise
 
@@ -685,13 +684,13 @@ def parse_pagination_token(token: Optional[str]) -> Optional[Dict[str, Any]]:
 
         # Prevent DoS via oversized tokens (limit to 1KB of decoded data)
         if len(decoded) > 1024:
-            logger.warning("Pagination token too large", extra={"decoded_size": len(decoded)})
+            logger.warning("Pagination token too large", **{"decoded_size": len(decoded)})
             return None
 
         return json.loads(decoded)
 
     except Exception as e:
-        logger.warning("Failed to parse pagination token", extra={"error": str(e)})
+        logger.warning("Failed to parse pagination token", **{"error": str(e)})
         return None
 
 
@@ -715,5 +714,5 @@ def encode_pagination_token(last_evaluated_key: Optional[Dict[str, Any]]) -> Opt
         return encoded.decode("utf-8")
 
     except Exception as e:
-        logger.error("Failed to encode pagination token", extra={"error": str(e)})
+        logger.error("Failed to encode pagination token", **{"error": str(e)})
         return None

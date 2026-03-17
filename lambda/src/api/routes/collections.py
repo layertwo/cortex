@@ -8,23 +8,23 @@ Requirements: 12.1, 12.2, 12.3, 12.5, 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
 from datetime import datetime, timezone
+from typing import Any, Optional
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
-from pydantic import ValidationError as PydanticValidationError
+from fastapi import APIRouter, Depends, Query
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.collection_service import CollectionService
 from src.api.services.vault_service import VaultService
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.exceptions import NotFoundError
+from src.shared.logger import get_logger
 from src.shared.models import (
     AddItemToCollectionRequest,
     CreateCollectionRequest,
     UpdateCollectionRequest,
 )
 
-logger = Logger(child=True)
+logger = get_logger("collection_routes")
 
 
 class CreateCollectionRoute(BaseRoute):
@@ -35,9 +35,12 @@ class CreateCollectionRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/collections")
-        def handle():
+        def handle(
+            request: CreateCollectionRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Create collection.
 
@@ -46,17 +49,6 @@ class CreateCollectionRoute(BaseRoute):
 
             Requirements: 12.1, 13.1
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = CreateCollectionRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Verify vault ownership
             self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
 
@@ -65,11 +57,9 @@ class CreateCollectionRoute(BaseRoute):
 
             logger.info(
                 "Collection created successfully",
-                extra={
-                    "user_id": user_id,
-                    "vault_id": request.vault_id,
-                    "collection_id": response.collection_id,
-                },
+                user_id=user_id,
+                vault_id=request.vault_id,
+                collection_id=response.collection_id,
             )
 
             return {
@@ -86,9 +76,14 @@ class ListCollectionsRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.get("/v1/collections")
-        def handle():
+        def handle(
+            vault_id: str = Query(..., description="Vault ID"),
+            page_size: int = Query(50, ge=1, le=100),
+            next_token: Optional[str] = Query(None),
+            user_id: str = Depends(get_current_user),
+        ):
             """
             List collections.
 
@@ -97,23 +92,6 @@ class ListCollectionsRoute(BaseRoute):
 
             Requirements: 12.2, 13.5
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-            page_size = int(query_params.get("page_size", "50"))
-            next_token = query_params.get("next_token")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
-            # Validate page_size
-            if page_size < 1 or page_size > 100:
-                raise BadRequestError("page_size must be between 1 and 100")
-
             # Verify vault ownership
             self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
@@ -146,14 +124,12 @@ class ListCollectionsRoute(BaseRoute):
 
             logger.info(
                 "Listed collections successfully",
-                extra={
-                    "user_id": user_id,
-                    "vault_id": vault_id,
-                    "count": len(response_collections),
-                },
+                user_id=user_id,
+                vault_id=vault_id,
+                count=len(response_collections),
             )
 
-            response = {"collections": response_collections}
+            response: dict[str, Any] = {"collections": response_collections}
             if next_page_token:
                 response["next_token"] = next_page_token
 
@@ -168,9 +144,13 @@ class GetCollectionRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.get("/v1/collections/<collection_id>")
-        def handle(collection_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/collections/{collection_id}")
+        def handle(
+            collection_id: str,
+            vault_id: str = Query(..., description="Vault ID"),
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Get collection details.
 
@@ -182,17 +162,6 @@ class GetCollectionRoute(BaseRoute):
 
             Requirements: 12.2, 13.1
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
             # Verify vault ownership
             self.vault_service.vault_exists(user_id, vault_id)
 
@@ -202,7 +171,8 @@ class GetCollectionRoute(BaseRoute):
             if not collection:
                 logger.warning(
                     "Collection not found",
-                    extra={"user_id": user_id, "collection_id": collection_id},
+                    user_id=user_id,
+                    collection_id=collection_id,
                 )
                 raise NotFoundError("Collection not found")
 
@@ -222,10 +192,8 @@ class GetCollectionRoute(BaseRoute):
 
             logger.info(
                 "Retrieved collection successfully",
-                extra={
-                    "user_id": user_id,
-                    "collection_id": collection_id,
-                },
+                user_id=user_id,
+                collection_id=collection_id,
             )
 
             return response
@@ -239,9 +207,13 @@ class UpdateCollectionRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.put("/v1/collections/<collection_id>")
-        def handle(collection_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.put("/v1/collections/{collection_id}")
+        def handle(
+            collection_id: str,
+            body: UpdateCollectionRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Update collection.
 
@@ -253,16 +225,8 @@ class UpdateCollectionRoute(BaseRoute):
 
             Requirements: 13.3
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = UpdateCollectionRequest(collection_id=collection_id, **body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
+            # Merge path param into request
+            request = body.model_copy(update={"collection_id": collection_id})
 
             # Verify vault ownership
             self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
@@ -272,10 +236,8 @@ class UpdateCollectionRoute(BaseRoute):
 
             logger.info(
                 "Collection updated successfully",
-                extra={
-                    "user_id": user_id,
-                    "collection_id": collection_id,
-                },
+                user_id=user_id,
+                collection_id=collection_id,
             )
 
             return {
@@ -292,9 +254,13 @@ class DeleteCollectionRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.delete("/v1/collections/<collection_id>")
-        def handle(collection_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.delete("/v1/collections/{collection_id}")
+        def handle(
+            collection_id: str,
+            vault_id: str = Query(..., description="Vault ID"),
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Delete collection.
 
@@ -306,17 +272,6 @@ class DeleteCollectionRoute(BaseRoute):
 
             Requirements: 13.3, 13.4
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
             # Verify vault ownership
             self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
@@ -325,11 +280,9 @@ class DeleteCollectionRoute(BaseRoute):
 
             logger.info(
                 "Collection deleted successfully",
-                extra={
-                    "user_id": user_id,
-                    "vault_id": vault_id,
-                    "collection_id": collection_id,
-                },
+                user_id=user_id,
+                vault_id=vault_id,
+                collection_id=collection_id,
             )
 
             return {
@@ -346,9 +299,13 @@ class AddItemToCollectionRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.post("/v1/collections/<collection_id>/items")
-        def handle(collection_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.post("/v1/collections/{collection_id}/items")
+        def handle(
+            collection_id: str,
+            body: AddItemToCollectionRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Add item to collection.
 
@@ -361,16 +318,8 @@ class AddItemToCollectionRoute(BaseRoute):
 
             Requirements: 12.3, 12.5
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = AddItemToCollectionRequest(collection_id=collection_id, **body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
+            # Merge path param into request
+            request = body.model_copy(update={"collection_id": collection_id})
 
             # Verify vault ownership
             self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
@@ -380,11 +329,9 @@ class AddItemToCollectionRoute(BaseRoute):
 
             logger.info(
                 "Item added to collection successfully",
-                extra={
-                    "user_id": user_id,
-                    "collection_id": collection_id,
-                    "item_id": request.item_id,
-                },
+                user_id=user_id,
+                collection_id=collection_id,
+                item_id=request.item_id,
             )
 
             return {
@@ -402,9 +349,14 @@ class RemoveItemFromCollectionRoute(BaseRoute):
         self.collection_service = collection_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.delete("/v1/collections/<collection_id>/items/<item_id>")
-        def handle(collection_id: str, item_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.delete("/v1/collections/{collection_id}/items/{item_id}")
+        def handle(
+            collection_id: str,
+            item_id: str,
+            vault_id: str = Query(..., description="Vault ID"),
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Remove item from collection.
 
@@ -417,17 +369,6 @@ class RemoveItemFromCollectionRoute(BaseRoute):
 
             Requirements: 13.2
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
             # Verify vault ownership
             self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
 
@@ -438,12 +379,10 @@ class RemoveItemFromCollectionRoute(BaseRoute):
 
             logger.info(
                 "Item removed from collection successfully",
-                extra={
-                    "user_id": user_id,
-                    "vault_id": vault_id,
-                    "collection_id": collection_id,
-                    "item_id": item_id,
-                },
+                user_id=user_id,
+                vault_id=vault_id,
+                collection_id=collection_id,
+                item_id=item_id,
             )
 
             return {

@@ -1,0 +1,16 @@
+services:
+  cortex-api:
+    build:
+      context: ./lambda
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - AWS_REGION=us-east-1
+      - VAULTS_TABLE_NAME=cortex-vaults
+      - ITEMS_TABLE_NAME=cortex-items
+      - COLLECTIONS_TABLE_NAME=cortex-collections
+      - SHARES_TABLE_NAME=cortex-shares
+      - RECOVERY_TABLE_NAME=cortex-recovery
+      - FILES_BUCKET_NAME=cortex-files
+      - COGNITO_USER_POOL_ID=local

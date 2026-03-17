@@ -1,25 +1,25 @@
 """
 Unit tests for share route handlers.
 
-Tests verify that share routes work correctly through the lambda handler entrypoint.
+Tests verify that share routes work correctly through the FastAPI test client.
 """
 
-import json
 import time
 
 from botocore.stub import ANY
+from fastapi.testclient import TestClient
 
-from src.entrypoint.api import lambda_handler
+from src.environment.service_provider import ServiceProvider
 
 
 class TestCreateShareRoute:
-    """Test suite for CreateShareRoute through lambda handler."""
+    """Test suite for CreateShareRoute through FastAPI test client."""
 
     def test_create_share_route_handler(
-        self, mock_service_provider, dynamodb_stubber, items_table_name, shares_table_name
+        self, client, dynamodb_stubber, items_table_name, shares_table_name
     ):
         """Test create share route handler returns expected response."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         item_id = "test-item-789"
         vault_id = "test-vault-456"
 
@@ -52,41 +52,31 @@ class TestCreateShareRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/shares",
-            "path": "/v1/shares",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"item_id": item_id}),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.post(
+            "/v1/shares",
+            json={"item_id": item_id},
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify status code
-        assert response["statusCode"] == 200
-
-        # Verify response payload structure
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert "share_id" in body, "Response should include share_id"
         assert "created_at" in body, "Response should include created_at"
 
-        # Validate response values
         assert isinstance(body["share_id"], str), "share_id should be a string"
         assert len(body["share_id"]) > 0, "share_id should not be empty"
         assert isinstance(body["created_at"], int), "created_at should be an integer"
 
 
 class TestGetShareRoute:
-    """Test suite for GetShareRoute through lambda handler."""
+    """Test suite for GetShareRoute through FastAPI test client."""
 
     def test_get_share_route_handler(
-        self, mock_service_provider, dynamodb_stubber, items_table_name, shares_table_name
+        self, share_service, dynamodb_stubber, items_table_name, shares_table_name
     ):
         """Test get share route handler returns expected response."""
+        app = ServiceProvider().app
+        client = TestClient(app)
+
         share_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
         item_id = "test-item-789"
         vault_id = "test-vault-456"
@@ -181,31 +171,15 @@ class TestGetShareRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/shares/{share_id}",
-            "path": f"/v1/shares/{share_id}",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"share_id": share_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "identity": {"sourceIp": "1.2.3.4"},
-            },
-        }
+        response = client.get(f"/v1/shares/{share_id}")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify status code
-        assert response["statusCode"] == 200
-
-        # Verify response payload structure
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert "share_id" in body, "Response should include share_id"
         assert "item_id" in body, "Response should include item_id"
         assert "download_url" in body, "Response should include download_url"
         assert "url_expires_at" in body, "Response should include url_expires_at"
 
-        # Validate response values
         assert body["share_id"] == share_id
         assert body["item_id"] == item_id
         assert isinstance(body["download_url"], str), "download_url should be a string"
@@ -214,14 +188,12 @@ class TestGetShareRoute:
 
 
 class TestRevokeShareRoute:
-    """Test suite for RevokeShareRoute through lambda handler."""
+    """Test suite for RevokeShareRoute through FastAPI test client."""
 
-    def test_revoke_share_route_handler(
-        self, mock_service_provider, dynamodb_stubber, shares_table_name
-    ):
+    def test_revoke_share_route_handler(self, client, dynamodb_stubber, shares_table_name):
         """Test revoke share route handler returns expected response."""
         share_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         item_id = "test-item-789"
         vault_id = "test-vault-456"
         now = int(time.time())
@@ -267,28 +239,12 @@ class TestRevokeShareRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/shares/{share_id}",
-            "path": f"/v1/shares/{share_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"share_id": share_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.delete(f"/v1/shares/{share_id}")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Verify status code
-        assert response["statusCode"] == 200
-
-        # Verify response payload structure
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert "message" in body, "Response should include message"
         assert "revoked_at" in body, "Response should include revoked_at"
 
-        # Validate response values
         assert body["message"] == "Share revoked successfully"
         assert isinstance(body["revoked_at"], int), "revoked_at should be an integer"

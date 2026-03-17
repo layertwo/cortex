@@ -13,12 +13,9 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import (
-    BadRequestError,
-    NotFoundError,
-)
 from botocore.stub import ANY
 
+from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.models import (
     CompleteUploadRequest,
     CreateItemRequest,

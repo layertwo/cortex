@@ -1,24 +1,20 @@
 """
 Unit tests for item route handlers.
 
-Tests verify that item routes work correctly through the lambda handler entrypoint.
+Tests verify that item routes work correctly through the FastAPI test client.
 """
 
-import json
 from datetime import datetime, timezone
 
 import pytest
 from botocore.stub import ANY
 
-from src.entrypoint.api import lambda_handler
-
 
 class TestCreateItemRoute:
-    """Test suite for CreateItemRoute through lambda handler."""
+    """Test suite for CreateItemRoute through FastAPI test client."""
 
-    def test_create_item_route_handler(self, mock_service_provider, dynamodb_stubber):
+    def test_create_item_route_handler(self, client, dynamodb_stubber):
         """Test create item route handler returns expected response."""
-        user_id = "test-user-123"
         vault_id = "test-vault-456"
 
         # Stub DynamoDB put_item call
@@ -31,42 +27,27 @@ class TestCreateItemRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/items",
-            "path": "/v1/items",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(
-                {
-                    "vault_id": vault_id,
-                    "item_type": "NOTE",
-                    "encrypted_content": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
-                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
+        response = client.post(
+            "/v1/items",
+            json={
+                "vault_id": vault_id,
+                "item_type": "NOTE",
+                "encrypted_content": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
+                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        assert response.status_code == 200
+        body = response.json()
 
-        # Verify the response
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
-
-        # Validate response structure
         assert "item_id" in body, "Response should include item_id"
         assert "item_type" in body, "Response should include item_type"
         assert "created_at" in body, "Response should include created_at"
 
-        # Validate response values
         assert isinstance(body["item_id"], str), "item_id should be a string"
         assert len(body["item_id"]) > 0, "item_id should not be empty"
         assert body["item_type"] == "NOTE", f"item_type should be NOTE, got {body['item_type']}"
 
-        # Validate created_at is ISO format datetime string
         try:
             datetime.fromisoformat(body["created_at"])
         except ValueError:
@@ -74,11 +55,10 @@ class TestCreateItemRoute:
 
 
 class TestInitiateUploadRoute:
-    """Test suite for InitiateUploadRoute through lambda handler."""
+    """Test suite for InitiateUploadRoute through FastAPI test client."""
 
-    def test_initiate_upload_route_handler(self, mock_service_provider, dynamodb_stubber):
+    def test_initiate_upload_route_handler(self, client, dynamodb_stubber):
         """Test initiate upload route handler returns expected response."""
-        user_id = "test-user-123"
         vault_id = "test-vault-456"
 
         # Stub DynamoDB put_item call (creates item metadata)
@@ -91,39 +71,25 @@ class TestInitiateUploadRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/items/upload/init",
-            "path": "/v1/items/upload/init",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(
-                {
-                    "vault_id": vault_id,
-                    "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
-                    "size_bytes": 50 * 1024 * 1024,  # 50MB - small file
-                    "content_type": "image/jpeg",
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
+        response = client.post(
+            "/v1/items/upload/init",
+            json={
+                "vault_id": vault_id,
+                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+                "size_bytes": 50 * 1024 * 1024,  # 50MB - small file
+                "content_type": "image/jpeg",
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        assert response.status_code == 200
+        body = response.json()
 
-        # Verify the response
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
-
-        # Validate response structure
         assert "item_id" in body, "Response should include item_id"
         assert "upload_url" in body, "Response should include upload_url"
         assert "expires_at" in body, "Response should include expires_at"
         assert "s3_key" in body, "Response should include s3_key"
         assert "upload_id" in body, "Response should include upload_id"
 
-        # Validate response values
         assert isinstance(body["item_id"], str), "item_id should be a string"
         assert len(body["item_id"]) > 0, "item_id should not be empty"
 
@@ -134,7 +100,6 @@ class TestInitiateUploadRoute:
         assert vault_id in body["s3_key"], f"s3_key should contain vault_id {vault_id}"
         assert body["item_id"] in body["s3_key"], "s3_key should contain item_id"
 
-        # Validate expires_at is ISO format datetime string
         try:
             datetime.fromisoformat(body["expires_at"])
         except ValueError:
@@ -145,13 +110,13 @@ class TestInitiateUploadRoute:
 
 
 class TestCompleteUploadRoute:
-    """Test suite for CompleteUploadRoute through lambda handler."""
+    """Test suite for CompleteUploadRoute through FastAPI test client."""
 
     def test_complete_upload_route_handler(
-        self, mock_service_provider, dynamodb_stubber, s3_stubber, files_bucket_name
+        self, client, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test complete upload route handler returns expected response."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         vault_id = "test-vault-456"
         item_id = "test-item-789"
         s3_key = f"vaults/{vault_id}/files/{item_id}/test"
@@ -214,40 +179,24 @@ class TestCompleteUploadRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/items/upload/complete",
-            "path": "/v1/items/upload/complete",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps(
-                {
-                    "item_id": item_id,
-                    "vault_id": vault_id,
-                }
-            ),
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
+        response = client.post(
+            "/v1/items/upload/complete",
+            json={
+                "item_id": item_id,
+                "vault_id": vault_id,
             },
-        }
+        )
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        assert response.status_code == 200
+        body = response.json()
 
-        # Verify the response
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
-
-        # Validate response structure
         assert "item_id" in body, "Response should include item_id"
         assert "uploaded_at" in body, "Response should include uploaded_at"
 
-        # Validate response values
         assert body["item_id"] == item_id, f"item_id should be {item_id}, got {body['item_id']}"
 
-        # Validate uploaded_at is ISO format datetime string
         try:
             uploaded_at = datetime.fromisoformat(body["uploaded_at"])
-            # Ensure the timestamp is recent (within last minute)
             now = datetime.now(tz=timezone.utc)
             time_diff = abs((now - uploaded_at.replace(tzinfo=timezone.utc)).total_seconds())
             assert (
@@ -258,36 +207,20 @@ class TestCompleteUploadRoute:
 
 
 class TestListItemsRoute:
-    """Test suite for ListItemsRoute through lambda handler."""
+    """Test suite for ListItemsRoute through FastAPI test client."""
 
-    def test_list_items_route_handler_missing_vault_id(self, mock_service_provider):
+    def test_list_items_route_handler_missing_vault_id(self, client):
         """Test list items route handler returns error when vault_id is missing."""
-        event = {
-            "resource": "/v1/items",
-            "path": "/v1/items",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": "test-user-123"}},
-            },
-        }
+        response = client.get("/v1/items")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Should return 400 because vault_id is required
-        assert response["statusCode"] == 400
-        body = json.loads(response["body"])
-        # Powertools format: {"statusCode": 400, "message": "vault_id is required"}
-        assert body["statusCode"] == 400
-        assert "vault_id is required" in body["message"]
+        # FastAPI returns 422 for missing required query params
+        assert response.status_code == 422
 
     def test_list_items_route_handler_with_vault_id(
-        self, mock_service_provider, dynamodb_stubber, vaults_table_name, items_table_name
+        self, client, dynamodb_stubber, vaults_table_name, items_table_name
     ):
         """Test list items route handler with vault_id returns empty list for empty vault."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         vault_id = "vault-123"
 
         # Stub DynamoDB get_item call for vault_exists check
@@ -308,7 +241,6 @@ class TestListItemsRoute:
         )
 
         # Stub DynamoDB query call for list_items - empty vault
-        # Query uses GSI2 (listing all items without type filter)
         dynamodb_stubber.add_response(
             "query",
             {"Items": []},
@@ -323,136 +255,68 @@ class TestListItemsRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/items",
-            "path": "/v1/items",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "queryStringParameters": {"vault_id": vault_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.get("/v1/items", params={"vault_id": vault_id})
+        body = response.json()
 
-        response = lambda_handler(event, {}, mock_service_provider)
-        body = json.loads(response["body"])
-
-        # Empty vault owned by user returns empty list (valid case)
-        assert response["statusCode"] == 200
+        assert response.status_code == 200
         assert body["items"] == []
 
     def test_list_items_returns_404_for_nonexistent_vault(
-        self, mock_service_provider, dynamodb_stubber, vaults_table_name
+        self, client, dynamodb_stubber, vaults_table_name
     ):
-        """
-        Test that list items returns 404 when vault doesn't exist.
-
-        Security requirement: Prevents vault enumeration by returning the same
-        response for non-existent vaults as for unauthorized access.
-        """
-        user_id = "test-user-123"
+        """Test that list items returns 404 when vault doesn't exist."""
+        user_id = "test-user-id"
         vault_id = "nonexistent-vault"
 
         # Stub DynamoDB get_item call for vault_exists - vault not found
         dynamodb_stubber.add_response(
             "get_item",
-            {},  # Empty response means vault not found
+            {},
             expected_params={
                 "TableName": vaults_table_name,
                 "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
             },
         )
 
-        event = {
-            "resource": "/v1/items",
-            "path": "/v1/items",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "queryStringParameters": {"vault_id": vault_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.get("/v1/items", params={"vault_id": vault_id})
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Non-existent vault returns 404, NOT empty list
-        assert response["statusCode"] == 404
-        body = json.loads(response["body"])
-        assert body["statusCode"] == 404
+        assert response.status_code == 404
+        body = response.json()
         assert "Vault not found" in body["message"]
 
     def test_list_items_returns_404_for_vault_owned_by_different_user(
-        self, mock_service_provider, dynamodb_stubber, vaults_table_name
+        self, client, dynamodb_stubber, vaults_table_name
     ):
-        """
-        Test that list items returns 404 when vault exists but belongs to different user.
-
-        Security requirement: Prevents vault enumeration by returning 404 for both
-        'vault doesn't exist' and 'vault exists but unauthorized'. Attackers cannot
-        distinguish valid vault IDs from invalid ones.
-        """
-        user_id = "test-user-123"
+        """Test that list items returns 404 when vault exists but belongs to different user."""
+        user_id = "test-user-id"
         vault_id = "vault-owned-by-other-user"
 
         # Stub DynamoDB get_item call for vault_exists - vault not found for THIS user
-        # The vault exists for different_user_id but not for user_id
-        # vault_exists queries with USER#{user_id} so vault won't be found
         dynamodb_stubber.add_response(
             "get_item",
-            {},  # Empty response - vault exists but not owned by this user
+            {},
             expected_params={
                 "TableName": vaults_table_name,
                 "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
             },
         )
 
-        event = {
-            "resource": "/v1/items",
-            "path": "/v1/items",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "queryStringParameters": {"vault_id": vault_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.get("/v1/items", params={"vault_id": vault_id})
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        # Vault owned by different user returns 404, NOT empty list
-        # This prevents vault enumeration attacks
-        assert response["statusCode"] == 404
-        body = json.loads(response["body"])
-        assert body["statusCode"] == 404
+        assert response.status_code == 404
+        body = response.json()
         assert "Vault not found" in body["message"]
 
 
 class TestGetItemRoute:
-    """Test suite for GetItemRoute through lambda handler."""
+    """Test suite for GetItemRoute through FastAPI test client."""
 
-    def test_get_item_route_handler(
-        self, mock_service_provider, dynamodb_stubber, items_table_name
-    ):
+    def test_get_item_route_handler(self, client, dynamodb_stubber, items_table_name):
         """Test get item route handler with vault_id."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         vault_id = "vault-123"
         item_id = "test-item-123"
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "queryStringParameters": {},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+
         now_timestamp = str(datetime.now(tz=timezone.utc).timestamp())
         dynamodb_stubber.add_response(
             "get_item",
@@ -473,10 +337,10 @@ class TestGetItemRoute:
             },
         )
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        response = client.get(f"/v1/items/{item_id}")
 
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert body["item_id"] == item_id
         assert body["item_type"] == "event"
         assert body["vault_id"] == vault_id
@@ -486,36 +350,25 @@ class TestGetItemRoute:
 
 
 class TestUpdateItemRoute:
-    """Test suite for UpdateItemRoute through lambda handler."""
+    """Test suite for UpdateItemRoute through FastAPI test client."""
 
-    def test_update_item_route_handler(self, mock_service_provider):
+    def test_update_item_route_handler(self, client):
         """Test update item route handler returns expected response."""
         item_id = "test-item-123"
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "PUT",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "body": json.dumps({}),
-            "requestContext": {"requestId": "test-request-id"},
-        }
 
-        response = lambda_handler(event, {}, mock_service_provider)
+        response = client.put(f"/v1/items/{item_id}", json={})
 
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert "Update item endpoint" in body["message"]
 
 
 class TestDeleteItemRoute:
-    """Test suite for DeleteItemRoute through lambda handler."""
+    """Test suite for DeleteItemRoute through FastAPI test client."""
 
-    def test_delete_item_route_handler(
-        self, mock_service_provider, dynamodb_stubber, items_table_name
-    ):
+    def test_delete_item_route_handler(self, client, dynamodb_stubber, items_table_name):
         """Test delete item route handler successfully deletes an item."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         item_id = "test-item-123"
         vault_id = "test-vault-456"
 
@@ -549,35 +402,17 @@ class TestDeleteItemRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.delete(f"/v1/items/{item_id}")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert body["message"] == "Item deleted successfully"
         assert body["item_id"] == item_id
 
     def test_delete_item_route_enforces_user_authorization(
-        self, mock_service_provider, dynamodb_stubber, items_table_name
+        self, client, dynamodb_stubber, items_table_name
     ):
-        """
-        Test that delete item route enforces user ownership authorization.
-
-        Returns 404 if item exists but belongs to a different user.
-        This reduces information leakage by not revealing item existence.
-        """
-        user_id = "test-user-123"
+        """Test that delete item route enforces user ownership authorization."""
         different_user_id = "different-user-456"
         item_id = "test-item-123"
         vault_id = "test-vault-456"
@@ -590,7 +425,7 @@ class TestDeleteItemRoute:
                     "PK": {"S": f"ITEM#{item_id}"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": item_id},
-                    "user_id": {"S": different_user_id},  # Different user owns this item
+                    "user_id": {"S": different_user_id},
                     "vault_id": {"S": vault_id},
                     "item_type": {"S": "NOTE"},
                     "encrypted_metadata": {"B": b"test-metadata"},
@@ -602,83 +437,42 @@ class TestDeleteItemRoute:
             },
         )
 
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.delete(f"/v1/items/{item_id}")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        assert response["statusCode"] == 404
-        body = json.loads(response["body"])
-        assert body["statusCode"] == 404
+        assert response.status_code == 404
 
     def test_delete_item_route_returns_404_for_nonexistent_item(
-        self, mock_service_provider, dynamodb_stubber, items_table_name
+        self, client, dynamodb_stubber, items_table_name
     ):
         """Test delete item route returns 404 when item doesn't exist."""
-        user_id = "test-user-123"
         item_id = "nonexistent-item"
 
         # Stub DynamoDB get_item call - returns empty (no item found)
         dynamodb_stubber.add_response(
             "get_item",
-            {},  # Empty response means item not found
+            {},
             expected_params={
                 "TableName": items_table_name,
                 "Key": {"PK": f"ITEM#{item_id}"},
             },
         )
 
-        event = {
-            "resource": "/v1/items/{item_id}",
-            "path": f"/v1/items/{item_id}",
-            "httpMethod": "DELETE",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
+        response = client.delete(f"/v1/items/{item_id}")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        assert response["statusCode"] == 404
+        assert response.status_code == 404
 
 
 class TestDownloadItemRoute:
-    """Test suite for DownloadItemRoute through lambda handler."""
+    """Test suite for DownloadItemRoute through FastAPI test client."""
 
     def test_download_item_route_handler(
-        self, mock_service_provider, dynamodb_stubber, s3_stubber, files_bucket_name
+        self, client, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test download item route handler with vault_id."""
-        user_id = "test-user-123"
+        user_id = "test-user-id"
         item_id = "test-item-123"
         vault_id = "vault-123"
         s3_key = f"vaults/{vault_id}/files/{item_id}/test"
-
-        event = {
-            "resource": "/v1/items/{item_id}/download",
-            "path": f"/v1/items/{item_id}/download",
-            "httpMethod": "GET",
-            "headers": {"Content-Type": "application/json"},
-            "pathParameters": {"item_id": item_id},
-            # TODO does this need to be a queryStringParam and instead in the request payload?
-            "queryStringParameters": {"vault_id": vault_id},
-            "requestContext": {
-                "requestId": "test-request-id",
-                "authorizer": {"claims": {"sub": user_id}},
-            },
-        }
 
         dynamodb_stubber.add_response(
             "get_item",
@@ -706,29 +500,21 @@ class TestDownloadItemRoute:
             "head_object", {}, expected_params={"Bucket": files_bucket_name, "Key": s3_key}
         )
 
-        response = lambda_handler(event, {}, mock_service_provider)
-        body = json.loads(response["body"])
+        response = client.get(f"/v1/items/{item_id}/download")
+        body = response.json()
 
-        assert response["statusCode"] == 200
+        assert response.status_code == 200
         assert body["s3_key"] == s3_key
         assert s3_key in body["download_url"]
 
 
 class TestSearchItemRoute:
-    """Test suite for SearchItemsRoute through lambda handler."""
+    """Test suite for SearchItemsRoute through FastAPI test client."""
 
-    def test_search_items_route_handler(self, mock_service_provider):
+    def test_search_items_route_handler(self, client):
         """Test search items route handler returns expected response."""
-        event = {
-            "resource": "/v1/items/search",
-            "path": "/v1/items/search",
-            "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
-            "requestContext": {"requestId": "test-request-id"},
-        }
+        response = client.post("/v1/items/search")
 
-        response = lambda_handler(event, {}, mock_service_provider)
-
-        assert response["statusCode"] == 200
-        body = json.loads(response["body"])
+        assert response.status_code == 200
+        body = response.json()
         assert "Search items endpoint" in body["message"]

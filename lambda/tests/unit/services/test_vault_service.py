@@ -10,13 +10,10 @@ Uses botocore Stubber for AWS service testing (not mocking).
 import secrets
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import (
-    BadRequestError,
-    InternalServerError,
-    NotFoundError,
-)
 from botocore.exceptions import ClientError
 from botocore.stub import ANY
+
+from src.shared.exceptions import BadRequestError, InternalError, NotFoundError
 
 
 class TestVaultService:
@@ -186,7 +183,7 @@ class TestVaultService:
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_raises_error_on_missing_salt(self, vault_service, dynamodb_stubber):
-        """Test that get_vault_salt raises InternalServerError when salt is missing from item."""
+        """Test that get_vault_salt raises InternalError when salt is missing from item."""
         user_id = "test-user-123"
         vault_id = "vault-456"
 
@@ -209,7 +206,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(InternalServerError, match="missing salt"):
+        with pytest.raises(InternalError, match="missing salt"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_validates_salt_format(self, vault_service, dynamodb_stubber):
@@ -236,7 +233,7 @@ class TestVaultService:
             },
         )
 
-        with pytest.raises(InternalServerError, match="invalid salt format"):
+        with pytest.raises(InternalError, match="invalid salt format"):
             vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
     def test_get_vault_salt_handles_dynamodb_error(self, vault_service, dynamodb_stubber):

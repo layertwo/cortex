@@ -7,16 +7,14 @@ token refresh, and account recovery.
 Requirements: 3.1, 3.2, 19.2
 """
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
-from pydantic import ValidationError as PydanticValidationError
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.auth_service import AuthService
+from src.shared.logger import get_logger
 
-logger = Logger(child=True)
+logger = get_logger("auth_routes")
 
 
 # Request/Response models for authentication endpoints
@@ -75,10 +73,9 @@ class LoginRoute(BaseRoute):
         """
         self.auth_service = auth_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/auth/login")
-        def handle():
+        def handle(request: Request, login: LoginRequest):
             """
             Authenticate user with account password.
 
@@ -86,33 +83,17 @@ class LoginRoute(BaseRoute):
             the account password. The actual JWT validation is handled by
             API Gateway's Cognito authorizer.
 
-            Request Body:
-                email: User email address
-                password: Account password (not vault password)
-
             Returns:
                 Authentication result with tokens
 
             Requirements: 3.1, 3.2
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body or {}
-                request = LoginRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
             logger.info(
                 "Login request received",
-                extra={
-                    "email_domain": (
-                        request.email.split("@")[-1] if "@" in request.email else "unknown"
-                    )
-                },
+                email_domain=(login.email.split("@")[-1] if "@" in login.email else "unknown"),
             )
 
-            result = self.auth_service.validate_login(request.email, request.password)
+            result = self.auth_service.validate_login(login.email, login.password)
 
             return LoginResponse(**result).model_dump()
 
@@ -129,32 +110,20 @@ class RefreshRoute(BaseRoute):
         """
         self.auth_service = auth_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/auth/refresh")
-        def handle():
+        def handle(request: RefreshRequest):
             """
             Refresh authentication credentials.
 
             This endpoint refreshes JWT tokens using a refresh token.
             The actual token refresh is handled by Cognito.
 
-            Request Body:
-                refresh_token: Refresh token from previous authentication
-
             Returns:
                 New authentication tokens
 
             Requirements: 3.1, 3.2
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body or {}
-                request = RefreshRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
             logger.info("Token refresh request received")
 
             result = self.auth_service.refresh_token(request.refresh_token)
@@ -174,10 +143,9 @@ class RecoverRoute(BaseRoute):
         """
         self.auth_service = auth_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/auth/recover")
-        def handle():
+        def handle(request: Request, recovery: RecoverRequest):
             """
             Initiate account recovery with recovery code.
 
@@ -185,32 +153,18 @@ class RecoverRoute(BaseRoute):
             account password reset flow. Note: This does NOT affect
             vault encryption keys - only the account password.
 
-            Request Body:
-                email: User email address
-                recovery_code: One of the user's recovery codes (format: XXXX-XXXX-XXXX-XXXX)
-
             Returns:
                 Recovery session information
 
             Requirements: 19.2
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body or {}
-                request = RecoverRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
             logger.info(
                 "Account recovery request received",
-                extra={
-                    "email_domain": (
-                        request.email.split("@")[-1] if "@" in request.email else "unknown"
-                    )
-                },
+                email_domain=(
+                    recovery.email.split("@")[-1] if "@" in recovery.email else "unknown"
+                ),
             )
 
-            result = self.auth_service.initiate_recovery(request.email, request.recovery_code)
+            result = self.auth_service.initiate_recovery(recovery.email, recovery.recovery_code)
 
             return RecoverResponse(**result).model_dump()

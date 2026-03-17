@@ -10,17 +10,16 @@ Requirements: 17.3, 17.4, 17.5, 18.2, 18.5
 import hashlib
 import re
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
-from pydantic import ValidationError as PydanticValidationError
+from fastapi import APIRouter, Depends, Request
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.share_service import ShareService
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.exceptions import BadRequestError
+from src.shared.logger import get_logger
 from src.shared.models import CreateShareRequest
 
-logger = Logger(child=True)
+logger = get_logger("share_routes")
 
 UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
@@ -34,35 +33,25 @@ class CreateShareRoute(BaseRoute):
         """Initialize the create share route."""
         self.share_service = share_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/shares")
-        def handle():
+        def handle(
+            request: CreateShareRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Create item share with metadata.
 
             Requirements: 17.3
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = CreateShareRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Create share
             response = self.share_service.create_share(user_id, request)
 
             logger.info(
                 "Share created successfully",
-                extra={
-                    "user_id": user_id,
-                    "share_id": response.share_id,
-                    "item_id": request.item_id,
-                },
+                user_id=user_id,
+                share_id=response.share_id,
+                item_id=request.item_id,
             )
 
             return {
@@ -79,9 +68,12 @@ class GetShareRoute(BaseRoute):
         """Initialize the get share route."""
         self.share_service = share_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.get("/v1/shares/<share_id>")
-        def handle(share_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/shares/{share_id}")
+        def handle(
+            share_id: str,
+            request: Request,
+        ):
             """
             Access shared item (anonymous).
 
@@ -94,9 +86,13 @@ class GetShareRoute(BaseRoute):
                 raise BadRequestError("Invalid share ID format")
 
             # Extract client IP from request context (no auth required)
-            request_context = app.current_event.get("requestContext", {})
-            identity = request_context.get("identity", {})
-            client_ip = identity.get("sourceIp", "unknown")
+            aws_event = request.scope.get("aws.event")
+            if aws_event:
+                request_context = aws_event.get("requestContext", {})
+                identity = request_context.get("identity", {})
+                client_ip = identity.get("sourceIp", "unknown")
+            else:
+                client_ip = request.client.host if request.client else "unknown"
 
             # Access share
             response = self.share_service.get_share(share_id, client_ip)
@@ -104,10 +100,8 @@ class GetShareRoute(BaseRoute):
             ip_hash = hashlib.sha256(client_ip.encode()).hexdigest()[:12]
             logger.info(
                 "Share accessed successfully",
-                extra={
-                    "share_id": share_id,
-                    "client_ip_hash": ip_hash,
-                },
+                share_id=share_id,
+                client_ip_hash=ip_hash,
             )
 
             return {
@@ -126,9 +120,12 @@ class RevokeShareRoute(BaseRoute):
         """Initialize the revoke share route."""
         self.share_service = share_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.delete("/v1/shares/<share_id>")
-        def handle(share_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.delete("/v1/shares/{share_id}")
+        def handle(
+            share_id: str,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Revoke share.
 
@@ -140,18 +137,13 @@ class RevokeShareRoute(BaseRoute):
             if not UUID_PATTERN.match(share_id):
                 raise BadRequestError("Invalid share ID format")
 
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Revoke share
             response = self.share_service.revoke_share(user_id, share_id)
 
             logger.info(
                 "Share revoked successfully",
-                extra={
-                    "user_id": user_id,
-                    "share_id": share_id,
-                },
+                user_id=user_id,
+                share_id=share_id,
             )
 
             return {

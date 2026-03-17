@@ -7,8 +7,9 @@ Requirements: 11.4, 11.5
 from base64 import b64encode
 
 import pytest
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
 from botocore.stub import ANY
+
+from src.shared.exceptions import BadRequestError
 
 
 class TestTagSearch:

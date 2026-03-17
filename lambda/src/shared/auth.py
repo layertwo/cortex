@@ -1,63 +1,77 @@
 """
-Shared authentication utilities for Cortex Backup System.
+Authentication utilities for Cortex API.
 
-This module provides functions to extract user identity from API Gateway context,
-validate JWT tokens, and perform user authorization checks.
+Provides user identity extraction that works with both
+API Gateway (Lambda/Mangum) and standalone container deployments.
 
-Requirements: 3.1, 3.2, 3.4
+Container mode requires an authenticating reverse proxy (nginx, Envoy, ALB)
+that validates user credentials and sets the X-User-Id header. The proxy
+MUST strip any client-provided X-User-Id headers to prevent spoofing.
 """
 
+import os
 from typing import Any, Dict
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler.exceptions import UnauthorizedError
+from fastapi import Request
 
-logger = Logger(child=True)
+from src.shared.exceptions import UnauthorizedError
+from src.shared.logger import get_logger
+
+logger = get_logger("auth")
+
+# When set, container mode trusts X-User-Id from the auth proxy.
+# Must only be enabled behind a properly configured reverse proxy.
+_TRUST_PROXY_HEADERS = os.environ.get("TRUST_PROXY_HEADERS", "false").lower() == "true"
 
 
-def get_user_from_context(event: Dict[str, Any]) -> str:
+def extract_user_id(event: Dict[str, Any]) -> str:
     """
-    Extract user identity from API Gateway authorizer context.
-
-    API Gateway validates the JWT token and adds user information to the
-    request context. This function extracts the user ID from that context.
+    Extract user ID from an API Gateway event dictionary.
 
     Args:
-        event: API Gateway event dictionary
+        event: API Gateway event (available via Mangum's ASGI scope)
 
     Returns:
-        User ID (Cognito sub claim)
+        User ID string
 
     Raises:
-        AuthenticationError: If user identity cannot be extracted
+        UnauthorizedError: If user identity cannot be extracted
     """
-    try:
-        # API Gateway adds authorizer context after JWT validation
-        request_context = event.get("requestContext", {})
-        authorizer = request_context.get("authorizer", {})
+    request_context = event.get("requestContext", {})
+    authorizer = request_context.get("authorizer", {})
 
-        # Try to get user ID from authorizer claims
-        # Cognito adds claims to the authorizer context
-        claims = authorizer.get("claims", {})
-        user_id = claims.get("sub")
+    # Try Cognito claims first
+    claims = authorizer.get("claims", {})
+    user_id = claims.get("sub")
 
-        if not user_id:
-            # Fallback: try to get from principalId (custom authorizer)
-            user_id = authorizer.get("principalId")
+    if not user_id:
+        # Fallback to custom authorizer principalId
+        user_id = authorizer.get("principalId")
 
-        if not user_id:
-            logger.warning(
-                "User ID not found in request context", extra={"request_context": request_context}
-            )
-            raise UnauthorizedError("User identity not found in request")
+    if not user_id:
+        logger.warning("user_id_not_found", request_context=str(request_context))
+        raise UnauthorizedError("User identity not found in request")
 
-        logger.debug("Extracted user ID from context", extra={"user_id": user_id})
+    return user_id
 
-        return user_id
 
-    except KeyError as e:
-        logger.error(
-            "Failed to extract user from context",
-            extra={"error": str(e), "event_keys": list(event.keys())},
-        )
-        raise UnauthorizedError("Invalid authentication context")
+def get_current_user(request: Request) -> str:
+    """
+    FastAPI dependency that extracts the current user ID.
+
+    In Lambda (Mangum): extracts from API Gateway authorizer context.
+    In containers: extracts from X-User-Id header set by an authenticating
+    reverse proxy. Requires TRUST_PROXY_HEADERS=true to enable.
+    """
+    # Mangum stores the original API Gateway event in scope
+    aws_event = request.scope.get("aws.event")
+    if aws_event:
+        return extract_user_id(aws_event)
+
+    # Container mode: trust proxy header only when explicitly enabled
+    if _TRUST_PROXY_HEADERS:
+        user_id = request.headers.get("x-user-id")
+        if user_id:
+            return user_id
+
+    raise UnauthorizedError("User identity not found in request")

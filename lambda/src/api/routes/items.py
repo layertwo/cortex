@@ -8,16 +8,16 @@ Requirements: 1.4, 1.5, 2.3, 4.1, 5.1, 7.1, 7.2, 10.1, 10.2, 24.1, 24.2
 """
 
 from datetime import datetime, timezone
+from typing import Any, Optional
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError, NotFoundError
-from pydantic import ValidationError as PydanticValidationError
+from fastapi import APIRouter, Depends, Query
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.exceptions import BadRequestError, NotFoundError
+from src.shared.logger import get_logger
 from src.shared.models import (
     CompleteUploadRequest,
     CreateItemRequest,
@@ -26,7 +26,7 @@ from src.shared.models import (
 )
 from src.shared.util import _decode_binary
 
-logger = Logger(child=True)
+logger = get_logger("item_routes")
 
 
 class CreateItemRoute(BaseRoute):
@@ -36,9 +36,12 @@ class CreateItemRoute(BaseRoute):
         """Initialize the create item route."""
         self.item_service = item_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/items")
-        def handle():
+        def handle(
+            request: CreateItemRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Create item (NOTE, TASK, EVENT with inline content).
 
@@ -47,27 +50,14 @@ class CreateItemRoute(BaseRoute):
 
             Requirements: 1.4, 2.1, 2.2, 24.1, 24.2, 24.3
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = CreateItemRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Create item
             response = self.item_service.create_item(user_id, request)
 
             logger.info(
                 "Item created successfully",
-                extra={
-                    "user_id": user_id,
-                    "item_id": response.item_id,
-                    "item_type": response.item_type,
-                },
+                user_id=user_id,
+                item_id=response.item_id,
+                item_type=response.item_type,
             )
 
             return {
@@ -84,9 +74,12 @@ class InitiateUploadRoute(BaseRoute):
         """Initialize the upload initiation route."""
         self.item_service = item_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/items/upload/init")
-        def handle():
+        def handle(
+            request: InitiateUploadRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Initialize upload for MEDIA items, get presigned URL.
 
@@ -95,28 +88,15 @@ class InitiateUploadRoute(BaseRoute):
 
             Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = InitiateUploadRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Initiate upload
             response = self.item_service.initiate_upload(user_id, request)
 
             logger.info(
                 "Upload initiated successfully",
-                extra={
-                    "user_id": user_id,
-                    "item_id": response.item_id,
-                    "size_bytes": request.size_bytes,
-                    "multipart": response.upload_id is not None,
-                },
+                user_id=user_id,
+                item_id=response.item_id,
+                size_bytes=request.size_bytes,
+                multipart=response.upload_id is not None,
             )
 
             return {
@@ -135,9 +115,12 @@ class CompleteUploadRoute(BaseRoute):
         """Initialize the upload completion route."""
         self.item_service = item_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/items/upload/complete")
-        def handle():
+        def handle(
+            request: CompleteUploadRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Mark MEDIA upload complete, store metadata.
 
@@ -146,26 +129,13 @@ class CompleteUploadRoute(BaseRoute):
 
             Requirements: 1.4, 2.2, 2.5, 24.2
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body
-                request = CompleteUploadRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Complete upload
             response = self.item_service.complete_upload(user_id=user_id, request=request)
 
             logger.info(
                 "Upload completed successfully",
-                extra={
-                    "user_id": user_id,
-                    "item_id": response.item_id,
-                },
+                user_id=user_id,
+                item_id=response.item_id,
             )
 
             return {
@@ -182,9 +152,16 @@ class ListItemsRoute(BaseRoute):
         self.item_service = item_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def register(self, app: APIRouter) -> None:
         @app.get("/v1/items")
-        def handle():
+        def handle(
+            vault_id: str = Query(..., description="Vault ID"),
+            item_type: Optional[str] = Query(None),
+            page_size: int = Query(50, ge=1, le=100),
+            next_token: Optional[str] = Query(None),
+            sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+            user_id: str = Depends(get_current_user),
+        ):
             """
             List items (filter by type, tags, date buckets).
 
@@ -194,29 +171,6 @@ class ListItemsRoute(BaseRoute):
 
             Requirements: 2.3, 10.1, 10.2, 24.1, 24.2
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
-            # Get query parameters
-            query_params = app.current_event.query_string_parameters or {}
-            vault_id = query_params.get("vault_id")
-            item_type = query_params.get("item_type")
-            page_size = int(query_params.get("page_size", "50"))
-            next_token = query_params.get("next_token")
-            sort_order = query_params.get("sort_order", "desc")
-
-            # Validate required parameters
-            if not vault_id:
-                raise BadRequestError("vault_id is required")
-
-            # Validate page_size
-            if page_size < 1 or page_size > 100:
-                raise BadRequestError("page_size must be between 1 and 100")
-
-            # Validate sort_order
-            if sort_order not in ["asc", "desc"]:
-                raise BadRequestError("sort_order must be 'asc' or 'desc'")
-
             # Validate item_type if provided
             if item_type and item_type not in [
                 ItemType.MEDIA,
@@ -227,15 +181,12 @@ class ListItemsRoute(BaseRoute):
                 raise BadRequestError("item_type must be MEDIA, NOTE, TASK, or EVENT")
 
             # Verify vault ownership BEFORE listing items - deny by default
-            # This check MUST happen outside try-except to prevent vault enumeration
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 logger.warning(
                     "Vault access denied - user does not own vault",
-                    extra={
-                        "user_id": user_id,
-                        "vault_id": vault_id,
-                        "operation": "list_items",
-                    },
+                    user_id=user_id,
+                    vault_id=vault_id,
+                    operation="list_items",
                 )
                 raise NotFoundError("Vault not found")
 
@@ -280,15 +231,13 @@ class ListItemsRoute(BaseRoute):
 
             logger.info(
                 "Listed items successfully",
-                extra={
-                    "user_id": user_id,
-                    "vault_id": vault_id,
-                    "item_type": item_type,
-                    "count": len(response_items),
-                },
+                user_id=user_id,
+                vault_id=vault_id,
+                item_type=item_type,
+                count=len(response_items),
             )
 
-            response = {"items": response_items}
+            response: dict[str, Any] = {"items": response_items}
             if next_page_token:
                 response["next_token"] = next_page_token
 
@@ -303,9 +252,12 @@ class GetItemRoute(BaseRoute):
         self.item_service = item_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.get("/v1/items/<item_id>")
-        def handle(item_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/items/{item_id}")
+        def handle(
+            item_id: str,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Get item metadata.
 
@@ -317,11 +269,11 @@ class GetItemRoute(BaseRoute):
 
             Requirements: 2.3, 10.1, 24.1, 24.2
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Get item
             item = self.item_service.get_item(user_id, item_id)
+
+            if item is None:
+                raise NotFoundError(f"Item {item_id} not found")
 
             # Convert item to response format
             response = {
@@ -349,11 +301,9 @@ class GetItemRoute(BaseRoute):
 
             logger.info(
                 "Retrieved item successfully",
-                extra={
-                    "user_id": user_id,
-                    "item_id": item_id,
-                    "item_type": item["item_type"],
-                },
+                user_id=user_id,
+                item_id=item_id,
+                item_type=item["item_type"],
             )
 
             return response
@@ -362,8 +312,11 @@ class GetItemRoute(BaseRoute):
 class UpdateItemRoute(BaseRoute):
     """Handle item updates."""
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.put("/v1/items/<item_id>")
+    def __init__(self, item_service: ItemService):
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.put("/v1/items/{item_id}")
         def handle(item_id: str):
             """
             Update item.
@@ -373,7 +326,7 @@ class UpdateItemRoute(BaseRoute):
 
             This endpoint will be implemented in task 12.1.
             """
-            logger.info("Update item endpoint called", extra={"item_id": item_id})
+            logger.info("Update item endpoint called", item_id=item_id)
             return {"message": "Update item endpoint - to be implemented in task 12.1"}
 
 
@@ -385,9 +338,12 @@ class DeleteItemRoute(BaseRoute):
         self.item_service = item_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.delete("/v1/items/<item_id>")
-        def handle(item_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.delete("/v1/items/{item_id}")
+        def handle(
+            item_id: str,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Delete item.
 
@@ -400,18 +356,13 @@ class DeleteItemRoute(BaseRoute):
 
             Requirements: 5.1, 24.2
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Delete item
             self.item_service.delete_item(user_id, item_id)
 
             logger.info(
                 "Item deleted successfully",
-                extra={
-                    "user_id": user_id,
-                    "item_id": item_id,
-                },
+                user_id=user_id,
+                item_id=item_id,
             )
 
             return {"message": "Item deleted successfully", "item_id": item_id}
@@ -425,9 +376,12 @@ class DownloadItemRoute(BaseRoute):
         self.item_service = item_service
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-        @app.get("/v1/items/<item_id>/download")
-        def handle(item_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/items/{item_id}/download")
+        def handle(
+            item_id: str,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Get presigned download URL (for MEDIA items).
 
@@ -439,21 +393,15 @@ class DownloadItemRoute(BaseRoute):
 
             Requirements: 4.1, 4.3, 24.2
             """
-            # Extract user identity from context
-            user_id = get_user_from_context(app.current_event)
-
             # Get download URL
-            # TODO this should be a data model
             download_url, expires_at, encrypted_metadata, s3_key = (
                 self.item_service.get_download_url(user_id, item_id)
             )
 
             logger.info(
                 "Generated download URL successfully",
-                extra={
-                    "user_id": user_id,
-                    "item_id": item_id,
-                },
+                user_id=user_id,
+                item_id=item_id,
             )
 
             return {
@@ -468,7 +416,10 @@ class DownloadItemRoute(BaseRoute):
 class SearchItemsRoute(BaseRoute):
     """Handle item search across types."""
 
-    def register(self, app: APIGatewayRestResolver) -> None:
+    def __init__(self, item_service: ItemService):
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/items/search")
         def handle():
             """

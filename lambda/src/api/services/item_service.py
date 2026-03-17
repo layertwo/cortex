@@ -13,13 +13,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import boto3
-from aws_lambda_powertools import Logger, Metrics
-from aws_lambda_powertools.event_handler.exceptions import (
-    BadRequestError,
-    NotFoundError,
-)
-from aws_lambda_powertools.metrics import MetricUnit
 
+from src.shared.exceptions import BadRequestError, NotFoundError
+from src.shared.logger import get_logger
 from src.shared.models import (
     CompleteUploadRequest,
     CompleteUploadResponse,
@@ -38,8 +34,7 @@ from src.shared.repository import (
     parse_pagination_token,
 )
 
-logger = Logger(child=True)
-metrics = Metrics(namespace="Cortex")
+logger = get_logger("item_service")
 
 # Multipart upload threshold: 100MB
 MULTIPART_THRESHOLD_BYTES = 100 * 1024 * 1024
@@ -141,7 +136,7 @@ class ItemService:
 
         logger.info(
             "Created item",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": request.vault_id,
                 "item_id": item_id,
@@ -200,7 +195,7 @@ class ItemService:
 
             logger.info(
                 "Initiated multipart upload",
-                extra={
+                **{
                     "user_id": user_id,
                     "item_id": item_id,
                     "upload_id": upload_id,
@@ -215,7 +210,7 @@ class ItemService:
 
             logger.info(
                 "Generated upload URL",
-                extra={
+                **{
                     "user_id": user_id,
                     "item_id": item_id,
                     "size_bytes": request.size_bytes,
@@ -302,7 +297,7 @@ class ItemService:
         if not item:
             logger.warning(
                 "Item not found for upload completion",
-                extra={"user_id": user_id, "item_id": request.item_id},
+                **{"user_id": user_id, "item_id": request.item_id},
             )
             raise NotFoundError("Item not found")
 
@@ -317,7 +312,7 @@ class ItemService:
         if not s3_metadata:
             logger.error(
                 "S3 object not found after upload",
-                extra={"user_id": user_id, "item_id": request.item_id, "s3_key": s3_key},
+                **{"user_id": user_id, "item_id": request.item_id, "s3_key": s3_key},
             )
 
             # Abort multipart upload if present
@@ -327,12 +322,12 @@ class ItemService:
                     self.s3_repo.abort_multipart_upload(s3_key, upload_id)
                     logger.info(
                         "Aborted multipart upload during cleanup",
-                        extra={"item_id": request.item_id, "upload_id": upload_id},
+                        **{"item_id": request.item_id, "upload_id": upload_id},
                     )
                 except Exception as e:
                     logger.warning(
                         "Failed to abort multipart upload during cleanup",
-                        extra={"item_id": request.item_id, "upload_id": upload_id, "error": str(e)},
+                        **{"item_id": request.item_id, "upload_id": upload_id, "error": str(e)},
                     )
                     raise
 
@@ -374,7 +369,7 @@ class ItemService:
             if not self.s3_repo.object_exists(s3_key):
                 logger.error(
                     "S3 object deleted during upload completion (TOCTOU race condition detected)",
-                    extra={
+                    **{
                         "user_id": user_id,
                         "item_id": request.item_id,
                         "s3_key": s3_key,
@@ -387,7 +382,7 @@ class ItemService:
             # Item may have already been completed or is in invalid state
             logger.warning(
                 "Conditional update failed during upload completion",
-                extra={
+                **{
                     "user_id": user_id,
                     "item_id": request.item_id,
                     "current_status": item.get("upload_status"),
@@ -397,7 +392,7 @@ class ItemService:
 
         logger.info(
             "Completed upload",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": request.vault_id,
                 "item_id": request.item_id,
@@ -405,7 +400,7 @@ class ItemService:
             },
         )
 
-        return CompleteUploadResponse(item_id=request.item_id, uploaded_at=now.timestamp())
+        return CompleteUploadResponse(item_id=request.item_id, uploaded_at=now)
 
     def cleanup_failed_upload(
         self, item_id: str, s3_key: Optional[str], upload_id: Optional[str] = None
@@ -429,12 +424,12 @@ class ItemService:
                     self.s3_repo.abort_multipart_upload(s3_key, upload_id)
                     logger.info(
                         "Aborted multipart upload during cleanup",
-                        extra={"s3_key": s3_key, "upload_id": upload_id},
+                        **{"s3_key": s3_key, "upload_id": upload_id},
                     )
                 except Exception as e:
                     logger.warning(
                         "Failed to abort multipart upload",
-                        extra={"s3_key": s3_key, "upload_id": upload_id, "error": str(e)},
+                        **{"s3_key": s3_key, "upload_id": upload_id, "error": str(e)},
                     )
                     raise
 
@@ -442,11 +437,11 @@ class ItemService:
             if s3_key and not upload_id:
                 try:
                     self.s3_repo.delete_object(s3_key)
-                    logger.info("Cleaned up S3 object", extra={"s3_key": s3_key})
+                    logger.info("Cleaned up S3 object", **{"s3_key": s3_key})
                 except Exception as e:
                     logger.warning(
                         "Failed to clean up S3 object",
-                        extra={"s3_key": s3_key, "error": str(e)},
+                        **{"s3_key": s3_key, "error": str(e)},
                     )
                     raise
 
@@ -456,12 +451,12 @@ class ItemService:
             }
 
             self.items_repo.delete_item(key)
-            logger.info("Cleaned up DynamoDB metadata", extra={"item_id": item_id})
+            logger.info("Cleaned up DynamoDB metadata", **{"item_id": item_id})
 
         except Exception as e:
             logger.error(
                 "Failed to clean up failed upload",
-                extra={"item_id": item_id, "error": str(e)},
+                **{"item_id": item_id, "error": str(e)},
             )
             raise
 
@@ -540,7 +535,7 @@ class ItemService:
 
         logger.info(
             "Listed items",
-            extra={
+            **{
                 "user_id": user_id,
                 "vault_id": vault_id,
                 "item_type": item_type,
@@ -576,7 +571,7 @@ class ItemService:
         if not item:
             logger.info(
                 "Item not found",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
             raise NotFoundError("Item not found")
 
@@ -590,7 +585,7 @@ class ItemService:
 
         logger.info(
             "Retrieved item",
-            extra={
+            **{
                 "user_id": user_id,
                 "item_id": item_id,
                 "item_type": item.get("item_type"),
@@ -637,7 +632,7 @@ class ItemService:
         if item["item_type"] != ItemType.MEDIA:
             logger.warning(
                 "Item is not a MEDIA type",
-                extra={
+                **{
                     "user_id": user_id,
                     "item_id": item_id,
                     "item_type": item["item_type"],
@@ -649,7 +644,7 @@ class ItemService:
         if item.get("upload_status") == "PENDING":
             logger.warning(
                 "Item upload not complete",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
             raise BadRequestError("Item upload not yet complete")
 
@@ -661,7 +656,7 @@ class ItemService:
             # TODO consider if all checks pass but object does not exist
             logger.error(
                 "S3 object not found for item",
-                extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
+                **{"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
             raise
 
@@ -674,7 +669,7 @@ class ItemService:
 
         logger.info(
             "Generated download URL",
-            extra={
+            **{
                 "user_id": user_id,
                 "item_id": item_id,
                 "s3_key": s3_key,
@@ -711,7 +706,7 @@ class ItemService:
         if not item:
             logger.warning(
                 "Item not found for deletion",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
             raise NotFoundError("Item not found")
 
@@ -729,7 +724,7 @@ class ItemService:
 
         logger.info(
             "Item deleted successfully",
-            extra={
+            **{
                 "user_id": user_id,
                 "item_id": item_id,
                 "item_type": item["item_type"],
@@ -759,7 +754,7 @@ class ItemService:
         if not s3_key:
             logger.warning(
                 "MEDIA item missing s3_key",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
             # Still try to delete DynamoDB metadata
             self.items_repo.delete_item(item_key)
@@ -775,12 +770,12 @@ class ItemService:
                     self.s3_repo.abort_multipart_upload(s3_key, upload_id)
                     logger.info(
                         "Aborted pending multipart upload during deletion",
-                        extra={"item_id": item_id, "upload_id": upload_id},
+                        **{"item_id": item_id, "upload_id": upload_id},
                     )
                 except Exception as e:
                     logger.warning(
                         "Failed to abort multipart upload during deletion",
-                        extra={"item_id": item_id, "upload_id": upload_id, "error": str(e)},
+                        **{"item_id": item_id, "upload_id": upload_id, "error": str(e)},
                     )
                     raise
 
@@ -788,7 +783,7 @@ class ItemService:
             self.items_repo.delete_item(item_key)
             logger.info(
                 "Deleted pending upload item",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
             return
 
@@ -797,12 +792,12 @@ class ItemService:
             self.s3_repo.delete_object(s3_key)
             logger.info(
                 "Deleted S3 object",
-                extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
+                **{"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
         except Exception as e:
             logger.error(
                 "Failed to delete S3 object",
-                extra={"user_id": user_id, "item_id": item_id, "s3_key": s3_key, "error": str(e)},
+                **{"user_id": user_id, "item_id": item_id, "s3_key": s3_key, "error": str(e)},
             )
             raise
 
@@ -811,7 +806,7 @@ class ItemService:
             self.items_repo.delete_item(item_key)
             logger.info(
                 "Deleted DynamoDB metadata",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
 
             # Clean up tag index rows (best-effort)
@@ -821,21 +816,21 @@ class ItemService:
         except Exception as e:
             logger.error(
                 "Failed to delete DynamoDB metadata after S3 deletion",
-                extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
+                **{"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
 
-            # Emit metric for monitoring/alerting
-            metrics.add_metric(
-                name="OrphanedMetadata",
-                unit=MetricUnit.Count,
-                value=1,
+            logger.info(
+                "OrphanedMetadata metric",
+                metric_name="OrphanedMetadata",
+                metric_unit="Count",
+                metric_value=1,
             )
 
             # Attempt rollback: This is best-effort since S3 delete succeeded
             # In production, consider using S3 versioning to enable true rollback
             logger.warning(
                 "DynamoDB deletion failed after S3 deletion - orphaned metadata",
-                extra={
+                **{
                     "user_id": user_id,
                     "item_id": item_id,
                     "s3_key": s3_key,
@@ -862,12 +857,12 @@ class ItemService:
             self.items_repo.delete_item(item_key)
             logger.info(
                 "Deleted inline item from DynamoDB",
-                extra={"user_id": user_id, "item_id": item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
         except Exception as e:
             logger.error(
                 "Failed to delete inline item",
-                extra={"user_id": user_id, "item_id": item_id, "error": str(e)},
+                **{"user_id": user_id, "item_id": item_id, "error": str(e)},
             )
             raise
 
@@ -903,13 +898,13 @@ class ItemService:
                     )
             logger.info(
                 "Deleted tag index rows",
-                extra={"item_id": item_id, "tag_count": len(encrypted_tags)},
+                **{"item_id": item_id, "tag_count": len(encrypted_tags)},
             )
         except Exception as e:
             # Best-effort cleanup - orphaned tag rows are harmless
             logger.warning(
                 "Failed to delete tag index rows",
-                extra={"item_id": item_id, "error": str(e)},
+                **{"item_id": item_id, "error": str(e)},
             )
 
     def search_by_tag(
@@ -948,7 +943,7 @@ class ItemService:
         except Exception as e:
             logger.error(
                 "Failed to decode encrypted tag",
-                extra={"encrypted_tag": encrypted_tag, "error": str(e)},
+                **{"encrypted_tag": encrypted_tag, "error": str(e)},
             )
             raise BadRequestError("Invalid encrypted_tag format - must be base64-encoded")
 
@@ -1021,7 +1016,7 @@ class ItemService:
 
         logger.info(
             "Tag search completed",
-            extra={
+            **{
                 "vault_id": vault_id,
                 "result_count": len(item_metadata_list),
                 "has_more": next_token_value is not None,

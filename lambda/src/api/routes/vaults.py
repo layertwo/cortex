@@ -9,17 +9,15 @@ Requirements: 14.4, 22.1, 22.2, 22.3
 
 from datetime import datetime
 
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.event_handler import APIGatewayRestResolver
-from aws_lambda_powertools.event_handler.exceptions import BadRequestError
-from pydantic import ValidationError as PydanticValidationError
+from fastapi import APIRouter, Depends
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.vault_service import VaultService
-from src.shared.auth import get_user_from_context
+from src.shared.auth import get_current_user
+from src.shared.logger import get_logger
 from src.shared.models import CreateVaultRequest, CreateVaultResponse, GetVaultSaltResponse
 
-logger = Logger(child=True)
+logger = get_logger("vault_routes")
 
 
 class CreateVaultRoute(BaseRoute):
@@ -34,10 +32,12 @@ class CreateVaultRoute(BaseRoute):
         """
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
+    def register(self, app: APIRouter) -> None:
         @app.post("/v1/vaults")
-        def handle():
+        def handle(
+            request: CreateVaultRequest,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Create new vault with vault salt.
 
@@ -45,26 +45,12 @@ class CreateVaultRoute(BaseRoute):
             The vault salt is either provided by the client or generated
             server-side using a cryptographically secure RNG.
 
-            Request Body:
-                vault_salt: Optional 16-byte vault salt (base64-encoded in JSON)
-
             Returns:
                 Vault ID, vault salt, and creation timestamp
 
             Requirements: 14.4, 22.1, 22.2, 22.3
             """
-            # Pydantic validation
-            try:
-                body = app.current_event.json_body or {}
-                request = CreateVaultRequest(**body)
-            except PydanticValidationError as e:
-                logger.warning("Request validation failed", extra={"errors": e.errors()})
-                raise BadRequestError("Invalid request format")
-
-            # Extract user ID from API Gateway context
-            user_id = get_user_from_context(app.current_event)
-
-            logger.info("Creating vault", extra={"user_id": user_id})
+            logger.info("Creating vault", user_id=user_id)
 
             result = self.vault_service.create_vault(user_id=user_id, vault_salt=request.vault_salt)
 
@@ -76,7 +62,8 @@ class CreateVaultRoute(BaseRoute):
 
             logger.info(
                 "Vault created successfully",
-                extra={"user_id": user_id, "vault_id": result["vault_id"]},
+                user_id=user_id,
+                vault_id=result["vault_id"],
             )
 
             return response.model_dump(mode="json")
@@ -94,10 +81,12 @@ class GetVaultSaltRoute(BaseRoute):
         """
         self.vault_service = vault_service
 
-    def register(self, app: APIGatewayRestResolver) -> None:
-
-        @app.get("/v1/vaults/<vault_id>/salt")
-        def handle(vault_id: str):
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/vaults/{vault_id}/salt")
+        def handle(
+            vault_id: str,
+            user_id: str = Depends(get_current_user),
+        ):
             """
             Retrieve vault salt for key derivation.
 
@@ -113,10 +102,7 @@ class GetVaultSaltRoute(BaseRoute):
 
             Requirements: 14.4, 22.3, 22.5
             """
-            # Extract user ID from API Gateway context
-            user_id = get_user_from_context(app.current_event)
-
-            logger.info("Retrieving vault salt", extra={"user_id": user_id, "vault_id": vault_id})
+            logger.info("Retrieving vault salt", user_id=user_id, vault_id=vault_id)
 
             vault_salt = self.vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
@@ -125,7 +111,8 @@ class GetVaultSaltRoute(BaseRoute):
 
             logger.info(
                 "Vault salt retrieved successfully",
-                extra={"user_id": user_id, "vault_id": vault_id},
+                user_id=user_id,
+                vault_id=vault_id,
             )
 
             return response.model_dump(mode="json")

@@ -644,6 +644,7 @@ class TestTagValidation:
             encrypted_metadata=b"metadata",
             encrypted_tags=[b"tag"] * 50,
         )
+        assert request.encrypted_tags is not None
         assert len(request.encrypted_tags) == 50
 
     def test_create_item_rejects_51_tags(self):
