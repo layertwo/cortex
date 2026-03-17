@@ -2,7 +2,7 @@ boto3==1.42.68
 cryptography==46.0.5
 pydantic==2.12.5
 fastapi==0.135.1
-mangum==0.19.0
+mangum==0.21.0
 uvicorn[standard]==0.34.2
 structlog==25.4.0
 slowapi==0.1.9
