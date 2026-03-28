@@ -1,4 +1,4 @@
-boto3==1.42.73
+boto3==1.42.78
 cryptography==46.0.6
 pydantic==2.12.5
 fastapi==0.135.2
