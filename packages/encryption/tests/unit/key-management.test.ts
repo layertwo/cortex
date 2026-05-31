@@ -7,6 +7,7 @@
  */
 
 import {
+  deriveVaultMasterKey,
   deriveKeys,
   generateRecoveryKey,
   validateRecoveryKey,
@@ -88,6 +89,29 @@ describe('Key Management', () => {
       const invalidKey = new Uint8Array(16); // Wrong length
 
       expect(() => deriveKeys(invalidKey)).toThrow('Vault master key must be 32 bytes');
+    });
+
+    it('derives a 32-byte saltHmacKey distinct from all other derived keys', async () => {
+      const salt = new Uint8Array(16).fill(0x42);
+      const masterKey = await deriveVaultMasterKey('correct horse battery staple 12', salt);
+      const keys = deriveKeys(masterKey);
+
+      expect(keys.saltHmacKey).toBeInstanceOf(Uint8Array);
+      expect(keys.saltHmacKey).toHaveLength(32);
+
+      const others = [
+        keys.dataEncryptionKey,
+        keys.metadataEncryptionKey,
+        keys.shareKeyDerivationKey,
+        keys.notesEncryptionKey,
+        keys.tasksEncryptionKey,
+        keys.eventsEncryptionKey,
+        keys.notificationEncryptionKey,
+        keys.dateBucketEncryptionKey,
+      ];
+      for (const other of others) {
+        expect(Buffer.from(keys.saltHmacKey).equals(Buffer.from(other))).toBe(false);
+      }
     });
   });
 
