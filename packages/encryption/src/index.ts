@@ -73,3 +73,16 @@ export {
   type ShareKeys,
   type ShareBlob,
 } from './lib/share-encryption';
+
+// Export vault salt integrity functions
+export {
+  computeSaltHmac,
+  verifySaltHmac,
+  bindSaltHmac,
+  resetSaltHmac,
+  SaltIntegrityError,
+  SALT_HMAC_KEY_BYTES,
+  VAULT_SALT_BYTES,
+  SALT_HMAC_BYTES,
+  type SaltBindingArgs,
+} from './lib/vault-salt-integrity';
