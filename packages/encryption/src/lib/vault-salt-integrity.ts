@@ -23,3 +23,29 @@ export function computeSaltHmac(saltHmacKey: Uint8Array, salt: Uint8Array): Uint
   }
   return hmac(sha256, saltHmacKey, salt);
 }
+
+/**
+ * Constant-time byte-array equality.
+ *
+ * Returns false immediately on length mismatch (length is not a secret).
+ * Otherwise XOR-accumulates over every byte so the comparison cost is
+ * independent of where the first differing byte appears.
+ */
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff === 0;
+}
+
+export function verifySaltHmac(
+  saltHmacKey: Uint8Array,
+  salt: Uint8Array,
+  expectedMac: Uint8Array
+): boolean {
+  if (expectedMac.length !== SALT_HMAC_BYTES) return false;
+  const actualMac = computeSaltHmac(saltHmacKey, salt);
+  return constantTimeEqual(actualMac, expectedMac);
+}
