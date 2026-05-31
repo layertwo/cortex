@@ -18,7 +18,7 @@
  * - Older browsers: Fallback to localStorage with encrypted keys
  */
 
-import { encrypt, decrypt } from './encryption';
+import { encrypt, decrypt, bytesToBase64, base64ToBytes } from './encryption';
 
 /**
  * IndexedDB configuration
@@ -103,6 +103,12 @@ export interface KeysToStore {
   eventsEncryptionKey: Uint8Array;
   notificationEncryptionKey: Uint8Array;
   dateBucketEncryptionKey: Uint8Array;
+  /**
+   * Non-secret salt HMAC for integrity verification (optional).
+   * Absence means "not yet bound on this device" (legacy / first unlock).
+   * Never encrypted — stored as plaintext metadata alongside the key bundle.
+   */
+  saltHmac?: Uint8Array;
 }
 
 /**
@@ -940,7 +946,7 @@ async function retrieveKeysFallback(
  * @returns string - JSON string representation
  */
 function serializeKeys(keys: KeysToStore): string {
-  const serializable = {
+  const serializable: Record<string, unknown> = {
     dataEncryptionKey: Array.from(keys.dataEncryptionKey),
     metadataEncryptionKey: Array.from(keys.metadataEncryptionKey),
     shareKeyDerivationKey: Array.from(keys.shareKeyDerivationKey),
@@ -950,7 +956,12 @@ function serializeKeys(keys: KeysToStore): string {
     notificationEncryptionKey: Array.from(keys.notificationEncryptionKey),
     dateBucketEncryptionKey: Array.from(keys.dateBucketEncryptionKey),
   };
-  
+
+  // saltHmac is non-secret integrity material — stored as plaintext base64
+  if (keys.saltHmac !== undefined) {
+    serializable.saltHmac = bytesToBase64(keys.saltHmac);
+  }
+
   return JSON.stringify(serializable);
 }
 
@@ -962,8 +973,8 @@ function serializeKeys(keys: KeysToStore): string {
  */
 function deserializeKeys(json: string): KeysToStore {
   const parsed = JSON.parse(json);
-  
-  return {
+
+  const result: KeysToStore = {
     dataEncryptionKey: new Uint8Array(parsed.dataEncryptionKey),
     metadataEncryptionKey: new Uint8Array(parsed.metadataEncryptionKey),
     shareKeyDerivationKey: new Uint8Array(parsed.shareKeyDerivationKey),
@@ -973,6 +984,13 @@ function deserializeKeys(json: string): KeysToStore {
     notificationEncryptionKey: new Uint8Array(parsed.notificationEncryptionKey),
     dateBucketEncryptionKey: new Uint8Array(parsed.dateBucketEncryptionKey),
   };
+
+  // saltHmac is non-secret integrity material — restore from plaintext base64 if present
+  if (typeof parsed.saltHmac === 'string') {
+    result.saltHmac = base64ToBytes(parsed.saltHmac);
+  }
+
+  return result;
 }
 
 /**
