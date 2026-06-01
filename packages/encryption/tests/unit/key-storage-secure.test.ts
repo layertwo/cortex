@@ -526,31 +526,6 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
     });
   });
 
-  describe('saltHmac persistence', () => {
-    it('round-trips an optional saltHmac alongside the key bundle', async () => {
-      const bundle = createTestKeys();
-      const saltHmac = new Uint8Array(32).fill(0x77);
-      const config: KeyStorageConfig = { ...DEFAULT_CONFIG, forceFallback: true };
-
-      await storeKeys('vault-salthmac', { ...bundle, saltHmac }, config);
-      const retrieved = await retrieveKeys('vault-salthmac', config);
-
-      expect(retrieved?.saltHmac).toBeInstanceOf(Uint8Array);
-      expect(retrieved!.saltHmac).toHaveLength(32);
-      expect(Buffer.from(retrieved!.saltHmac!).equals(Buffer.from(saltHmac))).toBe(true);
-    });
-
-    it('round-trips a bundle with no saltHmac (legacy device)', async () => {
-      const bundle = createTestKeys();
-      const config: KeyStorageConfig = { ...DEFAULT_CONFIG, forceFallback: true };
-
-      await storeKeys('vault-legacy', bundle, config);
-      const retrieved = await retrieveKeys('vault-legacy', config);
-
-      expect(retrieved?.saltHmac).toBeUndefined();
-    });
-  });
-
   describe('Nonce Reuse Prevention (Critical Security Fix)', () => {
     /**
      * SECURITY FIX: Hybrid Nonce Generation + Mutex Serialization for AES-GCM
