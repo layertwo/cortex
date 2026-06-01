@@ -11,6 +11,13 @@ import * as fc from 'fast-check';
 import { deriveVaultMasterKey, deriveKeys } from '../../src/lib/key-management';
 import { computeSaltHmac, verifySaltHmac } from '../../src/lib/vault-salt-integrity';
 
+/**
+ * Reduced from the package-wide default of 100 because each property run
+ * invokes deriveVaultMasterKey (Argon2id, 64MB memory, 3 iterations,
+ * ~100ms/call). At 100 runs × 3 properties this suite would take ~5 minutes;
+ * at 25 runs it takes ~30 seconds and the mathematical guarantee for
+ * HMAC tamper detection is already overwhelming (2^-256 collision).
+ */
 const NUM_RUNS = 25;
 
 const arbPassword = fc.string({ minLength: 12, maxLength: 64 });
