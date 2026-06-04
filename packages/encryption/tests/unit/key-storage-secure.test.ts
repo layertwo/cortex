@@ -14,6 +14,8 @@ import {
   KeysToStore,
   DEFAULT_CONFIG,
   HIGH_SECURITY_CONFIG,
+  storeSaltHmacRecord,
+  retrieveSaltHmacRecord,
 } from '../../src/lib/key-storage';
 
 // Mock crypto.getRandomValues and crypto.subtle
@@ -430,16 +432,29 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
     it('should clear all keys from storage', async () => {
       const keys = createTestKeys();
       const config: KeyStorageConfig = { ...DEFAULT_CONFIG, forceFallback: true };
-      
+
       // Store multiple keys
       await storeKeys('vault-1', keys, config);
       await storeKeys('vault-2', keys, config);
-      
+
       await clearAllKeys();
-      
+
       expect(mockLocalStorage.getItem('cortex_encrypted_keys_vault-1')).toBeNull();
       expect(mockLocalStorage.getItem('cortex_encrypted_keys_vault-2')).toBeNull();
       expect(mockLocalStorage.getItem('cortex_device_key_fallback')).toBeNull();
+    });
+
+    it('clears salt-hmac records along with all other key data', async () => {
+      const config: KeyStorageConfig = { ...DEFAULT_CONFIG, forceFallback: true };
+      const vaultId = 'vault-clear-salt';
+      const fakeMac = new Uint8Array(32).fill(0x33);
+
+      await storeSaltHmacRecord(vaultId, fakeMac, config);
+      expect(await retrieveSaltHmacRecord(vaultId, config)).not.toBeNull();
+
+      await clearAllKeys();
+
+      expect(await retrieveSaltHmacRecord(vaultId, config)).toBeNull();
     });
   });
 

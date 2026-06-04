@@ -1240,20 +1240,26 @@ export async function clearAllKeys(): Promise<void> {
     if (hasIndexedDB) {
       await clearIndexedDBStore(STORE_NAME);
       await clearIndexedDBStore(DEVICE_KEY_STORE);
+      await clearIndexedDBStore(SALT_HMAC_STORE);
     }
   } catch (error) {
     // Ignore errors, continue to fallback cleanup
   }
-  
+
   // Clear localStorage (fallback)
   const keysToRemove: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && (key.startsWith(STORAGE_KEY_PREFIX) || key.includes('cortex_device'))) {
+    if (
+      key &&
+      (key.startsWith(STORAGE_KEY_PREFIX) ||
+        key.startsWith(SALT_HMAC_STORAGE_KEY_PREFIX) ||
+        key.includes('cortex_device'))
+    ) {
       keysToRemove.push(key);
     }
   }
-  
+
   keysToRemove.forEach(key => localStorage.removeItem(key));
 }
 

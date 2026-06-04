@@ -38,8 +38,6 @@ export {
   cleanupExpiredKeys,
   registerCleanupHandlers,
   getStorageInfo,
-  storeSaltHmacRecord,
-  retrieveSaltHmacRecord,
   clearSaltHmacRecord,
   DEFAULT_CONFIG,
   HIGH_SECURITY_CONFIG,
