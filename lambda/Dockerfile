@@ -1,6 +1,6 @@
 FROM python:3.14-slim
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.20 /uv /uvx /bin/
 
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
