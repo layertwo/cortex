@@ -550,7 +550,7 @@
   - Implement GET /v1/vaults/{id}/salt route (retrieve salt for key derivation)
   - _Requirements: 14.4, 22.1, 22.2, 22.3_
 
-- [ ] 10.2 Create vault service layer with salt integrity protection and recovery
+- [x] 10.2 Create vault service layer with salt integrity protection and recovery
   - Backend: Generate unique vault salt using cryptographically secure RNG (16 bytes)
   - Backend: Store vault salt, current KEK version, rotationState (IDLE/IN_PROGRESS), and rotationLockedAt in DynamoDB Vaults table
   - Backend: Retrieve vault salt for key derivation on new devices

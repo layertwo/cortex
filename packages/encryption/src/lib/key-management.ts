@@ -142,6 +142,7 @@ const HKDF_SALTS = {
   EVENTS_ENCRYPTION: new TextEncoder().encode('cortex-salt-events-v1'),
   NOTIFICATION_ENCRYPTION: new TextEncoder().encode('cortex-salt-notification-v1'),
   DATE_BUCKET_ENCRYPTION: new TextEncoder().encode('cortex-salt-date-bucket-v1'),
+  SALT_HMAC: new TextEncoder().encode('cortex-salt-salt-hmac-v1'),
 };
 
 /**
@@ -159,6 +160,7 @@ const HKDF_CONTEXTS = {
   EVENTS_ENCRYPTION: 'cortex-events-encryption-v1',
   NOTIFICATION_ENCRYPTION: 'cortex-notification-encryption-v1',
   DATE_BUCKET_ENCRYPTION: 'cortex-date-bucket-encryption-v1',
+  SALT_HMAC: 'cortex-salt-hmac-v1',
 };
 
 /**
@@ -220,6 +222,7 @@ export interface DerivedKeys {
   eventsEncryptionKey: Uint8Array;
   notificationEncryptionKey: Uint8Array;
   dateBucketEncryptionKey: Uint8Array;
+  saltHmacKey: Uint8Array;
 }
 
 /**
@@ -301,6 +304,13 @@ export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
         vaultMasterKey,
         HKDF_SALTS.DATE_BUCKET_ENCRYPTION,
         new TextEncoder().encode(HKDF_CONTEXTS.DATE_BUCKET_ENCRYPTION),
+        keyLength
+      ),
+      saltHmacKey: hkdf(
+        sha256,
+        vaultMasterKey,
+        HKDF_SALTS.SALT_HMAC,
+        new TextEncoder().encode(HKDF_CONTEXTS.SALT_HMAC),
         keyLength
       ),
     };
