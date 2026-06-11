@@ -78,7 +78,8 @@ describe('Key Management Property Tests', () => {
             expect(keys1.eventsEncryptionKey).toEqual(keys2.eventsEncryptionKey);
             expect(keys1.notificationEncryptionKey).toEqual(keys2.notificationEncryptionKey);
             expect(keys1.dateBucketEncryptionKey).toEqual(keys2.dateBucketEncryptionKey);
-            
+            expect(keys1.saltHmacKey).toEqual(keys2.saltHmacKey);
+
             // All keys must be 32 bytes (256 bits)
             expect(keys1.dataEncryptionKey.length).toBe(32);
             expect(keys1.metadataEncryptionKey.length).toBe(32);
@@ -88,6 +89,7 @@ describe('Key Management Property Tests', () => {
             expect(keys1.eventsEncryptionKey.length).toBe(32);
             expect(keys1.notificationEncryptionKey.length).toBe(32);
             expect(keys1.dateBucketEncryptionKey.length).toBe(32);
+            expect(keys1.saltHmacKey.length).toBe(32);
           }
         ),
         { numRuns: 100 }
@@ -111,8 +113,9 @@ describe('Key Management Property Tests', () => {
               keys.eventsEncryptionKey,
               keys.notificationEncryptionKey,
               keys.dateBucketEncryptionKey,
+              keys.saltHmacKey,
             ];
-            
+
             // Check that all keys are unique
             for (let i = 0; i < allKeys.length; i++) {
               for (let j = i + 1; j < allKeys.length; j++) {
@@ -309,15 +312,16 @@ describe('Key Management Property Tests', () => {
               keys.eventsEncryptionKey,
               keys.notificationEncryptionKey,
               keys.dateBucketEncryptionKey,
+              keys.saltHmacKey,
             ];
-            
+
             // All keys must be unique (no two keys are the same)
             for (let i = 0; i < allKeys.length; i++) {
               for (let j = i + 1; j < allKeys.length; j++) {
                 expect(allKeys[i]).not.toEqual(allKeys[j]);
               }
             }
-            
+
             // All keys must have correct length (32 bytes for ChaCha20-Poly1305)
             allKeys.forEach(key => {
               expect(key.length).toBe(32);

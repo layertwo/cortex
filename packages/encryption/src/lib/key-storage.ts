@@ -18,20 +18,26 @@
  * - Older browsers: Fallback to localStorage with encrypted keys
  */
 
-import { encrypt, decrypt } from './encryption';
+import { encrypt, decrypt, bytesToBase64, base64ToBytes } from './encryption';
 
 /**
  * IndexedDB configuration
  */
 const DB_NAME = 'cortex_secure_storage';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'encrypted_keys';
 const DEVICE_KEY_STORE = 'device_keys';
+const SALT_HMAC_STORE = 'salt_hmac_records';
 
 /**
  * Storage key prefix for localStorage fallback
  */
 const STORAGE_KEY_PREFIX = 'cortex_encrypted_keys_';
+
+/**
+ * localStorage key prefix for salt HMAC records (fallback path)
+ */
+const SALT_HMAC_STORAGE_KEY_PREFIX = 'cortex_salt_hmac_';
 
 /**
  * Configuration for key storage security
@@ -141,6 +147,12 @@ function openDatabase(): Promise<IDBDatabase> {
       // Create object store for device keys (CryptoKey objects)
       if (!db.objectStoreNames.contains(DEVICE_KEY_STORE)) {
         db.createObjectStore(DEVICE_KEY_STORE, { keyPath: 'id' });
+      }
+
+      // Create object store for salt HMAC records (added in DB_VERSION 2)
+      // These are plaintext, non-expiring, per-vault tamper-detection records.
+      if (!db.objectStoreNames.contains(SALT_HMAC_STORE)) {
+        db.createObjectStore(SALT_HMAC_STORE, { keyPath: 'vaultId' });
       }
     };
   });
@@ -933,14 +945,121 @@ async function retrieveKeysFallback(
   return keys;
 }
 
+// ---------------------------------------------------------------------------
+// Salt HMAC record storage (standalone, plaintext, non-expiring)
+// ---------------------------------------------------------------------------
+
+/**
+ * Internal shape of a stored salt HMAC record.
+ * NOT exported — callers use the public functions below.
+ */
+interface StoredSaltHmacRecord {
+  vaultId: string;
+  /** Base64-encoded HMAC bytes for safe round-trip through JSON / structured clone. */
+  saltHmac: string;
+  createdAt: number;
+}
+
+/**
+ * Persists (or overwrites) the salt HMAC for a vault in a standalone,
+ * non-expiring record. Uses IndexedDB when modern security is available and
+ * `config.forceFallback` is not set; otherwise falls back to localStorage.
+ *
+ * Unlike the encrypted key bundle, this record has no max-age — it survives
+ * bundle expiry and is intentionally plaintext (the HMAC is non-secret).
+ *
+ * @param vaultId - The vault identifier
+ * @param saltHmac - The raw HMAC bytes to store (will be base64-encoded)
+ * @param config   - Optional storage config; only `forceFallback` is consulted
+ */
+export async function storeSaltHmacRecord(
+  vaultId: string,
+  saltHmac: Uint8Array,
+  config?: KeyStorageConfig
+): Promise<void> {
+  const record: StoredSaltHmacRecord = {
+    vaultId,
+    saltHmac: bytesToBase64(saltHmac),
+    createdAt: Date.now(),
+  };
+
+  if (hasModernSecurity() && !config?.forceFallback) {
+    await storeInIndexedDB(SALT_HMAC_STORE, record);
+  } else {
+    const storageKey = SALT_HMAC_STORAGE_KEY_PREFIX + vaultId;
+    localStorage.setItem(storageKey, JSON.stringify(record));
+  }
+}
+
+/**
+ * Retrieves the previously-stored salt HMAC bytes for a vault.
+ * Returns `null` when no record has been written for this vaultId.
+ *
+ * This function NEVER applies expiry checks — the record is permanent until
+ * explicitly cleared via `clearSaltHmacRecord`.
+ *
+ * @param vaultId - The vault identifier
+ * @param config   - Optional storage config; only `forceFallback` is consulted
+ * @returns The raw HMAC bytes, or null if absent
+ */
+export async function retrieveSaltHmacRecord(
+  vaultId: string,
+  config?: KeyStorageConfig
+): Promise<Uint8Array | null> {
+  if (hasModernSecurity() && !config?.forceFallback) {
+    const record = await getFromIndexedDB<StoredSaltHmacRecord>(
+      SALT_HMAC_STORE,
+      vaultId
+    );
+    if (!record) return null;
+    return base64ToBytes(record.saltHmac);
+  } else {
+    const storageKey = SALT_HMAC_STORAGE_KEY_PREFIX + vaultId;
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    try {
+      const record: StoredSaltHmacRecord = JSON.parse(raw);
+      return base64ToBytes(record.saltHmac);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
+ * Removes the salt HMAC record for a vault from both storage backends.
+ *
+ * @param vaultId - The vault identifier
+ * @param config   - Optional storage config; only `forceFallback` is consulted
+ */
+export async function clearSaltHmacRecord(
+  vaultId: string,
+  config?: KeyStorageConfig
+): Promise<void> {
+  if (hasModernSecurity() && !config?.forceFallback) {
+    try {
+      await deleteFromIndexedDB(SALT_HMAC_STORE, vaultId);
+    } catch {
+      // Ignore — may not exist
+    }
+  }
+  // Always clear localStorage path too (handles cross-path cleanup)
+  const storageKey = SALT_HMAC_STORAGE_KEY_PREFIX + vaultId;
+  localStorage.removeItem(storageKey);
+}
+
+// ---------------------------------------------------------------------------
+// Key serialization / deserialization
+// ---------------------------------------------------------------------------
+
 /**
  * Serializes keys to a JSON string for encryption.
- * 
+ *
  * @param keys - The keys to serialize
  * @returns string - JSON string representation
  */
 function serializeKeys(keys: KeysToStore): string {
-  const serializable = {
+  const serializable: Record<string, unknown> = {
     dataEncryptionKey: Array.from(keys.dataEncryptionKey),
     metadataEncryptionKey: Array.from(keys.metadataEncryptionKey),
     shareKeyDerivationKey: Array.from(keys.shareKeyDerivationKey),
@@ -950,7 +1069,7 @@ function serializeKeys(keys: KeysToStore): string {
     notificationEncryptionKey: Array.from(keys.notificationEncryptionKey),
     dateBucketEncryptionKey: Array.from(keys.dateBucketEncryptionKey),
   };
-  
+
   return JSON.stringify(serializable);
 }
 
@@ -962,8 +1081,8 @@ function serializeKeys(keys: KeysToStore): string {
  */
 function deserializeKeys(json: string): KeysToStore {
   const parsed = JSON.parse(json);
-  
-  return {
+
+  const result: KeysToStore = {
     dataEncryptionKey: new Uint8Array(parsed.dataEncryptionKey),
     metadataEncryptionKey: new Uint8Array(parsed.metadataEncryptionKey),
     shareKeyDerivationKey: new Uint8Array(parsed.shareKeyDerivationKey),
@@ -973,6 +1092,8 @@ function deserializeKeys(json: string): KeysToStore {
     notificationEncryptionKey: new Uint8Array(parsed.notificationEncryptionKey),
     dateBucketEncryptionKey: new Uint8Array(parsed.dateBucketEncryptionKey),
   };
+
+  return result;
 }
 
 /**
@@ -1119,20 +1240,26 @@ export async function clearAllKeys(): Promise<void> {
     if (hasIndexedDB) {
       await clearIndexedDBStore(STORE_NAME);
       await clearIndexedDBStore(DEVICE_KEY_STORE);
+      await clearIndexedDBStore(SALT_HMAC_STORE);
     }
   } catch (error) {
     // Ignore errors, continue to fallback cleanup
   }
-  
+
   // Clear localStorage (fallback)
   const keysToRemove: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
-    if (key && (key.startsWith(STORAGE_KEY_PREFIX) || key.includes('cortex_device'))) {
+    if (
+      key &&
+      (key.startsWith(STORAGE_KEY_PREFIX) ||
+        key.startsWith(SALT_HMAC_STORAGE_KEY_PREFIX) ||
+        key.includes('cortex_device'))
+    ) {
       keysToRemove.push(key);
     }
   }
-  
+
   keysToRemove.forEach(key => localStorage.removeItem(key));
 }
 
