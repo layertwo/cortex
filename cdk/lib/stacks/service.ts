@@ -20,7 +20,9 @@ import {
     TablePropsV2,
     TableV2,
 } from "aws-cdk-lib/aws-dynamodb";
-import {Code, Function as Lambda, Runtime} from "aws-cdk-lib/aws-lambda";
+import {Architecture, Runtime} from "aws-cdk-lib/aws-lambda";
+import * as path from "path";
+import {PythonFunction} from "uv-python-lambda";
 import {LogGroup, RetentionDays} from "aws-cdk-lib/aws-logs";
 import {
     BlockPublicAccess,
@@ -58,7 +60,7 @@ export class ServiceStack extends Stack {
     // Separate shares table for anonymous access
     public readonly sharesTable: TableV2;
 
-    public readonly apiHandler: Lambda;
+    public readonly apiHandler: PythonFunction;
     public readonly api: RestApi;
 
     constructor(scope: Construct, id: string, props: ServiceStackProps) {
@@ -212,15 +214,20 @@ export class ServiceStack extends Stack {
         return table;
     }
 
-    private createApiHandler(): Lambda {
+    private createApiHandler(): PythonFunction {
         // Single Lambda function for all API routes
         // Requirements: 3.4, 6.1, 6.2, 6.4, 8.2
         const resourceName = this.resourceName("api-handler");
-        const fn = new Lambda(this, "ApiHandler", {
+        const fn = new PythonFunction(this, "ApiHandler", {
             functionName: resourceName,
+            rootDir: path.join(__dirname, "../../../lambda"),
+            index: "src/entrypoint/api.py",
+            handler: "handler",
             runtime: Runtime.PYTHON_3_11,
-            handler: "src.entrypoint.api.handler",
-            code: Code.fromAsset("../lambda/src/api"),
+            architecture: Architecture.ARM_64,
+            bundling: {
+                buildArgs: {UV_VERSION: "0.11.16"},
+            },
             environment: {
                 STAGE: this.props.stage.stageType,
                 // Single data table serves as vaults, items, collections, and recovery table

@@ -71,9 +71,8 @@ cdk deploy --all
 
 ```bash
 cd lambda
-pip install -r requirements.txt
-pip install -r requirements-dev.txt
-pytest
+uv sync
+uv run pytest
 ```
 
 ### Encryption Library
