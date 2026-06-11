@@ -215,8 +215,8 @@ cortex/
 │   │       ├── features.py       # Feature flag utilities
 │   │       ├── usage.py          # Usage metering utilities
 │   │       └── quota.py          # Quota enforcement utilities
-│   ├── requirements.txt
-│   └── requirements-dev.txt
+│   ├── pyproject.toml
+│   └── uv.lock
 ├── packages/              # Monorepo packages (npm workspaces)
 │   ├── encryption/        # @cortex/encryption - Standalone encryption library
 │   │   ├── src/

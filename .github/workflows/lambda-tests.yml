@@ -21,38 +21,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-          cache-dependency-path: 'lambda/requirements-dev.txt'
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: 'lambda/uv.lock'
 
       - name: Install dependencies
-        run: |
-          cd lambda
-          pip install --upgrade pip
-          pip install -r requirements-dev.txt
+        working-directory: lambda
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Check code formatting with black
-        run: |
-          cd lambda
-          black --check --diff src/ tests/
+        working-directory: lambda
+        run: uv run black --check --diff src/ tests/
 
       - name: Check import sorting with isort
-        run: |
-          cd lambda
-          isort --check-only --diff src/ tests/
+        working-directory: lambda
+        run: uv run isort --check-only --diff src/ tests/
 
       - name: Run flake8 linting
-        run: |
-          cd lambda
-          flake8 src/ tests/
+        working-directory: lambda
+        run: uv run flake8 src/ tests/
 
       - name: Run tests with coverage
-        run: |
-          cd lambda
-          pytest
+        working-directory: lambda
+        run: uv run pytest
         env:
           COVERAGE_FILE: .coverage.${{ matrix.python-version }}
 
