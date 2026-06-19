@@ -15,18 +15,15 @@ from src.shared.models import (
     CreateShareRequest,
     CreateVaultRequest,
     DynamoDBFileItem,
-    DynamoDBRecoveryCodeItem,
     DynamoDBShareItem,
     DynamoDBVaultItem,
     ErrorResponse,
-    GenerateRecoveryCodesResponse,
     InitiateUploadRequest,
     InitiateUploadResponse,
     ItemType,
     ListMediaRequest,
     MediaItem,
     SearchByTagRequest,
-    ValidateRecoveryCodeRequest,
 )
 
 
@@ -330,40 +327,6 @@ class TestDynamoDBShareItem:
         assert item.ttl == 1234654290
 
 
-class TestDynamoDBRecoveryCodeItem:
-    """Tests for DynamoDBRecoveryCodeItem model."""
-
-    def test_valid_item(self):
-        """Should create valid recovery code item."""
-        item = DynamoDBRecoveryCodeItem(
-            PK="USER#user-123",
-            SK="RECOVERY#hash-abc",
-            user_id="user-123",
-            code_hash="hash-abc",
-            created_at=1234567890,
-        )
-
-        assert item.PK == "USER#user-123"
-        assert item.SK == "RECOVERY#hash-abc"
-        assert item.is_valid is True
-        assert item.used_at is None
-
-    def test_used_code(self):
-        """Should track used code."""
-        item = DynamoDBRecoveryCodeItem(
-            PK="USER#user-123",
-            SK="RECOVERY#hash-abc",
-            user_id="user-123",
-            code_hash="hash-abc",
-            created_at=1234567890,
-            used_at=1234567900,
-            is_valid=False,
-        )
-
-        assert item.used_at == 1234567900
-        assert item.is_valid is False
-
-
 class TestErrorResponse:
     """Tests for ErrorResponse model."""
 
@@ -449,32 +412,6 @@ class TestSearchByTagRequest:
         assert request.encrypted_tag == b"encrypted-tag"
         assert request.page_size == 50
         assert request.next_token is None
-
-
-class TestGenerateRecoveryCodesResponse:
-    """Tests for GenerateRecoveryCodesResponse model."""
-
-    def test_valid_response(self, now):
-        """Should create valid response."""
-        response = GenerateRecoveryCodesResponse(
-            recovery_codes=["CODE-1", "CODE-2", "CODE-3"], generated_at=now
-        )
-
-        assert len(response.recovery_codes) == 3
-        assert response.generated_at == now
-
-
-class TestValidateRecoveryCodeRequest:
-    """Tests for ValidateRecoveryCodeRequest model."""
-
-    def test_valid_request(self):
-        """Should create valid request."""
-        request = ValidateRecoveryCodeRequest(
-            user_id="user-123", recovery_code="XXXX-XXXX-XXXX-XXXX"
-        )
-
-        assert request.user_id == "user-123"
-        assert request.recovery_code == "XXXX-XXXX-XXXX-XXXX"
 
 
 class TestListMediaRequestValidators:

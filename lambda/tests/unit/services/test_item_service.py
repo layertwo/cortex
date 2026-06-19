@@ -282,7 +282,7 @@ class TestCompleteUpload:
             "delete_item", {}, {"TableName": "test-items-table", "Key": ANY}
         )
 
-        with pytest.raises(Exception):
+        with pytest.raises(BadRequestError, match="Uploaded object not found"):
             item_service.complete_upload("user-123", request)
 
 
@@ -665,6 +665,36 @@ class TestGetDownloadUrl:
 
         with pytest.raises(BadRequestError, match="Item upload not yet complete"):
             item_service.get_download_url("user-123", "item-1")
+
+    def test_get_download_url_missing_s3_object_raises_not_found(
+        self, item_service, dynamodb_stubber, s3_stubber
+    ):
+        """S3 object absent at download time → NotFoundError, not RuntimeError."""
+        item_id = "item-456"
+        user_id = "user-123"
+        s3_key = f"vaults/vault-123/files/{item_id}/blob"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": user_id},
+                    "item_type": {"S": "MEDIA"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "encrypted_metadata": {"B": b"meta"},
+                    "s3_key": {"S": s3_key},
+                }
+            },
+            {"TableName": "test-items-table", "Key": ANY},
+        )
+        # head_object returns 404 → object_exists returns False
+        s3_stubber.add_client_error("head_object", service_error_code="404")
+
+        with pytest.raises(NotFoundError, match="File not found"):
+            item_service.get_download_url(user_id, item_id)
 
 
 class TestDeleteItem:

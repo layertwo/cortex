@@ -83,3 +83,6 @@ samconfig.toml
 coverage.*
 .coverage*
 .hypothesis*
+
+# Local planning/spec docs — kept on disk, never committed
+docs/

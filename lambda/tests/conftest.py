@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from src.api.services.auth_service import AuthService
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
@@ -20,11 +19,6 @@ from tests.fixtures.boto import *  # noqa: F403,F401
 @pytest.fixture
 def now():
     return datetime.now(tz=timezone.utc)
-
-
-@pytest.fixture
-def recovery_table_name():
-    return "test-recovery-table"
 
 
 @pytest.fixture
@@ -63,7 +57,6 @@ def setup_environment(
     items_table_name,
     collections_table_name,
     shares_table_name,
-    recovery_table_name,
     files_bucket_name,
 ):
     """Mock environment variables for Lambda functions."""
@@ -75,22 +68,12 @@ def setup_environment(
     monkeypatch.setenv("ITEMS_TABLE_NAME", items_table_name)
     monkeypatch.setenv("COLLECTIONS_TABLE_NAME", collections_table_name)
     monkeypatch.setenv("SHARES_TABLE_NAME", shares_table_name)
-    monkeypatch.setenv("RECOVERY_TABLE_NAME", recovery_table_name)
     monkeypatch.setenv("FILES_BUCKET_NAME", files_bucket_name)
 
 
 @pytest.fixture
 def mock_service_provider():
     return ServiceProvider()
-
-
-@pytest.fixture
-def auth_service(boto_session, recovery_table_name):
-    """Create auth service with stubbed boto3 session."""
-    return AuthService(
-        session=boto_session,
-        recovery_table_name=recovery_table_name,
-    )
 
 
 @pytest.fixture

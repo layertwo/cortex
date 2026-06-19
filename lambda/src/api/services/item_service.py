@@ -333,7 +333,7 @@ class ItemService:
 
             # Clean up DynamoDB entry
             self.items_repo.delete_item(key)
-            raise
+            raise BadRequestError("Uploaded object not found in storage")
 
         # Update item status to COMPLETE with conditional expression
         # Condition ensures item is still in PENDING state (prevents double completion)
@@ -658,7 +658,7 @@ class ItemService:
                 "S3 object not found for item",
                 **{"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
-            raise
+            raise NotFoundError("File not found in storage")
 
         # Generate presigned download URL
         download_url = self.s3_repo.generate_download_url(s3_key, PRESIGNED_URL_EXPIRATION)

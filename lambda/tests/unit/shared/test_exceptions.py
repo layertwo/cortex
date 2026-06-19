@@ -4,6 +4,9 @@ from src.shared.exceptions import (
     BadRequestError,
     InternalError,
     NotFoundError,
+    RateLimitExceededError,
+    ShareExpiredError,
+    ShareRevokedError,
     UnauthorizedError,
 )
 
@@ -36,3 +39,32 @@ class TestDomainExceptions:
         assert issubclass(NotFoundError, CortexError)
         assert issubclass(UnauthorizedError, CortexError)
         assert issubclass(InternalError, CortexError)
+
+
+def test_domain_errors_have_stable_codes():
+    assert BadRequestError().code == "BAD_REQUEST"
+    assert UnauthorizedError().code == "AUTHENTICATION_REQUIRED"
+    assert NotFoundError().code == "NOT_FOUND"
+    assert InternalError().code == "INTERNAL_ERROR"
+
+
+def test_share_revoked_is_410_with_code():
+    err = ShareRevokedError()
+    assert err.status_code == 410
+    assert err.code == "SHARE_REVOKED"
+    assert err.message == "Share has been revoked"
+
+
+def test_share_expired_is_410_with_code():
+    err = ShareExpiredError()
+    assert err.status_code == 410
+    assert err.code == "SHARE_EXPIRED"
+    assert err.message == "Share has expired"
+
+
+def test_rate_limit_is_429_with_retry_after():
+    err = RateLimitExceededError(retry_after=42)
+    assert err.status_code == 429
+    assert err.code == "RATE_LIMIT_EXCEEDED"
+    assert err.retry_after == 42
+    assert RateLimitExceededError().retry_after == 3600

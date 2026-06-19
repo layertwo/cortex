@@ -83,13 +83,3 @@ structure ShareRevokedError {
     @documentation("Revocation timestamp")
     revokedAt: Timestamp
 }
-
-@error("client")
-@httpError(400)
-structure RecoveryCodeInvalidError {
-    @required
-    message: String
-
-    @documentation("Error code for client handling")
-    code: String = "RECOVERY_CODE_INVALID"
-}

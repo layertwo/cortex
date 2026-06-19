@@ -447,38 +447,6 @@ class RevokeShareResponse(BaseModel):
 
 
 # ============================================================================
-# Account Recovery Models
-# ============================================================================
-
-
-class GenerateRecoveryCodesRequest(BaseModel):
-    """Request model for generating account recovery codes."""
-
-    user_id: str = Field(..., description="User identifier")
-
-
-class GenerateRecoveryCodesResponse(BaseModel):
-    """Response model for recovery code generation."""
-
-    recovery_codes: List[str] = Field(..., description="List of recovery codes (displayed once)")
-    generated_at: datetime = Field(..., description="Generation timestamp")
-
-
-class ValidateRecoveryCodeRequest(BaseModel):
-    """Request model for validating recovery code."""
-
-    user_id: str = Field(..., description="User identifier")
-    recovery_code: str = Field(..., description="Recovery code to validate")
-
-
-class ValidateRecoveryCodeResponse(BaseModel):
-    """Response model for recovery code validation."""
-
-    valid: bool = Field(..., description="Whether code is valid")
-    user_id: str = Field(..., description="User identifier")
-
-
-# ============================================================================
 # DynamoDB Item Models
 # ============================================================================
 
@@ -600,18 +568,6 @@ class DynamoDBShareItem(BaseModel):
     access_count: int = Field(default=0, description="Access counter")
     last_accessed_at: Optional[int] = Field(default=None, description="Last access timestamp")
     ttl: Optional[int] = Field(default=None, description="DynamoDB TTL for auto-cleanup")
-
-
-class DynamoDBRecoveryCodeItem(BaseModel):
-    """DynamoDB item model for account recovery codes."""
-
-    PK: str = Field(..., description="Partition key: USER#{userId}")
-    SK: str = Field(..., description="Sort key: RECOVERY#{codeHash}")
-    user_id: str = Field(..., description="User identifier")
-    code_hash: str = Field(..., description="SHA-256 hash of recovery code")
-    created_at: int = Field(..., description="Creation timestamp (Unix epoch)")
-    used_at: Optional[int] = Field(default=None, description="Usage timestamp (Unix epoch)")
-    is_valid: bool = Field(default=True, description="Validity flag")
 
 
 # ============================================================================

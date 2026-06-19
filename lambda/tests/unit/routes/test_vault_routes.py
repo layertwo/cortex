@@ -113,7 +113,7 @@ class TestGetVaultSaltRoute:
 
         assert response.status_code == 404
         body = response.json()
-        assert "not found" in body["message"].lower()
+        assert "not found" in body["error"]["message"].lower()
 
 
 if __name__ == "__main__":

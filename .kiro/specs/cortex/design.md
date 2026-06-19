@@ -48,7 +48,8 @@ Cortex implements a dual-password architecture that separates authentication fro
 - Grants access to the user's account and vault metadata
 - Can be changed without re-encrypting vault data
 - Managed by AWS Cognito with standard password policies
-- Supports account recovery via recovery codes
+- Authenticated frontend-direct via AWS Amplify (SRP); the account password never reaches the Cortex Lambda
+- Supports account recovery via Cognito's hosted forgot-password (email) flow
 
 **Vault Password:**
 - Used exclusively for deriving vault encryption keys
@@ -114,18 +115,18 @@ This separation provides:
 │  └────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              │ HTTPS (SigV4) / WebSocket
+                              │ Amplify SRP sign-in (frontend-direct)
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      AWS Cognito (OIDC)                      │
-│                   Authentication & Identity                   │
+│                  AWS Cognito User Pool (OIDC)                │
+│        Account Authentication — issues JWT (sub = userId)    │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              │ Scoped Credentials
+                              │ JWT bearer (Authorization header) / WebSocket
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                      AWS API Gateway                         │
-│              (REST + WebSocket, Smithy Defined)              │
+│   (REST + WebSocket, Smithy Defined; Cognito JWT authorizer) │
 └─────────────────────────────────────────────────────────────┘
                               │
                 ┌─────────────┼─────────────┐
@@ -166,7 +167,7 @@ This separation provides:
 
 **Item Creation Flow (Generic):**
 1. React frontend encrypts item content and metadata locally using appropriate encryption key
-2. React frontend requests API endpoint (authenticated via SigV4)
+2. React frontend requests API endpoint (authenticated via Cognito JWT bearer token)
 3. For media items: 
    - React frontend generates unique DEK for the file
    - React frontend encrypts file content with DEK
@@ -202,7 +203,7 @@ This separation provides:
 9. React frontend receives notification, decrypts payload, displays to user
 
 **Multi-Device Flow:**
-1. New device: User enters account password (authenticates with Cognito)
+1. New device: User enters account password (authenticates with Cognito directly via Amplify SRP; password never sent to the Cortex backend)
 2. User enters vault password in React frontend
 3. React frontend retrieves vault salt from DynamoDB
 4. React frontend derives vault master key from vault password + salt using Argon2id
@@ -363,7 +364,7 @@ The recovery key encodes the vault master key. KEK version is fetched from the s
 
 **Responsibilities:**
 - Expose RESTful API endpoints
-- Validate SigV4 signatures
+- Validate Cognito JWTs via the native Cognito authorizer (exposes the `sub` claim as `userId`)
 - Route requests to appropriate Lambda functions
 - Rate limiting and throttling
 - API versioning
@@ -372,11 +373,9 @@ The recovery key encodes the vault master key. KEK version is fetched from the s
 
 **API Versioning Strategy:** The API uses URI versioning (e.g., `/v1/items`) to support backward-compatible evolution. The current version is v1. Breaking changes will result in a new version (v2), while non-breaking changes can be added to existing versions.
 
-```
-POST   /v1/auth/login              - Initiate authentication with account password
-POST   /v1/auth/refresh            - Refresh credentials
-POST   /v1/auth/recover            - Initiate account recovery with recovery code
+**Authentication note:** There are no Cortex-hosted authentication routes. Account sign-in, token refresh, and account recovery (forgot-password) are handled directly by AWS Cognito via AWS Amplify in the browser. The browser presents the resulting Cognito JWT as a bearer token; API Gateway's native Cognito authorizer validates it and exposes the `sub` claim as the `userId` to the Lambda. The endpoints below are all protected by that authorizer.
 
+```
 POST   /v1/vaults                  - Create new vault with vault salt
 GET    /v1/vaults/{id}/salt        - Retrieve vault salt for key derivation
 
@@ -411,9 +410,6 @@ PUT    /v1/notifications/schedules/{id}      - Update schedule
 DELETE /v1/notifications/schedules/{id}      - Cancel notification
 POST   /v1/notifications/devices             - Register device token (encrypted)
 DELETE /v1/notifications/devices/{deviceId} - Unregister device
-
-POST   /v1/recovery/codes          - Generate account recovery codes
-POST   /v1/recovery/validate       - Validate recovery code
 
 WebSocket /v1/sync                  - Real-time sync connection
   - onConnect: Authenticate and register connection
@@ -457,11 +453,10 @@ WebSocket /v1/sync                  - Real-time sync connection
 - Ensures each vault salt is unique and never reused
 - No access to vault keys or passwords
 
-**Account Recovery Handler:**
-- Stores/retrieves account recovery codes (10 codes per user)
-- Validates recovery codes during account recovery flow
-- Invalidates used recovery codes to prevent reuse
-- Separate from vault recovery keys (which are never stored on server)
+**Account Recovery:**
+- Delegated entirely to AWS Cognito's hosted forgot-password (email) flow — there is no Cortex account-recovery handler.
+- The previous Cortex 10-code account-recovery system (route handlers, service, DynamoDB Recovery table usage, and property test) has been removed.
+- Account recovery is separate from vault recovery keys (24-word BIP39 mnemonic), which remain pure client-side crypto and are never stored on the server.
 
 **Tag Search Handler:**
 - Searches encrypted tags using exact match
@@ -535,7 +530,7 @@ WebSocket /v1/sync                  - Real-time sync connection
   - Attributes: vaultId, userId, vaultSalt (binary, non-secret), currentKekVersion (number), rotationState (enum: IDLE, IN_PROGRESS), rotationLockedAt (number, optional, Unix epoch), createdAt, updatedAt
   - Note: currentKekVersion stored as non-secret metadata to support vault recovery key compatibility with rotated keys
   - Note: rotationState and rotationLockedAt used for concurrent rotation prevention (optimistic locking via conditional writes)
-- **Account Recovery Table** (`cortex-{env}-recovery`): `PK: USER#{userId}, SK: RECOVERY#{codeHash}`
+- ~~**Account Recovery Table** (`cortex-{env}-recovery`)~~: removed — account recovery is now handled by Cognito's forgot-password flow, so Cortex no longer stores recovery-code hashes.
 - **Shares Table** (`cortex-{env}-shares`) - Anonymous access, security isolated: `PK: SHARE#{shareId}, SK: METADATA`
 - **WebSocket Connections Table** (`cortex-{env}-connections`) - Real-time sync: `PK: CONNECTION#{connectionId}, SK: METADATA`
   - Attributes: connectionId, userId, vaultId, connectedAt, lastPingAt
@@ -568,20 +563,23 @@ vaults/{vaultId}/files/{fileId}/{timestamp}-{random}
 - Email/password authentication (account password only, not vault password)
 - MFA optional (recommended for additional security)
 - Password policy: minimum 12 characters, complexity requirements (uppercase, lowercase, numbers, special characters)
-- Account recovery via email or recovery codes
-- Custom authentication flow for recovery code validation
+- Account recovery via email (Cognito hosted forgot-password)
+- Self-signup enabled (users register directly with the User Pool via Amplify)
+
+**App Client:**
+- Public SPA client (no client secret) used by AWS Amplify in the browser
+- Auth flows: SRP (`ALLOW_USER_SRP_AUTH`) and refresh-token only
+- `CUSTOM_AUTH` (the legacy recovery-code challenge flow) has been dropped — it existed solely for the removed Cortex recovery-code system
 
 **Identity Pool:**
-- Federated identities for OIDC support
-- Role-based access control
-- Scoped IAM policies per user
+- Removed. The browser no longer obtains AWS credentials. It calls the API exclusively with the Cognito JWT as a bearer token, and all S3 access is via Lambda-generated presigned URLs (no client-side SigV4).
 
 **IAM Policy Approach:**
 - No per-user IAM policies required
 - All S3 access via scoped presigned URLs generated by Lambda functions
 - Presigned URLs are scoped to specific objects and operations (PUT or GET)
 - Lambda functions have IAM roles with permissions to generate presigned URLs and access DynamoDB
-- API Gateway validates user identity via SigV4 and passes user context to Lambda
+- API Gateway's native Cognito authorizer validates the Cognito JWT and passes user context (the `sub` claim as `userId`) to Lambda
 - Lambda enforces access control by:
   - Verifying user owns the vault before generating presigned URLs
   - Scoping presigned URLs to the specific file path (vaults/{vaultId}/files/{fileId}/...)
@@ -1089,11 +1087,9 @@ Administrators cannot determine:
 
 **Validates: Requirements 21.3, 21.4**
 
-### Property 25: Account recovery code validation
+### Property 25: Account recovery code validation — REMOVED
 
-*For any* valid unused account recovery code, using it for account recovery must grant access to the account and invalidate that specific code, while leaving other codes valid.
-
-**Validates: Requirements 19.2, 19.3**
+This property (and its test) covered the Cortex 10-code account-recovery system, which has been removed. Account recovery is now handled by Cognito's forgot-password flow and is verified through Cognito rather than a Cortex property test. Vault recovery (24-word BIP39) is unaffected and remains client-side.
 
 ### Property 26: Automatic key rotation preserves data access
 
@@ -1240,7 +1236,7 @@ Administrators cannot determine:
 - Random nonce generation using cryptographically secure RNG
 
 **Authentication (REQ-NFR-5):**
-- AWS SigV4 for all API requests
+- Cognito JWT bearer token (Authorization header) for all API requests, validated by API Gateway's Cognito authorizer
 - Cognito-issued JWT tokens with 1-hour expiration
 - Refresh tokens valid for 30 days
 - Automatic token refresh before expiration
@@ -1354,7 +1350,7 @@ Administrators cannot determine:
 - Token expiration: Automatic refresh using refresh token
 - Invalid credentials: Prompt user to re-authenticate
 - Network timeout: Retry authentication request
-- Account recovery: Validate recovery code and allow password reset
+- Account recovery: Cognito forgot-password (email) flow allows the user to reset the account password
 
 **Password Validation Failures:**
 - Weak password: Display specific requirements not met (length, complexity)
@@ -1418,7 +1414,6 @@ Error codes:
 - `STORAGE_ERROR`: S3 or DynamoDB error
 - `SHARE_EXPIRED`: Share link has expired
 - `SHARE_REVOKED`: Share has been revoked by owner
-- `RECOVERY_CODE_INVALID`: Recovery code is invalid or already used
 - `PASSWORD_TOO_WEAK`: Password does not meet strength requirements
 - `PASSWORD_BREACHED`: Password found in breach database
 - `VAULT_SALT_NOT_FOUND`: Vault salt not found for key derivation
@@ -1452,8 +1447,6 @@ Unit tests will verify specific functionality of individual components:
 - Test that password shorter than 12 characters is rejected
 - Test that password without special character is rejected
 - Test that breached password is rejected
-- Test that valid unused recovery code grants access
-- Test that used recovery code is rejected
 - Test that expired share returns 403
 - Test that revoked share returns 403
 - Test that HKDF derives different keys for different contexts
@@ -1691,7 +1684,7 @@ Integration tests verify end-to-end workflows:
 - Tag search: upload with tags → search by tag → verify results
 - Error recovery: simulate S3 failure during upload → verify cleanup
 - Two-password flow: change account password → verify vault access unchanged → change vault password → verify re-encryption
-- Account recovery: use recovery code → reset account password → verify account access restored
+- Account recovery: initiate Cognito forgot-password → confirm via emailed code → reset account password → verify account access restored
 - Vault recovery: use recovery key → reset vault password → verify vault data accessible
 - File sharing: create share → access anonymously → verify file download
 - Password-protected sharing: create protected share → enter password → verify access
@@ -1899,23 +1892,17 @@ async function validatePassword(password: string): Promise<ValidationResult> {
 
 ### Account Recovery Implementation
 
-**Recovery Code Generation:**
-- 10 recovery codes generated per user account at signup
-- Each code: 16 characters, alphanumeric, randomly generated
-- Format: XXXX-XXXX-XXXX-XXXX (for readability)
-- Codes hashed with SHA-256 before storage on server
-- Displayed once to user with instructions to store securely offline
+Account recovery is delegated entirely to AWS Cognito. The previous Cortex 10-code recovery system (generation at signup, SHA-256 hashing, DynamoDB storage, and validation) has been removed.
 
-**Recovery Code Usage:**
-- User enters recovery code during account recovery flow
-- Client sends SHA-256 hash of code to server for validation
-- Server checks hash against stored hashes
-- If valid and unused, server marks code as used and grants access
-- User prompted to set new account password
-- Used codes cannot be reused
+**Cognito Forgot-Password Flow:**
+- User initiates "forgot password" in the frontend, which calls Cognito directly via AWS Amplify
+- Cognito emails a verification code to the user's registered address
+- User enters the code plus a new account password; Amplify completes the reset with Cognito
+- The account password and the recovery flow never reach the Cortex Lambda
+- No recovery secrets are stored by Cortex
 
-**Vault Recovery Key:**
-- Separate from account recovery codes
+**Vault Recovery Key (unchanged — separate from account recovery):**
+- Independent of account recovery; recovers the vault password, not the account password
 - BIP39 mnemonic (12-24 words) derived from vault master key
 - Enables vault password reset without re-encrypting data
 - Never transmitted to or stored by server
@@ -2202,7 +2189,7 @@ interface StoredShare {
 
 **WebSocket Connection Management:**
 - React frontend establishes WebSocket connection via API Gateway WebSocket API
-- Connection authenticated using SigV4 or JWT token
+- Connection authenticated using a Cognito JWT token
 - Lambda stores connection metadata in WebSocket Connections table
 - Connection includes: connectionId, userId, vaultId, connectedAt, lastPingAt
 - React frontend sends periodic ping messages to keep connection alive

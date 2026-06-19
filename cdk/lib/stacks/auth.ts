@@ -10,8 +10,6 @@ import {
     UserPoolEmail,
     VerificationEmailStyle,
 } from "aws-cdk-lib/aws-cognito";
-import {IdentityPool, UserPoolAuthenticationProvider} from "aws-cdk-lib/aws-cognito-identitypool";
-import {FederatedPrincipal, Role} from "aws-cdk-lib/aws-iam";
 
 import {StageConfig} from "../config";
 
@@ -22,8 +20,6 @@ export interface AuthStackProps extends StackProps {
 export class AuthStack extends Stack {
     public readonly userPool: UserPool;
     public readonly userPoolClient: UserPoolClient;
-    public readonly identityPool: IdentityPool;
-    public readonly authenticatedRole: Role;
 
     constructor(scope: Construct, id: string, props: AuthStackProps) {
         super(scope, id, props);
@@ -31,8 +27,6 @@ export class AuthStack extends Stack {
         // Create authentication components
         this.userPool = this.createUserPool();
         this.userPoolClient = this.createUserPoolClient();
-        this.identityPool = this.createIdentityPool();
-        this.authenticatedRole = this.createAuthenticatedRole();
     }
 
     private resourceName(suffix: string): string {
@@ -51,9 +45,8 @@ export class AuthStack extends Stack {
                 username: false,
             },
 
-            // Self sign-up enabled
-            // TODO temp disable signup
-            selfSignUpEnabled: false,
+            // Self sign-up enabled (Amplify-driven signups)
+            selfSignUpEnabled: true,
 
             // Email verification required
             autoVerify: {
@@ -114,12 +107,11 @@ export class AuthStack extends Stack {
         return new UserPoolClient(this, "UserPoolClient", {
             userPool: this.userPool,
             userPoolClientName: this.resourceName("client"),
+            generateSecret: false, // public SPA client — Amplify cannot use a client secret
 
-            // Auth flows
+            // Auth flows — SRP only (Amplify default); no custom recovery-code flow
             authFlows: {
-                userPassword: true,
                 userSrp: true,
-                custom: true, // For recovery code authentication
             },
 
             // Token validity
@@ -140,41 +132,6 @@ export class AuthStack extends Stack {
 
             // Enable token revocation
             enableTokenRevocation: true,
-        });
-    }
-
-    private createIdentityPool(): IdentityPool {
-        // Identity Pool for federated identities
-        // Requirements: 3.1, 3.2
-        const identityPool = new IdentityPool(this, "IdentityPool", {
-            identityPoolName: `${this.stackName.replace(/-/g, "_")}_identity_pool`,
-            allowUnauthenticatedIdentities: false,
-        });
-        identityPool.addUserPoolAuthentication(
-            new UserPoolAuthenticationProvider({
-                userPool: this.userPool,
-                userPoolClient: this.userPoolClient,
-            }),
-        );
-        return identityPool;
-    }
-
-    private createAuthenticatedRole(): Role {
-        // IAM role for authenticated users
-        return new Role(this, "AuthenticatedRole", {
-            assumedBy: new FederatedPrincipal(
-                "cognito-identity.amazonaws.com",
-                {
-                    StringEquals: {
-                        "cognito-identity.amazonaws.com:aud": this.identityPool.identityPoolId,
-                    },
-                    "ForAnyValue:StringLike": {
-                        "cognito-identity.amazonaws.com:amr": "authenticated",
-                    },
-                },
-                "sts:AssumeRoleWithWebIdentity",
-            ),
-            description: "IAM role for authenticated Cortex users",
         });
     }
 }

@@ -60,24 +60,3 @@ class TestPydanticValidationErrorHandling:
         )
 
         assert response.status_code == 422
-
-    def test_login_missing_password(self, client):
-        """Test that missing password in login returns validation error."""
-        response = client.post(
-            "/v1/auth/login",
-            json={
-                "email": "test@example.com",
-                # Missing password
-            },
-        )
-
-        assert response.status_code == 422
-
-    def test_validate_recovery_code_missing_code(self, client):
-        """Test that missing recovery_code returns validation error."""
-        response = client.post(
-            "/v1/recovery/validate",
-            json={},
-        )
-
-        assert response.status_code == 422
