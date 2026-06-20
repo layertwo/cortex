@@ -70,7 +70,7 @@ describe('Key Management Property Tests', () => {
             const keys2 = deriveKeys(masterKey);
             
             // All derived keys must be identical
-            expect(keys1.dataEncryptionKey).toEqual(keys2.dataEncryptionKey);
+            expect(keys1.keyEncryptionKey).toEqual(keys2.keyEncryptionKey);
             expect(keys1.metadataEncryptionKey).toEqual(keys2.metadataEncryptionKey);
             expect(keys1.shareKeyDerivationKey).toEqual(keys2.shareKeyDerivationKey);
             expect(keys1.notesEncryptionKey).toEqual(keys2.notesEncryptionKey);
@@ -81,7 +81,7 @@ describe('Key Management Property Tests', () => {
             expect(keys1.saltHmacKey).toEqual(keys2.saltHmacKey);
 
             // All keys must be 32 bytes (256 bits)
-            expect(keys1.dataEncryptionKey.length).toBe(32);
+            expect(keys1.keyEncryptionKey.length).toBe(32);
             expect(keys1.metadataEncryptionKey.length).toBe(32);
             expect(keys1.shareKeyDerivationKey.length).toBe(32);
             expect(keys1.notesEncryptionKey.length).toBe(32);
@@ -105,7 +105,7 @@ describe('Key Management Property Tests', () => {
             
             // All derived keys must be different from each other
             const allKeys = [
-              keys.dataEncryptionKey,
+              keys.keyEncryptionKey,
               keys.metadataEncryptionKey,
               keys.shareKeyDerivationKey,
               keys.notesEncryptionKey,
@@ -260,8 +260,8 @@ describe('Key Management Property Tests', () => {
             const keys3 = deriveKeys(masterKey);
             
             // All derivations must produce identical keys
-            expect(keys1.dataEncryptionKey).toEqual(keys2.dataEncryptionKey);
-            expect(keys2.dataEncryptionKey).toEqual(keys3.dataEncryptionKey);
+            expect(keys1.keyEncryptionKey).toEqual(keys2.keyEncryptionKey);
+            expect(keys2.keyEncryptionKey).toEqual(keys3.keyEncryptionKey);
             
             expect(keys1.metadataEncryptionKey).toEqual(keys2.metadataEncryptionKey);
             expect(keys2.metadataEncryptionKey).toEqual(keys3.metadataEncryptionKey);
@@ -286,7 +286,7 @@ describe('Key Management Property Tests', () => {
             const keys2 = deriveKeys(masterKey2);
             
             // Different master keys must produce different derived keys
-            expect(keys1.dataEncryptionKey).not.toEqual(keys2.dataEncryptionKey);
+            expect(keys1.keyEncryptionKey).not.toEqual(keys2.keyEncryptionKey);
             expect(keys1.metadataEncryptionKey).not.toEqual(keys2.metadataEncryptionKey);
             expect(keys1.shareKeyDerivationKey).not.toEqual(keys2.shareKeyDerivationKey);
           }
@@ -304,7 +304,7 @@ describe('Key Management Property Tests', () => {
             
             // Collect all derived keys
             const allKeys = [
-              keys.dataEncryptionKey,
+              keys.keyEncryptionKey,
               keys.metadataEncryptionKey,
               keys.shareKeyDerivationKey,
               keys.notesEncryptionKey,
@@ -351,7 +351,7 @@ describe('Key Management Property Tests', () => {
               expect(uniqueBytes).toBeGreaterThan(10); // At least 10 different byte values
             };
             
-            checkEntropy(keys.dataEncryptionKey);
+            checkEntropy(keys.keyEncryptionKey);
             checkEntropy(keys.metadataEncryptionKey);
             checkEntropy(keys.shareKeyDerivationKey);
           }
@@ -385,7 +385,7 @@ describe('Key Management Property Tests', () => {
       const keys = deriveKeys(masterKey);
       
       const masterKeyStr = Array.from(masterKey).join(',');
-      const dataKeyStr = Array.from(keys.dataEncryptionKey).join(',');
+      const dataKeyStr = Array.from(keys.keyEncryptionKey).join(',');
       
       try {
         deriveKeys(new Uint8Array(16)); // Invalid key size
@@ -414,7 +414,7 @@ describe('Key Management Property Tests', () => {
             expect(jsonStr.length).toBeGreaterThan(0);
             
             // Verify that the keys object structure is preserved
-            expect(jsonStr).toContain('dataEncryptionKey');
+            expect(jsonStr).toContain('keyEncryptionKey');
             expect(jsonStr).toContain('metadataEncryptionKey');
           }
         ),

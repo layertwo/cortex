@@ -134,7 +134,8 @@ async function getArgon2id() {
  * - Master key is already high-entropy (Argon2id with 64MB memory, 3 iterations)
  */
 const HKDF_SALTS = {
-  DATA_ENCRYPTION: new TextEncoder().encode('cortex-salt-data-v1'),
+  // ponytail: KEK salt is versioned (-v1); key rotation (task 6.13) bumps to -v2, -v3…
+  KEY_ENCRYPTION: new TextEncoder().encode('cortex-salt-kek-v1'),
   METADATA_ENCRYPTION: new TextEncoder().encode('cortex-salt-metadata-v1'),
   SHARE_KEY_DERIVATION: new TextEncoder().encode('cortex-salt-share-v1'),
   NOTES_ENCRYPTION: new TextEncoder().encode('cortex-salt-notes-v1'),
@@ -152,7 +153,9 @@ const HKDF_SALTS = {
  * Combined with HKDF_SALTS, this provides two independent layers of separation.
  */
 const HKDF_CONTEXTS = {
-  DATA_ENCRYPTION: 'cortex-data-encryption-v1',
+  // Key Encryption Key — wraps per-file DEKs (envelope encryption). Context is
+  // versioned for key rotation: v1 today, v2/v3… after a rotation (task 6.13).
+  KEY_ENCRYPTION: 'cortex-kek-v1',
   METADATA_ENCRYPTION: 'cortex-metadata-encryption-v1',
   SHARE_KEY_DERIVATION: 'cortex-share-key-derivation-v1',
   NOTES_ENCRYPTION: 'cortex-notes-encryption-v1',
@@ -161,6 +164,10 @@ const HKDF_CONTEXTS = {
   NOTIFICATION_ENCRYPTION: 'cortex-notification-encryption-v1',
   DATE_BUCKET_ENCRYPTION: 'cortex-date-bucket-encryption-v1',
   SALT_HMAC: 'cortex-salt-hmac-v1',
+  // ponytail: spec 6.2 also lists a vault-level "share metadata HMAC key" — deferred,
+  // nothing consumes one yet. When built, it must NOT reuse 'cortex-share-hmac-v1'
+  // (share-encryption.ts already uses that for a share-password-derived key); pick a
+  // domain-separated context, e.g. 'cortex-vault-share-metadata-hmac-v1'.
 };
 
 /**
@@ -214,7 +221,8 @@ export async function deriveVaultMasterKey(
  * Interface representing all derived encryption keys for a vault
  */
 export interface DerivedKeys {
-  dataEncryptionKey: Uint8Array;
+  /** Key Encryption Key (KEK): wraps per-file DEKs for envelope encryption. */
+  keyEncryptionKey: Uint8Array;
   metadataEncryptionKey: Uint8Array;
   shareKeyDerivationKey: Uint8Array;
   notesEncryptionKey: Uint8Array;
@@ -238,7 +246,7 @@ export interface DerivedKeys {
  * @example
  * const masterKey = await deriveVaultMasterKey(password, salt);
  * const keys = deriveKeys(masterKey);
- * // Use keys.dataEncryptionKey for encrypting file content
+ * // Use keys.keyEncryptionKey as the KEK to wrap per-file DEKs (envelope encryption)
  * // Use keys.metadataEncryptionKey for encrypting metadata
  */
 export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
@@ -250,11 +258,11 @@ export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
 
   try {
     return {
-      dataEncryptionKey: hkdf(
+      keyEncryptionKey: hkdf(
         sha256,
         vaultMasterKey,
-        HKDF_SALTS.DATA_ENCRYPTION,
-        new TextEncoder().encode(HKDF_CONTEXTS.DATA_ENCRYPTION),
+        HKDF_SALTS.KEY_ENCRYPTION,
+        new TextEncoder().encode(HKDF_CONTEXTS.KEY_ENCRYPTION),
         keyLength
       ),
       metadataEncryptionKey: hkdf(
@@ -378,7 +386,7 @@ export function generateRecoveryKey(vaultMasterKey: Uint8Array): string {
  * const recoveryKey = 'word1 word2 word3 ... word24';
  * const recoveredMasterKey = validateRecoveryKey(recoveryKey);
  * const keys = deriveKeys(recoveredMasterKey);
- * // Now you can decrypt vault data with keys.dataEncryptionKey, etc.
+ * // Now you can decrypt vault data with keys.keyEncryptionKey, etc.
  */
 export function validateRecoveryKey(recoveryKey: string): Uint8Array {
   if (!recoveryKey || typeof recoveryKey !== 'string') {
