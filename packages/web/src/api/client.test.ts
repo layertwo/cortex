@@ -36,7 +36,7 @@ describe('api client', () => {
     const result = await createVault();
 
     expect(result).toEqual({ vaultId: 'v1', vaultSalt: salt });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://api/v1/vaults');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).Authorization).toBe('Bearer JWT123');
@@ -52,7 +52,9 @@ describe('api client', () => {
     const result = await getVaultSalt('v9');
 
     expect(result).toEqual(salt);
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api/v1/vaults/v9/salt');
+    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
+      'https://api/v1/vaults/v9/salt',
+    );
   });
 
   it('throws on non-2xx', async () => {
