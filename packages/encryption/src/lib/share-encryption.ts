@@ -20,98 +20,15 @@
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hmac } from '@noble/hashes/hmac.js';
-
-// Dynamic import for argon2id to handle both browser and Node.js environments
-let loadArgon2idWasm: (() => Promise<(params: {
-  password: Uint8Array;
-  salt: Uint8Array;
-  parallelism: number;
-  passes: number;
-  memorySize: number;
-  tagLength: number;
-}) => Uint8Array>) | null = null;
-
-// Initialize the loader based on environment
-async function initArgon2idLoader() {
-  if (loadArgon2idWasm) return loadArgon2idWasm;
-
-  // Check if we're in Node.js environment
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const { fileURLToPath } = await import('url');
-      const setupWasm = (await import('argon2id/lib/setup.js')).default;
-
-      let argon2idPath: string;
-
-      try {
-        const argon2idPackageUrl = import.meta.resolve('argon2id');
-        const argon2idPackagePath = fileURLToPath(argon2idPackageUrl);
-        argon2idPath = path.dirname(argon2idPackagePath);
-      } catch (resolveError) {
-        try {
-          const argon2idMainPath = require.resolve('argon2id');
-          argon2idPath = path.dirname(argon2idMainPath);
-        } catch (requireError) {
-          throw new Error(
-            'Failed to resolve argon2id package location. ' +
-            'Ensure argon2id is installed and accessible. ' +
-            `import.meta.resolve error: ${resolveError instanceof Error ? resolveError.message : 'unknown'}; ` +
-            `require.resolve error: ${requireError instanceof Error ? requireError.message : 'unknown'}`
-          );
-        }
-      }
-
-      const simdPath = path.join(argon2idPath, 'dist/simd.wasm');
-      const nonSimdPath = path.join(argon2idPath, 'dist/no-simd.wasm');
-
-      loadArgon2idWasm = () => setupWasm(
-        (importObject: WebAssembly.Imports) => WebAssembly.instantiate(fs.readFileSync(simdPath), importObject),
-        (importObject: WebAssembly.Imports) => WebAssembly.instantiate(fs.readFileSync(nonSimdPath), importObject)
-      );
-    } catch (error) {
-      throw new Error(`Failed to initialize Argon2id for Node.js: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  } else {
-    // Browser environment - use default loader
-    const defaultLoader = (await import('argon2id')).default;
-    loadArgon2idWasm = defaultLoader;
-  }
-
-  return loadArgon2idWasm;
-}
+import { argon2id } from 'hash-wasm';
 
 /**
- * Argon2id parameters for share key derivation
- * Matches vault key derivation: 64MB memory, 3 iterations, 4 parallelism
+ * Argon2id parameters for share key derivation (RFC 9106).
+ * Matches vault key derivation: 64 MiB memory, 3 iterations, 4 parallelism, 32-byte output.
+ *
+ * Uses hash-wasm's WASM Argon2id (WASM inlined → browser-bundleable, no plugins/fs).
  */
-const ARGON2_PARAMS = {
-  memorySize: 65536, // 64MB in KB
-  passes: 3,
-  parallelism: 4,
-  tagLength: 32, // 256 bits output
-};
-
-/**
- * Cached Argon2id WASM instance
- */
-let argon2idInstance: ((params: {
-  password: Uint8Array;
-  salt: Uint8Array;
-  parallelism: number;
-  passes: number;
-  memorySize: number;
-  tagLength: number;
-}) => Uint8Array) | null = null;
-
-async function getArgon2id() {
-  if (!argon2idInstance) {
-    const loader = await initArgon2idLoader();
-    argon2idInstance = await loader();
-  }
-  return argon2idInstance;
-}
+const ARGON2_PARAMS = { parallelism: 4, iterations: 3, memorySize: 65536, hashLength: 32 } as const;
 
 // --- HKDF salts and contexts for share key derivation ---
 
@@ -268,15 +185,8 @@ export async function deriveShareKeys(
   const keyLength = 32;
 
   try {
-    const argon2id = await getArgon2id();
-
-    const passwordBytes = new TextEncoder().encode(password);
-
-    const shareMasterKey = argon2id({
-      password: passwordBytes,
-      salt,
-      ...ARGON2_PARAMS,
-    });
+    // Argon2id (RFC 9106) via hash-wasm — WASM inlined, browser-bundleable.
+    const shareMasterKey = await argon2id({ password, salt, ...ARGON2_PARAMS, outputType: 'binary' });
 
     try {
       const encryptionKey = hkdf(
