@@ -13,9 +13,12 @@ class TestAppConfiguration:
         assert response.json() == {"status": "ok"}
 
     def test_app_has_routes_registered(self, app):
-        routes = [r.path for r in app.routes]
-        assert "/v1/items" in routes
-        assert "/v1/vaults" in routes
+        # FastAPI 0.138 stopped flattening included routers into app.routes
+        # (each include is now a lazy _IncludedRouter). Use the OpenAPI schema,
+        # the public contract for registered paths.
+        paths = app.openapi()["paths"]
+        assert "/v1/items" in paths
+        assert "/v1/vaults" in paths
 
     def test_creates_fastapi_app(self, mock_service_provider):
         assert mock_service_provider.app is not None
