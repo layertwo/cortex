@@ -50,7 +50,8 @@ class CreateCollectionRoute(BaseRoute):
             Requirements: 12.1, 13.1
             """
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
+                raise NotFoundError("Vault not found")
 
             # Create collection
             response = self.collection_service.create_collection(user_id, request)
@@ -93,7 +94,8 @@ class ListCollectionsRoute(BaseRoute):
             Requirements: 12.2, 13.5
             """
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
+                raise NotFoundError("Vault not found")
 
             # List collections
             collections, next_page_token = self.collection_service.list_collections(
@@ -163,7 +165,8 @@ class GetCollectionRoute(BaseRoute):
             Requirements: 12.2, 13.1
             """
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id, vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
+                raise NotFoundError("Vault not found")
 
             # Get collection
             collection = self.collection_service.get_collection(user_id, vault_id, collection_id)
@@ -229,7 +232,8 @@ class UpdateCollectionRoute(BaseRoute):
             request = body.model_copy(update={"collection_id": collection_id})
 
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
+                raise NotFoundError("Vault not found")
 
             # Update collection
             response = self.collection_service.update_collection(user_id, request)
@@ -273,7 +277,8 @@ class DeleteCollectionRoute(BaseRoute):
             Requirements: 13.3, 13.4
             """
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
+                raise NotFoundError("Vault not found")
 
             # Delete collection
             self.collection_service.delete_collection(user_id, vault_id, collection_id)
@@ -322,7 +327,8 @@ class AddItemToCollectionRoute(BaseRoute):
             request = body.model_copy(update={"collection_id": collection_id})
 
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
+                raise NotFoundError("Vault not found")
 
             # Add item to collection
             response = self.collection_service.add_item_to_collection(user_id, request)
@@ -370,7 +376,8 @@ class RemoveItemFromCollectionRoute(BaseRoute):
             Requirements: 13.2
             """
             # Verify vault ownership
-            self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id)
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
+                raise NotFoundError("Vault not found")
 
             # Remove item from collection
             self.collection_service.remove_item_from_collection(

@@ -1,3 +1,7 @@
+> **Phase A (Cognito Auth Integration) note:** Account authentication and recovery were moved to AWS Cognito (Amplify frontend-direct SRP; API Gateway Cognito authorizer). The Cortex `/v1/auth/*` and `/v1/recovery/*` routes, the recovery-code service/tests, and the Cognito Identity Pool were removed. Some checkboxes below are annotated inline to reflect this. See the Phase A plan and design for full context:
+> - `docs/superpowers/plans/2026-06-13-cognito-auth-integration-phase-a.md`
+> - `docs/superpowers/specs/2026-06-13-cognito-auth-integration-phase-a-design.md`
+
 - [x] 1. Set up project structure and CDK infrastructure foundation
   - Create directory structure: cdk/, lambda/, frontend/, tests/
   - Initialize CDK project with TypeScript in cdk/
@@ -25,16 +29,17 @@
   - Set up multipart upload configuration (5MB minimum part size)
   - Enable S3 transfer acceleration
   - Configure lifecycle policies for Glacier transition
-  - Create DynamoDB tables for Items, Collections, Vaults, Recovery codes, Shares
+  - Create DynamoDB tables for Items, Collections, Vaults, Shares
   - Configure on-demand billing with point-in-time recovery
   - _Requirements: 1.3, 2.5, 6.5, 7.4, 7.5, 11.3, 12.2, 17.3, 19.1, 22.1, 22.2_
 
 - [x] 3.2 Create authentication stack (Cognito configuration)
   - Set up Cognito user pool with email/password authentication
   - Configure password policy (12 chars min, complexity requirements)
-  - Set up custom authentication flow for recovery codes
-  - Configure identity pool for federated identities
-  - Set up IAM roles for authenticated users
+  - ~~Set up custom authentication flow for recovery codes~~ — Phase A: CUSTOM_AUTH dropped (existed only for the removed recovery-code system)
+  - ~~Configure identity pool for federated identities~~ — Phase A: Identity Pool removed (browser uses JWT bearer + presigned URLs, no AWS creds)
+  - ~~Set up IAM roles for authenticated users~~ — Phase A: authenticated IAM role removed with the Identity Pool
+  - Phase A additions: app client is a public SPA client (no secret), SRP + refresh-only auth flows, self-signup enabled
   - _Requirements: 3.1, 3.2, 19.2, 21.1, 21.2_
 
 - [x] 3.3 Create API stack (API Gateway and Lambda)
@@ -517,31 +522,31 @@
   - Setup handler at lambda/src/entrypoint/api.py to run the API handler
   - _Requirements: 8.1, 8.2_
 
-- [x] 9. Implement authentication routes and services
-- [x] 9.1 Create authentication route handlers
-  - Implement POST /v1/auth/login route
-  - Implement POST /v1/auth/refresh route
-  - Implement POST /v1/auth/recover route
-  - Extract user identity from API Gateway context
+- [x] 9. Implement authentication routes and services — **REMOVED / superseded by Cognito (Phase A)**. Account sign-in, refresh, and recovery now happen frontend-direct against Cognito via Amplify; the `/v1/auth/*` and `/v1/recovery/*` routes, the auth/recovery service layers, and their tests were deleted this branch.
+- [x] 9.1 Create authentication route handlers — **REMOVED (Phase A)**: `/v1/auth/login|refresh|recover` route handlers deleted; the API Gateway Cognito authorizer now extracts user identity (`sub` → userId).
+  - ~~Implement POST /v1/auth/login route~~
+  - ~~Implement POST /v1/auth/refresh route~~
+  - ~~Implement POST /v1/auth/recover route~~
+  - Extract user identity from API Gateway context (now done by the native Cognito authorizer)
   - _Requirements: 3.1, 3.2, 19.2_
 
-- [x] 9.2 Create authentication service layer
-  - Implement user registration logic
-  - Implement login validation
-  - Handle token refresh
-  - Implement custom authentication flow for recovery codes
+- [x] 9.2 Create authentication service layer — **REMOVED (Phase A)**: auth service deleted; registration, login validation, and token refresh are owned by Cognito.
+  - ~~Implement user registration logic~~ (Cognito self-signup)
+  - ~~Implement login validation~~ (Cognito SRP)
+  - ~~Handle token refresh~~ (Cognito refresh tokens)
+  - ~~Implement custom authentication flow for recovery codes~~ (CUSTOM_AUTH dropped)
   - _Requirements: 3.1, 3.2_
 
-- [x] 9.3 Implement account recovery code system
-  - Generate 10 recovery codes at signup (16 chars, format: XXXX-XXXX-XXXX-XXXX)
-  - Hash codes with SHA-256 before storage in DynamoDB
-  - Store in Account Recovery table
-  - Validate recovery codes during account recovery
-  - Invalidate used codes (mark as used, set usedAt timestamp)
+- [x] 9.3 Implement account recovery code system — **REMOVED (Phase A)**: recovery-code service and Account Recovery table usage deleted; account recovery is now Cognito forgot-password (email).
+  - ~~Generate 10 recovery codes at signup (16 chars, format: XXXX-XXXX-XXXX-XXXX)~~
+  - ~~Hash codes with SHA-256 before storage in DynamoDB~~
+  - ~~Store in Account Recovery table~~
+  - ~~Validate recovery codes during account recovery~~
+  - ~~Invalidate used codes (mark as used, set usedAt timestamp)~~
   - _Requirements: 19.1, 19.2, 19.3, 19.5_
 
-- [x] 9.4 Write property test for account recovery code validation
-  - **Property 25: Account recovery code validation**
+- [x] 9.4 Write property test for account recovery code validation — **REMOVED (Phase A)**: property test deleted along with the recovery-code system (recovery now verified via Cognito).
+  - ~~**Property 25: Account recovery code validation**~~
   - **Validates: Requirements 19.2, 19.3**
 
 - [x] 10. Implement vault management routes and services
@@ -683,12 +688,13 @@
   - **Validates: Requirements 5.2, 5.3, 5.4**
 
 - [x] 14. Implement collection management routes and services
-- [x] 14.1 Create collection CRUD route handlers
+- [x] 14.1 Create collection CRUD route handlers — **Phase A: vault-ownership enforcement added** (closes the cross-tenant read/write gap)
   - Implement POST /v1/collections route (create)
   - Implement GET /v1/collections route (list)
   - Implement GET /v1/collections/{id} route (get details)
   - Implement PUT /v1/collections/{id} route (update)
   - Implement DELETE /v1/collections/{id} route (delete)
+  - Phase A: all seven collection routes now raise 404 when `vault_exists()` is false (previously the boolean was discarded, permitting cross-tenant access)
   - _Requirements: 12.1, 12.2, 13.1, 13.3, 13.4, 13.5_
 
 - [x] 14.2 Create collection service layer
@@ -795,7 +801,7 @@
   - Implement DELETE /v1/shares/{id} route (revoke share)
   - _Requirements: 17.4, 17.5, 17.7, 18.2, 18.5_
 
-- [x] 17.3 Create share service layer with server-side rate limiting
+- [x] 17.3 Create share service layer with server-side rate limiting — **Phase A: error mapping completed** (rate-limit → 429 + `Retry-After`, revoked/expired → 410, with structured error bodies; previously these fell through to 500)
   - Store share metadata only (share ID, file reference, creation time, optional expiration, access count)
   - Never store any key material (DEK, wrapped DEK, share key, salt, HMAC)
   - Validate share access (check optional expiration and revocation)
@@ -891,12 +897,12 @@
   - _Requirements: 7.3_
 
 - [ ] 21. Enhance error handling across all components
-- [ ] 21.1 Enhance Lambda error handling
+- [ ] 21.1 Enhance Lambda error handling — **Phase A: partially completed** (structured `ErrorResponse` with `code` + `requestId` + `timestamp` shipped; DynamoDB exponential-backoff retry still pending → kept unchecked)
   - Ensure all error codes are defined (AUTHENTICATION_REQUIRED, AUTHENTICATION_FAILED, etc.)
   - Verify appropriate HTTP status codes for all error types
   - Add request IDs to all error responses
   - Sanitize error messages to prevent information leakage
-  - Implement exponential backoff for DynamoDB throttling
+  - Implement exponential backoff for DynamoDB throttling — _still pending (the only remaining item for 21.1)_
   - _Requirements: 3.5, 4.4, 8.3_
 
 - [ ] 21.2 Add frontend error handling
@@ -925,7 +931,7 @@
   - Ensure no plaintext data in logs
   - Exclude encrypted payloads from logs
   - Log only user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
-  - Never log vault keys, passwords, recovery keys, share keys, or account recovery codes
+  - Never log vault keys, passwords, recovery keys, or share keys
   - Configure CloudWatch log retention
   - Add log sanitization to all Lambda functions
   - _Requirements: 16.5_
@@ -968,7 +974,7 @@
   - Test tag search (upload with tags → search → verify results)
   - Test error recovery (simulate S3 failure → verify cleanup)
   - Test two-password flow (change account password → verify vault unchanged → change vault password → verify DEK re-wrapping)
-  - Test account recovery (use recovery code → reset password → verify access)
+  - Test account recovery (Cognito forgot-password: email code → reset password → verify access)
   - Test vault recovery (use recovery key → reset vault password → verify data accessible)
   - Test file sharing with envelope encryption (create share → access anonymously with password → verify download and decryption)
   - Test password-protected sharing (create protected share → enter password → unwrap DEK → verify access)

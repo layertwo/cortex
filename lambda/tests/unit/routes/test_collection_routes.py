@@ -181,3 +181,173 @@ class TestRemoveItemFromCollectionRoute:
 
         # FastAPI returns 422 for missing required query params
         assert response.status_code == 422
+
+
+class TestCollectionVaultOwnership:
+    """Collection routes must reject vaults the caller does not own."""
+
+    def test_create_collection_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+
+        # vault_exists -> get_item returns no Item -> False
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.post(
+            "/v1/collections",
+            json={"vault_id": vault_id, "encrypted_metadata": "ZW5jcnlwdGVk"},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_list_collections_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.get(f"/v1/collections?vault_id={vault_id}")
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_get_collection_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+        collection_id = "test-collection-123"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.get(f"/v1/collections/{collection_id}?vault_id={vault_id}")
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_update_collection_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+        collection_id = "test-collection-123"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.put(
+            f"/v1/collections/{collection_id}",
+            json={
+                "collection_id": collection_id,
+                "vault_id": vault_id,
+                "encrypted_metadata": "ZW5j",
+            },
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_delete_collection_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+        collection_id = "test-collection-123"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.delete(f"/v1/collections/{collection_id}?vault_id={vault_id}")
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_add_item_to_collection_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+        collection_id = "test-collection-123"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.post(
+            f"/v1/collections/{collection_id}/items",
+            json={
+                "collection_id": collection_id,
+                "vault_id": vault_id,
+                "item_id": "i-1",
+            },
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_remove_item_from_collection_rejects_unowned_vault(
+        self, client, dynamodb_stubber, vaults_table_name
+    ):
+        user_id = "test-user-id"
+        vault_id = "someone-elses-vault"
+        collection_id = "test-collection-123"
+        item_id = "test-item-456"
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        response = client.delete(
+            f"/v1/collections/{collection_id}/items/{item_id}?vault_id={vault_id}"
+        )
+
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"

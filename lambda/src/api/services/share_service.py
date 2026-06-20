@@ -13,7 +13,12 @@ import uuid
 
 import boto3
 
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import (
+    NotFoundError,
+    RateLimitExceededError,
+    ShareExpiredError,
+    ShareRevokedError,
+)
 from src.shared.logger import get_logger
 from src.shared.models import (
     CreateShareRequest,
@@ -33,42 +38,6 @@ RATE_LIMIT_WINDOW_SECONDS = 3600  # 1 hour
 TTL_GRACE_PERIOD = 86400  # 24 hours
 TTL_REVOKED_CLEANUP = 604800  # 7 days
 TTL_RATE_LIMIT_CLEANUP = 7200  # 2 hours
-
-
-# ============================================================================
-# Custom Error Classes
-# ============================================================================
-
-
-class ServiceError(Exception):
-    """Base error class for share service errors."""
-
-    def __init__(self, message: str, status_code: int = 500):
-        self.message = message
-        self.status_code = status_code
-        super().__init__(self.message)
-
-
-class ShareRevokedError(ServiceError):
-    """Raised when attempting to access a revoked share."""
-
-    def __init__(self, message: str = "Share has been revoked"):
-        super().__init__(message=message, status_code=410)
-
-
-class ShareExpiredError(ServiceError):
-    """Raised when attempting to access an expired share."""
-
-    def __init__(self, message: str = "Share has expired"):
-        super().__init__(message=message, status_code=410)
-
-
-class RateLimitExceededError(ServiceError):
-    """Raised when rate limit is exceeded for share access."""
-
-    def __init__(self, message: str = "Rate limit exceeded", retry_after: int = 3600):
-        self.retry_after = retry_after
-        super().__init__(message=message, status_code=429)
 
 
 class ShareService:

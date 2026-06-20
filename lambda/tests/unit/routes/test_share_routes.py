@@ -248,3 +248,81 @@ class TestRevokeShareRoute:
 
         assert body["message"] == "Share revoked successfully"
         assert isinstance(body["revoked_at"], int), "revoked_at should be an integer"
+
+
+class TestGetShareRouteErrors:
+    """Test suite for error handling in GetShareRoute."""
+
+    def test_get_share_rate_limited_returns_429(self, dynamodb_stubber, shares_table_name):
+        """Per-IP rate limit exceeded should map to HTTP 429 with Retry-After."""
+        app = ServiceProvider().app
+        # GET /v1/shares/{id} is a public (anonymous) endpoint — no auth override needed
+        client = TestClient(app)
+        share_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"attempt_count": {"N": "6"}}},
+            {
+                "TableName": shares_table_name,
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
+        response = client.get(f"/v1/shares/{share_id}")
+
+        assert response.status_code == 429
+        assert "retry-after" in {k.lower() for k in response.headers}
+        assert int(response.headers["retry-after"]) > 0
+        assert response.json()["error"]["code"] == "RATE_LIMIT_EXCEEDED"
+
+    def test_get_share_revoked_returns_410(self, dynamodb_stubber, shares_table_name):
+        """A revoked share should map to HTTP 410 with a structured error body."""
+        app = ServiceProvider().app
+        # GET /v1/shares/{id} is a public (anonymous) endpoint — no auth override needed
+        client = TestClient(app)
+        share_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        now = int(time.time())
+
+        for _ in range(2):
+            dynamodb_stubber.add_response(
+                "update_item",
+                {"Attributes": {"attempt_count": {"N": "1"}}},
+                {
+                    "TableName": shares_table_name,
+                    "Key": ANY,
+                    "UpdateExpression": ANY,
+                    "ExpressionAttributeValues": ANY,
+                    "ExpressionAttributeNames": ANY,
+                    "ReturnValues": "ALL_NEW",
+                },
+            )
+
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"SHARE#{share_id}"},
+                    "SK": {"S": "METADATA"},
+                    "share_id": {"S": share_id},
+                    "item_id": {"S": "test-item-789"},
+                    "user_id": {"S": "test-user-123"},
+                    "created_at": {"N": str(now)},
+                    "is_revoked": {"BOOL": True},
+                    "access_count": {"N": "0"},
+                }
+            },
+            expected_params={
+                "TableName": shares_table_name,
+                "Key": {"PK": f"SHARE#{share_id}", "SK": "METADATA"},
+            },
+        )
+
+        response = client.get(f"/v1/shares/{share_id}")
+
+        assert response.status_code == 410
+        assert response.json()["error"]["code"] == "SHARE_REVOKED"

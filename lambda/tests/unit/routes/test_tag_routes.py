@@ -80,7 +80,7 @@ class TestSearchTagsRoute:
 
         assert response.status_code == 400
         body = response.json()
-        assert "message" in body
+        assert body["error"]["code"] == "BAD_REQUEST"
 
     def test_search_tags_route_handler_success(self):
         """Test search tags route handler returns matching items."""

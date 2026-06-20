@@ -14,7 +14,6 @@ class TestAppConfiguration:
 
     def test_app_has_routes_registered(self, app):
         routes = [r.path for r in app.routes]
-        assert "/v1/auth/login" in routes
         assert "/v1/items" in routes
         assert "/v1/vaults" in routes
 

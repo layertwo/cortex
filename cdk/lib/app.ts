@@ -16,7 +16,7 @@ STAGES.forEach((stage) => {
     // Stack naming convention: cortex-{env}-{resource-type}
     const stackPrefix = `cortex-${stage.stageType.toLowerCase()}`;
 
-    // Auth Stack - Cognito user pool and identity pool
+    // Auth Stack - Cognito user pool and app client
     const authStack = new AuthStack(app, `${stackPrefix}-auth`, {
         env,
         stage,

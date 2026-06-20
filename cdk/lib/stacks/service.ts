@@ -230,11 +230,10 @@ export class ServiceStack extends Stack {
             },
             environment: {
                 STAGE: this.props.stage.stageType,
-                // Single data table serves as vaults, items, collections, and recovery table
+                // Single data table serves as vaults, items, and collections
                 VAULTS_TABLE_NAME: this.dataTable.tableName,
                 ITEMS_TABLE_NAME: this.dataTable.tableName,
                 COLLECTIONS_TABLE_NAME: this.dataTable.tableName,
-                RECOVERY_TABLE_NAME: this.dataTable.tableName,
                 // Separate shares table for anonymous access security isolation
                 SHARES_TABLE_NAME: this.sharesTable.tableName,
                 FILES_BUCKET_NAME: this.bucket.bucketName,
@@ -310,23 +309,6 @@ export class ServiceStack extends Stack {
             allowTestInvoke: true,
         });
 
-        // Recovery endpoint with stricter rate limiting (to prevent brute force attacks)
-        // Requirements: 19.1, 19.2 - Security requirement for account recovery
-        const recoveryResource = api.root.addResource("recovery");
-        const validateCodeResource = recoveryResource.addResource("validate");
-        const validateCodeMethod = validateCodeResource.addMethod("POST", lambdaIntegration, {
-            // No authorizer - this is used during account recovery
-            authorizationType: AuthorizationType.NONE,
-            // Strict rate limiting: 10 requests/second, 20 burst
-            // This prevents brute force attacks on recovery codes
-            methodResponses: [
-                {statusCode: "200"},
-                {statusCode: "400"},
-                {statusCode: "429"}, // Too Many Requests
-                {statusCode: "500"},
-            ],
-        });
-
         // Add proxy resource to handle all other routes
         // The Lambda function will handle routing internally using APIGatewayRestResolver
         api.root.addProxy({
@@ -354,34 +336,6 @@ export class ServiceStack extends Stack {
 
         usagePlan.addApiStage({
             stage: api.deploymentStage,
-        });
-
-        // Stricter usage plan for recovery endpoints
-        // Requirements: 19.1, 19.2 - Prevent brute force attacks on recovery codes
-        const recoveryUsagePlan = api.addUsagePlan("RecoveryUsagePlan", {
-            name: this.resourceName("recovery-usage-plan"),
-            description: "Strict usage plan for recovery endpoints to prevent brute force",
-            throttle: {
-                rateLimit: 10, // 10 requests per second
-                burstLimit: 20, // Allow small bursts
-            },
-            quota: {
-                limit: 1000, // 1000 attempts per month per IP
-                period: Period.MONTH,
-            },
-        });
-
-        recoveryUsagePlan.addApiStage({
-            stage: api.deploymentStage,
-            throttle: [
-                {
-                    method: validateCodeMethod,
-                    throttle: {
-                        rateLimit: 10,
-                        burstLimit: 20,
-                    },
-                },
-            ],
         });
 
         return api;

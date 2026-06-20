@@ -282,7 +282,7 @@ class TestListItemsRoute:
 
         assert response.status_code == 404
         body = response.json()
-        assert "Vault not found" in body["message"]
+        assert "Vault not found" in body["error"]["message"]
 
     def test_list_items_returns_404_for_vault_owned_by_different_user(
         self, client, dynamodb_stubber, vaults_table_name
@@ -305,7 +305,7 @@ class TestListItemsRoute:
 
         assert response.status_code == 404
         body = response.json()
-        assert "Vault not found" in body["message"]
+        assert "Vault not found" in body["error"]["message"]
 
 
 class TestGetItemRoute:

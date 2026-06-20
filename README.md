@@ -11,7 +11,7 @@ Cortex is a privacy-first backup system where all encryption happens client-side
 - **Zero-Knowledge Architecture**: Server never sees plaintext data or encryption keys
 - **Client-Side Encryption**: ChaCha20-Poly1305 encryption on all user devices
 - **Two-Password Model**: Separate account password (authentication) and vault password (encryption)
-- **Account Recovery**: 10 one-time recovery codes for account password reset
+- **Account Recovery**: Cognito-hosted email forgot-password for the account password; separate 24-word BIP39 mnemonic for vault recovery
 - **Multi-Device Support**: Access encrypted data from any device using vault password
 - **Collections**: Organize items into collections with many-to-many relationships
 - **Encrypted Search**: Tag-based organization with deterministic encryption
@@ -29,11 +29,11 @@ cortex/
 │   │   └── config.ts      # Environment configuration
 │   └── cdk.json
 ├── smithy/                # Smithy API models
-│   └── models/            # auth/, vault/, item/, collection/, tag/, share/, recovery/
+│   └── models/            # vault/, item/, collection/, tag/, share/
 ├── lambda/                # Python Lambda handlers
 │   ├── src/
 │   │   ├── api/           # Routes and services
-│   │   │   ├── routes/    # auth, vaults, items, collections, tags, shares, recovery
+│   │   │   ├── routes/    # vaults, items, collections, tags, shares
 │   │   │   └── services/  # Business logic layer
 │   │   ├── entrypoint/    # Lambda entry point (api.py)
 │   │   ├── environment/   # Service provider
@@ -98,8 +98,8 @@ npm test
 
 ### Security Model
 
-1. **Account Password**: Authenticates with AWS Cognito
-2. **Account Recovery Codes**: 10 one-time codes (format: XXXX-XXXX-XXXX-XXXX) for account password reset
+1. **Account Password**: Authenticates with AWS Cognito via Amplify (SRP) directly from the browser; the account password is never transmitted to the Cortex backend
+2. **Account Recovery**: Cognito-hosted forgot-password (email-based) resets the account password; no recovery codes are stored by Cortex
 3. **Vault Password**: Derives encryption keys (never transmitted to server)
 4. **Vault Salt**: Stored on server (non-secret), enables multi-device key derivation
 5. **Vault Master Key**: Derived from vault password + salt using Argon2id
@@ -107,7 +107,7 @@ npm test
 7. **Envelope Encryption**: Each media file encrypted with a unique DEK, DEK wrapped with KEK
 
 **Recovery Options:**
-- **Account Recovery**: Use one of 10 recovery codes to reset account password (codes are hashed with SHA-256 and invalidated after use)
+- **Account Recovery**: Cognito forgot-password flow (email verification) resets the account password; the account password and recovery flow are handled entirely by Cognito and never reach the Cortex backend
 - **Vault Recovery**: 24-word BIP39 mnemonic enables vault password reset without re-encrypting data
 
 ## Implementation Status
@@ -115,17 +115,17 @@ npm test
 ### ✅ Completed Features
 
 - **Infrastructure**: CDK stacks for S3, DynamoDB, Cognito, API Gateway, Lambda
-- **Authentication**: Account password authentication, recovery codes, vault salt management
+- **Authentication**: Account authentication via AWS Cognito (Amplify frontend-direct SRP; API Gateway Cognito authorizer validates JWTs), vault salt management
 - **Item Management**: Create, upload, list, retrieve, update, delete items (MEDIA, NOTE, TASK, EVENT types)
 - **Collection Management**: Create, list, retrieve, update, delete collections with many-to-many item associations
 - **Tag Search**: Search items by encrypted tags with vault isolation and pagination
 - **Encryption Library**: ChaCha20-Poly1305 encryption, envelope encryption (DEK/KEK), Argon2id key derivation, password validation
 - **API Layer**: Single Lambda function with APIGatewayRestResolver handling all routes
 - **Testing**: Unit tests with botocore Stubber, property-based tests with Hypothesis
+- **File Sharing**: Create/access/revoke shares with envelope encryption, server-side rate limiting, and anonymous presigned-URL downloads
 
 ### 🚧 In Progress
 
-- File sharing system
 - React web application
 - Automatic key rotation
 

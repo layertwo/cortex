@@ -7,6 +7,7 @@ and FastAPI application creation for the Cortex API.
 
 import functools
 import os
+from datetime import datetime, timezone
 from functools import cached_property
 
 import boto3
@@ -19,7 +20,6 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.api.routes.auth import LoginRoute, RecoverRoute, RefreshRoute
 from src.api.routes.collections import (
     AddItemToCollectionRoute,
     CreateCollectionRoute,
@@ -40,11 +40,9 @@ from src.api.routes.items import (
     SearchItemsRoute,
     UpdateItemRoute,
 )
-from src.api.routes.recovery import GenerateRecoveryCodesRoute, ValidateRecoveryCodeRoute
 from src.api.routes.shares import CreateShareRoute, GetShareRoute, RevokeShareRoute
 from src.api.routes.tags import SearchTagsRoute
 from src.api.routes.vaults import CreateVaultRoute, GetVaultSaltRoute
-from src.api.services.auth_service import AuthService
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
@@ -53,6 +51,22 @@ from src.shared.exceptions import CortexError
 from src.shared.logger import get_logger
 
 _logger = get_logger("service_provider")
+
+
+def _error_body(request: Request, code: str, message: str) -> dict:
+    """Build the structured error response body with a request id and timestamp."""
+    aws_event = request.scope.get("aws.event") or {}
+    request_id = (aws_event.get("requestContext") or {}).get("requestId") or request.headers.get(
+        "x-request-id", "unknown"
+    )
+    return {
+        "error": {
+            "code": code,
+            "message": message,
+            "requestId": request_id,
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        }
+    }
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -128,11 +142,6 @@ class ServiceProvider:
         return os.environ["SHARES_TABLE_NAME"]
 
     @cached_property
-    def recovery_table_name(self):  # pragma: nocover
-        """Get recovery table name from environment."""
-        return os.environ["RECOVERY_TABLE_NAME"]
-
-    @cached_property
     def files_bucket_name(self):  # pragma: nocover
         """Get S3 files bucket name from environment."""
         return os.environ["FILES_BUCKET_NAME"]
@@ -144,16 +153,6 @@ class ServiceProvider:
         return self.session.client("s3")
 
     # Services
-    @cached_property
-    def auth_service(self) -> AuthService:
-        """Create authentication service."""
-        return AuthService(
-            session=self.session,
-            recovery_table_name=self.recovery_table_name,
-            cognito_client=None,  # Cognito client would be injected here in production
-            user_pool_id=os.environ.get("COGNITO_USER_POOL_ID"),
-        )
-
     @cached_property
     def vault_service(self):
         """Create vault service."""
@@ -219,9 +218,14 @@ class ServiceProvider:
 
         @app.exception_handler(CortexError)
         async def cortex_error_handler(request: Request, exc: CortexError):
+            headers = {}
+            retry_after = getattr(exc, "retry_after", None)
+            if retry_after is not None:
+                headers["Retry-After"] = str(retry_after)
             return JSONResponse(
                 status_code=exc.status_code,
-                content={"message": exc.message},
+                content=_error_body(request, exc.code, exc.message),
+                headers=headers,
             )
 
         @app.exception_handler(Exception)
@@ -229,15 +233,12 @@ class ServiceProvider:
             _logger.exception("Unhandled exception")
             return JSONResponse(
                 status_code=500,
-                content={"message": "Internal server error"},
+                content=_error_body(request, "INTERNAL_ERROR", "Internal server error"),
             )
 
         # Register routes
         router = APIRouter()
         routes = [
-            LoginRoute(auth_service=self.auth_service),
-            RefreshRoute(auth_service=self.auth_service),
-            RecoverRoute(auth_service=self.auth_service),
             CreateVaultRoute(vault_service=self.vault_service),
             GetVaultSaltRoute(vault_service=self.vault_service),
             CreateItemRoute(item_service=self.item_service),
@@ -271,8 +272,6 @@ class ServiceProvider:
                 collection_service=self.collection_service, vault_service=self.vault_service
             ),
             SearchTagsRoute(item_service=self.item_service, vault_service=self.vault_service),
-            GenerateRecoveryCodesRoute(auth_service=self.auth_service),
-            ValidateRecoveryCodeRoute(auth_service=self.auth_service),
             CreateShareRoute(share_service=self.share_service),
             GetShareRoute(share_service=self.share_service),
             RevokeShareRoute(share_service=self.share_service),

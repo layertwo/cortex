@@ -23,11 +23,6 @@ list EncryptedTagList {
     member: Blob
 }
 
-/// List of recovery codes
-list RecoveryCodeList {
-    member: String
-}
-
 /// List of items
 list ItemList {
     member: ItemData
