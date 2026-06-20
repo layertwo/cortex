@@ -38,7 +38,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Runs test:encryption (jest) then test:web (vitest --passWithNoTests).
-      # web has no tests yet; it starts gating automatically once Phase B adds them.
+      # Build @cortex/encryption first: @cortex/web imports its compiled dist
+      # (package main: dist/index.js), which a fresh `npm ci` does not produce.
+      - name: Build encryption package
+        run: npm run build:encryption
+
+      # Runs test:encryption (jest) then test:web (vitest).
       - name: Run TypeScript/JS unit tests
         run: npm run test:all

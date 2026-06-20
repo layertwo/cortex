@@ -1,133 +1,40 @@
 /**
  * Key Management Module
- * 
+ *
  * Implements vault master key derivation using Argon2id and HKDF-based
  * key derivation for multiple encryption keys.
  */
 
-import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha2';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { argon2id } from 'hash-wasm';
 import { mnemonicToEntropy, entropyToMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 
-// Dynamic import for argon2id to handle both browser and Node.js environments
-let loadArgon2idWasm: (() => Promise<(params: {
-  password: Uint8Array;
-  salt: Uint8Array;
-  parallelism: number;
-  passes: number;
-  memorySize: number;
-  tagLength: number;
-}) => Uint8Array>) | null = null;
-
-// Initialize the loader based on environment
-async function initArgon2idLoader() {
-  if (loadArgon2idWasm) return loadArgon2idWasm;
-  
-  // Check if we're in Node.js environment
-  if (typeof process !== 'undefined' && process.versions && process.versions.node) {
-    // Node.js environment - use fs to load WASM files
-    try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const { fileURLToPath } = await import('url');
-      const setupWasm = (await import('argon2id/lib/setup.js')).default;
-      
-      // Dynamically resolve argon2id package location using import.meta.resolve()
-      // This works in all monorepo configurations (npm workspaces, yarn PnP, pnpm)
-      // by letting Node.js resolve the package path instead of assuming a structure
-      let argon2idPath: string;
-      
-      try {
-        // Try import.meta.resolve() first (Node.js 20.6+)
-        const argon2idPackageUrl = import.meta.resolve('argon2id');
-        const argon2idPackagePath = fileURLToPath(argon2idPackageUrl);
-        argon2idPath = path.dirname(argon2idPackagePath);
-      } catch (resolveError) {
-        // Fallback: Use require.resolve if import.meta.resolve is not available
-        // This handles older Node.js versions and different module systems
-        try {
-          const argon2idMainPath = require.resolve('argon2id');
-          argon2idPath = path.dirname(argon2idMainPath);
-        } catch (requireError) {
-          throw new Error(
-            'Failed to resolve argon2id package location. ' +
-            'Ensure argon2id is installed and accessible. ' +
-            `import.meta.resolve error: ${resolveError instanceof Error ? resolveError.message : 'unknown'}; ` +
-            `require.resolve error: ${requireError instanceof Error ? requireError.message : 'unknown'}`
-          );
-        }
-      }
-      
-      const simdPath = path.join(argon2idPath, 'dist/simd.wasm');
-      const nonSimdPath = path.join(argon2idPath, 'dist/no-simd.wasm');
-      
-      loadArgon2idWasm = () => setupWasm(
-        (importObject: WebAssembly.Imports) => WebAssembly.instantiate(fs.readFileSync(simdPath), importObject),
-        (importObject: WebAssembly.Imports) => WebAssembly.instantiate(fs.readFileSync(nonSimdPath), importObject)
-      );
-    } catch (error) {
-      throw new Error(`Failed to initialize Argon2id for Node.js: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  } else {
-    // Browser environment - use default loader
-    const defaultLoader = (await import('argon2id')).default;
-    loadArgon2idWasm = defaultLoader;
-  }
-  
-  return loadArgon2idWasm;
-}
-
 /**
- * Argon2id parameters for vault master key derivation
- * - Memory: 64MB (65536 KB)
- * - Iterations: 3
+ * Argon2id parameters for vault master key derivation (RFC 9106).
+ * - Memory: 64 MiB (65536 KiB)
+ * - Iterations (time cost): 3
  * - Parallelism: 4
- * - Hash length: 32 bytes (256 bits)
+ * - Output: 32 bytes (256 bits)
+ *
+ * Uses hash-wasm's WASM Argon2id (WASM inlined as base64 → bundles for the browser
+ * with no plugins and no Node fs). Output is identical to any conformant Argon2id
+ * implementation for the same parameters.
  */
-const ARGON2_PARAMS = {
-  memorySize: 65536, // 64MB in KB
-  passes: 3,
-  parallelism: 4,
-  tagLength: 32, // 256 bits output
-};
-
-/**
- * Cached Argon2id WASM instance
- * Initialized on first use to avoid repeated WASM loading
- */
-let argon2idInstance: ((params: {
-  password: Uint8Array;
-  salt: Uint8Array;
-  parallelism: number;
-  passes: number;
-  memorySize: number;
-  tagLength: number;
-}) => Uint8Array) | null = null;
-
-/**
- * Loads and caches the Argon2id WASM instance
- * @returns Promise<Argon2id function>
- */
-async function getArgon2id() {
-  if (!argon2idInstance) {
-    const loader = await initArgon2idLoader();
-    argon2idInstance = await loader();
-  }
-  return argon2idInstance;
-}
+const ARGON2_PARAMS = { parallelism: 4, iterations: 3, memorySize: 65536, hashLength: 32 } as const;
 
 /**
  * HKDF fixed salts for defense-in-depth domain separation
- * 
+ *
  * These salts provide an additional layer of cryptographic separation beyond
  * the context strings (info parameter). While RFC 5869 allows optional salts,
  * using fixed versioned salts provides:
- * 
+ *
  * 1. Defense-in-depth: Two independent layers of domain separation
  * 2. Future-proofing: Version suffix allows salt rotation if needed
  * 3. Best practice: Conservative cryptographic approach
- * 
+ *
  * Design decision: Fixed salts (not random) because:
  * - Deterministic key derivation is required (same master key → same derived keys)
  * - Salts don't need to be secret, just unique per key type
@@ -148,7 +55,7 @@ const HKDF_SALTS = {
 
 /**
  * HKDF context strings for deriving different encryption keys
- * 
+ *
  * These provide the primary domain separation (via the info parameter).
  * Combined with HKDF_SALTS, this provides two independent layers of separation.
  */
@@ -172,14 +79,14 @@ const HKDF_CONTEXTS = {
 
 /**
  * Derives a 256-bit vault master key from a vault password and salt using Argon2id.
- * 
+ *
  * This function uses memory-hard key derivation to protect against brute-force attacks.
  * The same password and salt will always produce the same master key (deterministic).
- * 
+ *
  * @param password - The vault password (string)
  * @param salt - The vault salt (Uint8Array, 16 bytes minimum)
  * @returns Promise<Uint8Array> - The 256-bit (32-byte) vault master key
- * 
+ *
  * @example
  * const password = 'my-secure-vault-password';
  * const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -198,20 +105,9 @@ export async function deriveVaultMasterKey(
   }
 
   try {
-    // Load Argon2id WASM instance (cached after first load)
-    const argon2id = await getArgon2id();
-    
-    // Convert password string to Uint8Array
-    const passwordBytes = new TextEncoder().encode(password);
-    
-    // Derive vault master key using Argon2id
-    const hash = argon2id({
-      password: passwordBytes,
-      salt,
-      ...ARGON2_PARAMS,
-    });
-
-    return hash;
+    // Argon2id (RFC 9106) via hash-wasm. hash-wasm UTF-8-encodes a string password,
+    // matching the previous TextEncoder().encode(password) behavior byte-for-byte.
+    return await argon2id({ password, salt, ...ARGON2_PARAMS, outputType: 'binary' });
   } catch (error) {
     throw new Error(`Failed to derive vault master key: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
@@ -235,14 +131,14 @@ export interface DerivedKeys {
 
 /**
  * Derives multiple encryption keys from the vault master key using HKDF-SHA256.
- * 
+ *
  * Each key is derived with both a unique salt and context string for defense-in-depth
  * domain separation. This provides two independent layers of cryptographic separation.
  * All derived keys are 256 bits (32 bytes) for use with ChaCha20-Poly1305.
- * 
+ *
  * @param vaultMasterKey - The 256-bit vault master key (from deriveVaultMasterKey)
  * @returns DerivedKeys - Object containing all derived encryption keys
- * 
+ *
  * @example
  * const masterKey = await deriveVaultMasterKey(password, salt);
  * const keys = deriveKeys(masterKey);
@@ -329,18 +225,18 @@ export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
 
 /**
  * Generates a BIP39 mnemonic recovery key from the vault master key.
- * 
+ *
  * The recovery key is a 24-word mnemonic phrase that encodes the FULL 256-bit
  * vault master key. This enables complete offline vault recovery without requiring
  * the vault salt from the server. The user can recover their vault with ONLY
  * this 24-word phrase.
- * 
+ *
  * SECURITY: This should be displayed to the user ONCE during vault creation with
  * instructions to store it securely offline (paper backup, password manager, etc.).
- * 
+ *
  * @param vaultMasterKey - The 256-bit vault master key
  * @returns string - A 24-word BIP39 mnemonic phrase
- * 
+ *
  * @example
  * const masterKey = await deriveVaultMasterKey(password, salt);
  * const recoveryKey = generateRecoveryKey(masterKey);
@@ -364,24 +260,24 @@ export function generateRecoveryKey(vaultMasterKey: Uint8Array): string {
 
 /**
  * Validates a recovery key and recovers the full vault master key from it.
- * 
+ *
  * This function is used during vault password reset. The user provides their
  * recovery key (24-word mnemonic), and this function validates it and returns
  * the complete 256-bit vault master key.
- * 
+ *
  * SECURITY: This enables complete offline vault recovery. The user does NOT need
  * the vault salt from the server - the 24-word phrase contains everything needed
  * to recover full vault access.
- * 
+ *
  * After recovery, the user can:
  * 1. Use the recovered master key directly to decrypt their vault
  * 2. Set a new vault password and derive a new vault salt
  * 3. Re-encrypt the vault with the new password (optional)
- * 
+ *
  * @param recoveryKey - The 24-word BIP39 mnemonic phrase
  * @returns Uint8Array - The complete 256-bit vault master key (32 bytes)
  * @throws Error if the recovery key is invalid
- * 
+ *
  * @example
  * const recoveryKey = 'word1 word2 word3 ... word24';
  * const recoveredMasterKey = validateRecoveryKey(recoveryKey);
@@ -401,11 +297,11 @@ export function validateRecoveryKey(recoveryKey: string): Uint8Array {
   try {
     // Convert mnemonic back to full 256-bit master key
     const masterKey = mnemonicToEntropy(recoveryKey, wordlist);
-    
+
     if (masterKey.length !== 32) {
       throw new Error('Recovery key must be 24 words (256 bits)');
     }
-    
+
     return masterKey;
   } catch (error) {
     throw new Error(`Failed to validate recovery key: ${error instanceof Error ? error.message : 'Unknown error'}`);
