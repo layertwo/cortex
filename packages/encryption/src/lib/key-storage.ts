@@ -101,7 +101,7 @@ interface StoredKeyData {
  * Interface for keys to be stored
  */
 export interface KeysToStore {
-  dataEncryptionKey: Uint8Array;
+  keyEncryptionKey: Uint8Array;
   metadataEncryptionKey: Uint8Array;
   shareKeyDerivationKey: Uint8Array;
   notesEncryptionKey: Uint8Array;
@@ -1060,7 +1060,7 @@ export async function clearSaltHmacRecord(
  */
 function serializeKeys(keys: KeysToStore): string {
   const serializable: Record<string, unknown> = {
-    dataEncryptionKey: Array.from(keys.dataEncryptionKey),
+    keyEncryptionKey: Array.from(keys.keyEncryptionKey),
     metadataEncryptionKey: Array.from(keys.metadataEncryptionKey),
     shareKeyDerivationKey: Array.from(keys.shareKeyDerivationKey),
     notesEncryptionKey: Array.from(keys.notesEncryptionKey),
@@ -1083,7 +1083,7 @@ function deserializeKeys(json: string): KeysToStore {
   const parsed = JSON.parse(json);
 
   const result: KeysToStore = {
-    dataEncryptionKey: new Uint8Array(parsed.dataEncryptionKey),
+    keyEncryptionKey: new Uint8Array(parsed.keyEncryptionKey),
     metadataEncryptionKey: new Uint8Array(parsed.metadataEncryptionKey),
     shareKeyDerivationKey: new Uint8Array(parsed.shareKeyDerivationKey),
     notesEncryptionKey: new Uint8Array(parsed.notesEncryptionKey),

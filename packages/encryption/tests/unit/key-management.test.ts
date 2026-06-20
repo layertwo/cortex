@@ -27,8 +27,8 @@ describe('Key Management', () => {
 
       const keys = deriveKeys(masterKey);
 
-      expect(keys.dataEncryptionKey).toBeInstanceOf(Uint8Array);
-      expect(keys.dataEncryptionKey.length).toBe(32);
+      expect(keys.keyEncryptionKey).toBeInstanceOf(Uint8Array);
+      expect(keys.keyEncryptionKey.length).toBe(32);
       expect(keys.metadataEncryptionKey).toBeInstanceOf(Uint8Array);
       expect(keys.metadataEncryptionKey.length).toBe(32);
       expect(keys.shareKeyDerivationKey).toBeInstanceOf(Uint8Array);
@@ -52,7 +52,7 @@ describe('Key Management', () => {
 
       // All keys should be different from each other
       const keyArray = [
-        keys.dataEncryptionKey,
+        keys.keyEncryptionKey,
         keys.metadataEncryptionKey,
         keys.shareKeyDerivationKey,
         keys.notesEncryptionKey,
@@ -75,7 +75,7 @@ describe('Key Management', () => {
       const keys1 = deriveKeys(masterKey);
       const keys2 = deriveKeys(masterKey);
 
-      expect(keys1.dataEncryptionKey).toEqual(keys2.dataEncryptionKey);
+      expect(keys1.keyEncryptionKey).toEqual(keys2.keyEncryptionKey);
       expect(keys1.metadataEncryptionKey).toEqual(keys2.metadataEncryptionKey);
       expect(keys1.shareKeyDerivationKey).toEqual(keys2.shareKeyDerivationKey);
       expect(keys1.notesEncryptionKey).toEqual(keys2.notesEncryptionKey);
@@ -100,7 +100,7 @@ describe('Key Management', () => {
       expect(keys.saltHmacKey).toHaveLength(32);
 
       const others = [
-        keys.dataEncryptionKey,
+        keys.keyEncryptionKey,
         keys.metadataEncryptionKey,
         keys.shareKeyDerivationKey,
         keys.notesEncryptionKey,

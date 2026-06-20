@@ -180,7 +180,7 @@ Object.defineProperty(global, 'sessionStorage', {
 // Helper to create test keys
 function createTestKeys(): KeysToStore {
   return {
-    dataEncryptionKey: new Uint8Array(32).fill(1),
+    keyEncryptionKey: new Uint8Array(32).fill(1),
     metadataEncryptionKey: new Uint8Array(32).fill(2),
     shareKeyDerivationKey: new Uint8Array(32).fill(3),
     notesEncryptionKey: new Uint8Array(32).fill(4),
@@ -273,7 +273,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       const retrieved = await retrieveKeys('vault-123', config);
       
       expect(retrieved).not.toBeNull();
-      expect(retrieved!.dataEncryptionKey).toEqual(keys.dataEncryptionKey);
+      expect(retrieved!.keyEncryptionKey).toEqual(keys.keyEncryptionKey);
       expect(retrieved!.metadataEncryptionKey).toEqual(keys.metadataEncryptionKey);
     });
 

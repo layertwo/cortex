@@ -226,7 +226,7 @@ Object.defineProperty(global, 'localStorage', {
 // Helper to create test keys
 function createTestKeys(seed: number = 1): KeysToStore {
   return {
-    dataEncryptionKey: new Uint8Array(32).fill(seed),
+    keyEncryptionKey: new Uint8Array(32).fill(seed),
     metadataEncryptionKey: new Uint8Array(32).fill(seed + 1),
     shareKeyDerivationKey: new Uint8Array(32).fill(seed + 2),
     notesEncryptionKey: new Uint8Array(32).fill(seed + 3),
