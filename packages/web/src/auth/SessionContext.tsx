@@ -1,5 +1,16 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
 import { signUp, confirmSignUp, signIn, signOut, getCurrentUser } from 'aws-amplify/auth';
+import {
+  deriveVaultMasterKey,
+  deriveKeys,
+  generateRecoveryKey,
+  storeKeys,
+  clearKeys,
+} from '@cortex/encryption';
+import { createVault, getVaultSalt } from '../api/client';
+import { createVerifier, checkVerifier, saveVerifier, loadVerifier } from '../vault/verifier';
+
+const VAULT_ID_KEY = 'cortex_vault_id';
 
 export type SessionStatus = 'loading' | 'signedOut' | 'signedInVaultLocked' | 'unlocked';
 
@@ -39,16 +50,39 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    const vaultId = localStorage.getItem(VAULT_ID_KEY);
+    if (vaultId) await clearKeys(vaultId);
     await signOut();
     setStatus('signedOut');
   }, []);
 
-  // Replaced in Task 5 — throw so they are never silently no-ops.
-  const setupVault = useCallback(async (_vaultPassword: string): Promise<string> => {
-    throw new Error('setupVault not implemented yet (Task 5)');
+  const setupVault = useCallback(async (vaultPassword: string): Promise<string> => {
+    const { vaultId, vaultSalt } = await createVault();
+    localStorage.setItem(VAULT_ID_KEY, vaultId);
+    const master = await deriveVaultMasterKey(vaultPassword, vaultSalt);
+    const keys = deriveKeys(master);
+    saveVerifier(vaultId, await createVerifier(keys.metadataEncryptionKey));
+    const recovery = generateRecoveryKey(master);
+    await storeKeys(vaultId, keys);
+    setStatus('unlocked');
+    return recovery;
   }, []);
-  const unlockVault = useCallback(async (_vaultPassword: string) => {
-    throw new Error('unlockVault not implemented yet (Task 5)');
+
+  const unlockVault = useCallback(async (vaultPassword: string): Promise<void> => {
+    const vaultId = localStorage.getItem(VAULT_ID_KEY);
+    if (!vaultId) throw new Error('No vault on this device — set one up first');
+    const salt = await getVaultSalt(vaultId);
+    const master = await deriveVaultMasterKey(vaultPassword, salt);
+    const keys = deriveKeys(master);
+    const verifier = loadVerifier(vaultId);
+    // Missing verifier is a hard failure: unlocking without it would silently accept a
+    // wrong password and store keys that decrypt nothing.
+    if (!verifier) throw new Error('Vault verifier missing on this device — re-run setup');
+    if (!checkVerifier(verifier, keys.metadataEncryptionKey)) {
+      throw new Error('Incorrect vault password');
+    }
+    await storeKeys(vaultId, keys);
+    setStatus('unlocked');
   }, []);
 
   const value: SessionValue = {
