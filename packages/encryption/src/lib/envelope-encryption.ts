@@ -13,9 +13,9 @@
  * Requirements: 28.1–28.5, 29.2, 29.3
  */
 
-import { chacha20poly1305 } from '@noble/ciphers/chacha';
-import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha2';
+import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 const WRAPPED_DEK_SIZE = 65;
 const WRAPPED_DEK_WITH_HMAC_SIZE = 97;

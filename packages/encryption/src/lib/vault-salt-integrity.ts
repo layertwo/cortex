@@ -12,8 +12,8 @@
  * Spec: .kiro/specs/cortex/tasks.md task 10.2, requirements 22.6-22.12.
  */
 
-import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha2';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import {
   storeSaltHmacRecord,
   retrieveSaltHmacRecord,

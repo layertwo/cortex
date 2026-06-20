@@ -5,7 +5,7 @@
  * Have I Been Pwned API with k-anonymity model.
  */
 
-import { sha1 } from '@noble/hashes/legacy';
+import { sha1 } from '@noble/hashes/legacy.js';
 
 /**
  * Password validation result

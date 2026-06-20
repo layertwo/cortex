@@ -17,9 +17,9 @@
  *   [version(1)][salt(16)][wrappedDek(65)][hmac(32)] = 114 bytes -> ~152 chars base64url
  */
 
-import { hkdf } from '@noble/hashes/hkdf';
-import { sha256 } from '@noble/hashes/sha2';
-import { hmac } from '@noble/hashes/hmac';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { hmac } from '@noble/hashes/hmac.js';
 
 // Dynamic import for argon2id to handle both browser and Node.js environments
 let loadArgon2idWasm: (() => Promise<(params: {

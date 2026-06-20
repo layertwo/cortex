@@ -9,9 +9,9 @@
  * Requirements: 1.1, 2.1, 9.1, 11.2, 11.4
  */
 
-import { chacha20poly1305 } from '@noble/ciphers/chacha';
-import { hmac } from '@noble/hashes/hmac';
-import { sha256 } from '@noble/hashes/sha2';
+import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 // Use Web Crypto API for random bytes generation
 const getRandomBytes = async (size: number): Promise<Uint8Array> => {
