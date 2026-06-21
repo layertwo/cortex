@@ -41,3 +41,46 @@ describe('chunk encrypt/decrypt', () => {
     expect(() => encryptChunk(new Uint8Array(1), params({ dek: new Uint8Array(16) }))).toThrow('DEK');
   });
 });
+
+describe('chunk tamper rejection (server is untrusted)', () => {
+  const plaintext = new TextEncoder().encode('a sensitive chunk of bytes');
+
+  test('reorder: a chunk decrypted at the wrong index fails', () => {
+    const ct = encryptChunk(plaintext, params({ index: 5 }));
+    expect(() => decryptChunk(ct, params({ index: 9 }))).toThrow('authentication failed');
+  });
+
+  test('truncate: a non-final chunk read as final fails', () => {
+    const ct = encryptChunk(plaintext, params({ index: 2, isFinal: false }));
+    expect(() => decryptChunk(ct, params({ index: 2, isFinal: true }))).toThrow('authentication failed');
+  });
+
+  test('splice: a chunk from another file (contentId) fails', () => {
+    const ct = encryptChunk(plaintext, params({ contentId: 'file-A' }));
+    expect(() => decryptChunk(ct, params({ contentId: 'file-B' }))).toThrow('authentication failed');
+  });
+
+  test('wrong key: a different DEK fails', () => {
+    const ct = encryptChunk(plaintext, params());
+    expect(() => decryptChunk(ct, params({ dek: new Uint8Array(32).fill(6) }))).toThrow('authentication failed');
+  });
+
+  test('wrong noncePrefix (header tamper) fails', () => {
+    const ct = encryptChunk(plaintext, params());
+    expect(() => decryptChunk(ct, params({ noncePrefix: new Uint8Array(8).fill(8) }))).toThrow('authentication failed');
+  });
+
+  test('header tamper: a different chunkSize in chunk 0 AAD fails', () => {
+    // chunkSize lives in the AAD (chunk 0) but NOT the nonce — this proves the
+    // header-binding hardening, not just the nonce path.
+    const ct = encryptChunk(plaintext, params({ index: 0, header: buildStreamHeader(8 * 1024 * 1024, new Uint8Array(8).fill(7)) }));
+    const tampered = buildStreamHeader(4 * 1024 * 1024, new Uint8Array(8).fill(7));
+    expect(() => decryptChunk(ct, params({ index: 0, header: tampered }))).toThrow('authentication failed');
+  });
+
+  test('bit-flip in ciphertext fails', () => {
+    const ct = encryptChunk(plaintext, params());
+    ct[0] ^= 0x01;
+    expect(() => decryptChunk(ct, params())).toThrow('authentication failed');
+  });
+});
