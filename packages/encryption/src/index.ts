@@ -64,6 +64,22 @@ export {
   type DekUnwrapErrorCode,
 } from './lib/envelope-encryption';
 
+// Export streaming encryption functions
+export {
+  STREAM_VERSION,
+  NONCE_PREFIX_SIZE,
+  STREAM_HEADER_SIZE,
+  DEFAULT_CHUNK_SIZE,
+  generateNoncePrefix,
+  buildStreamHeader,
+  parseStreamHeader,
+  deriveChunkNonce,
+  buildChunkAad,
+  encryptChunk,
+  decryptChunk,
+  type ChunkParams,
+} from './lib/streaming-encryption';
+
 // Export share encryption functions
 export {
   deriveShareKeys,
