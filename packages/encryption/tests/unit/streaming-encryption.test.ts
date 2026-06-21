@@ -3,6 +3,9 @@ import {
   STREAM_VERSION,
   buildStreamHeader,
   parseStreamHeader,
+  generateNoncePrefix,
+  deriveChunkNonce,
+  NONCE_PREFIX_SIZE,
 } from '../../src/lib/streaming-encryption';
 
 describe('stream header codec', () => {
@@ -35,5 +38,30 @@ describe('stream header codec', () => {
     const header = buildStreamHeader(1024, prefix);
     header[0] = 0x99;
     expect(() => parseStreamHeader(header)).toThrow('version');
+  });
+});
+
+describe('chunk nonce derivation', () => {
+  const prefix = new Uint8Array([10, 11, 12, 13, 14, 15, 16, 17]);
+
+  it('generates an 8-byte prefix', async () => {
+    expect((await generateNoncePrefix()).length).toBe(NONCE_PREFIX_SIZE);
+  });
+
+  it('produces a 12-byte nonce = prefix ‖ uint32_be(index)', () => {
+    const nonce = deriveChunkNonce(prefix, 0x00000005);
+    expect(nonce.length).toBe(12);
+    expect(Array.from(nonce.slice(0, 8))).toEqual(Array.from(prefix));
+    expect(Array.from(nonce.slice(8))).toEqual([0x00, 0x00, 0x00, 0x05]);
+  });
+
+  it('is distinct per index', () => {
+    expect(deriveChunkNonce(prefix, 1)).not.toEqual(deriveChunkNonce(prefix, 2));
+  });
+
+  it('rejects a wrong-size prefix and out-of-range index', () => {
+    expect(() => deriveChunkNonce(new Uint8Array(4), 0)).toThrow('nonce prefix');
+    expect(() => deriveChunkNonce(prefix, -1)).toThrow('index');
+    expect(() => deriveChunkNonce(prefix, 0x1_0000_0000)).toThrow('index');
   });
 });

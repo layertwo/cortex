@@ -60,3 +60,20 @@ export function parseStreamHeader(
   const noncePrefix = header.slice(5, 5 + NONCE_PREFIX_SIZE);
   return { version, chunkSize, noncePrefix };
 }
+
+export async function generateNoncePrefix(): Promise<Uint8Array> {
+  return getRandomBytes(NONCE_PREFIX_SIZE);
+}
+
+export function deriveChunkNonce(noncePrefix: Uint8Array, index: number): Uint8Array {
+  if (noncePrefix.length !== NONCE_PREFIX_SIZE) {
+    throw new Error(`Invalid nonce prefix size: expected ${NONCE_PREFIX_SIZE}, got ${noncePrefix.length}`);
+  }
+  if (!Number.isInteger(index) || index < 0 || index > 0xffffffff) {
+    throw new Error(`Chunk index out of range: ${index}`);
+  }
+  const nonce = new Uint8Array(NONCE_SIZE); // 12
+  nonce.set(noncePrefix, 0);
+  dv(nonce).setUint32(NONCE_PREFIX_SIZE, index, false);
+  return nonce;
+}
