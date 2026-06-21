@@ -65,3 +65,27 @@ describe('chunk nonce derivation', () => {
     expect(() => deriveChunkNonce(prefix, 0x1_0000_0000)).toThrow('index');
   });
 });
+
+import { buildChunkAad, buildStreamHeader as hdr } from '../../src/lib/streaming-encryption';
+
+describe('chunk AAD builder', () => {
+  const header = hdr(8 * 1024 * 1024, new Uint8Array(8).fill(9));
+  const id = 'abc';
+  const idBytes = new TextEncoder().encode(id);
+
+  it('binds contentId ‖ index ‖ isFinal for a non-first chunk', () => {
+    const aad = buildChunkAad(id, 3, false, header);
+    expect(Array.from(aad.slice(0, idBytes.length))).toEqual(Array.from(idBytes));
+    expect(Array.from(aad.slice(idBytes.length, idBytes.length + 4))).toEqual([0, 0, 0, 3]);
+    expect(aad[aad.length - 1]).toBe(0x00);
+    // no header prepended for index > 0
+    expect(aad.length).toBe(idBytes.length + 4 + 1);
+  });
+
+  it('prepends the header for chunk 0 and sets the final flag', () => {
+    const aad = buildChunkAad(id, 0, true, header);
+    expect(Array.from(aad.slice(0, header.length))).toEqual(Array.from(header));
+    expect(aad[aad.length - 1]).toBe(0x01);
+    expect(aad.length).toBe(header.length + idBytes.length + 4 + 1);
+  });
+});

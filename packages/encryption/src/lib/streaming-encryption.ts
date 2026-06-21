@@ -77,3 +77,23 @@ export function deriveChunkNonce(noncePrefix: Uint8Array, index: number): Uint8A
   dv(nonce).setUint32(NONCE_PREFIX_SIZE, index, false);
   return nonce;
 }
+
+export function buildChunkAad(
+  contentId: string,
+  index: number,
+  isFinal: boolean,
+  header: Uint8Array,
+): Uint8Array {
+  const idBytes = new TextEncoder().encode(contentId);
+  const prefix = index === 0 ? header : new Uint8Array(0);
+  const aad = new Uint8Array(prefix.length + idBytes.length + 4 + 1);
+  let o = 0;
+  aad.set(prefix, o);
+  o += prefix.length;
+  aad.set(idBytes, o);
+  o += idBytes.length;
+  dv(aad).setUint32(o, index, false);
+  o += 4;
+  aad[o] = isFinal ? 0x01 : 0x00;
+  return aad;
+}
