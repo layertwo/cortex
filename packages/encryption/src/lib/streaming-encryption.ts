@@ -97,3 +97,37 @@ export function buildChunkAad(
   aad[o] = isFinal ? 0x01 : 0x00;
   return aad;
 }
+
+export interface ChunkParams {
+  dek: Uint8Array;
+  noncePrefix: Uint8Array;
+  index: number;
+  isFinal: boolean;
+  contentId: string;
+  header: Uint8Array;
+}
+
+export function encryptChunk(plaintext: Uint8Array, p: ChunkParams): Uint8Array {
+  if (p.dek.length !== KEY_SIZE) {
+    throw new Error(`Invalid DEK size: expected ${KEY_SIZE}, got ${p.dek.length}`);
+  }
+  const nonce = deriveChunkNonce(p.noncePrefix, p.index);
+  const aad = buildChunkAad(p.contentId, p.index, p.isFinal, p.header);
+  return chacha20poly1305(p.dek, nonce, aad).encrypt(plaintext); // ciphertext ‖ tag(16)
+}
+
+export function decryptChunk(ciphertext: Uint8Array, p: ChunkParams): Uint8Array {
+  if (p.dek.length !== KEY_SIZE) {
+    throw new Error(`Invalid DEK size: expected ${KEY_SIZE}, got ${p.dek.length}`);
+  }
+  if (ciphertext.length < TAG_SIZE) {
+    throw new Error(`Chunk too short: ${ciphertext.length} < ${TAG_SIZE}`);
+  }
+  const nonce = deriveChunkNonce(p.noncePrefix, p.index);
+  const aad = buildChunkAad(p.contentId, p.index, p.isFinal, p.header);
+  try {
+    return chacha20poly1305(p.dek, nonce, aad).decrypt(ciphertext);
+  } catch {
+    throw new Error('Chunk decryption failed: authentication failed');
+  }
+}
