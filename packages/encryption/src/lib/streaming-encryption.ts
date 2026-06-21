@@ -86,6 +86,12 @@ export function buildChunkAad(
 ): Uint8Array {
   const idBytes = new TextEncoder().encode(contentId);
   const prefix = index === 0 ? header : new Uint8Array(0);
+  // No length-prefix before contentId is needed for two independent reasons:
+  // (1) Any shift of the contentId/index byte boundary changes `index`, which is
+  //     also bound into the per-chunk nonce — an ambiguous framing corrupts the
+  //     nonce and fails decryption independently of the MAC check.
+  // (2) ChaCha20-Poly1305 (RFC 8439) length-encodes the AAD inside the Poly1305
+  //     MAC, so two AADs of different lengths can never produce the same tag.
   const aad = new Uint8Array(prefix.length + idBytes.length + 4 + 1);
   let o = 0;
   aad.set(prefix, o);
