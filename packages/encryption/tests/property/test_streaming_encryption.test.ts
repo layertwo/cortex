@@ -65,7 +65,7 @@ describe('chunk tamper rejection (server is untrusted)', () => {
     expect(() => decryptChunk(ct, params({ dek: new Uint8Array(32).fill(6) }))).toThrow('authentication failed');
   });
 
-  test('wrong noncePrefix (header tamper) fails', () => {
+  test('wrong noncePrefix fails', () => {
     const ct = encryptChunk(plaintext, params());
     expect(() => decryptChunk(ct, params({ noncePrefix: new Uint8Array(8).fill(8) }))).toThrow('authentication failed');
   });
