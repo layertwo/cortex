@@ -27,6 +27,9 @@ rm -rf "$GENERATED_DIR"
 mkdir -p "$GENERATED_DIR"
 touch "$GENERATED_DIR/__init__.py"
 
+# --type-mappings string+byte=binary: emit pydantic Base64Bytes for Smithy Blob
+# (raw bytes Python-side, standard base64 on the JSON wire) instead of the default
+# Base64Str, which forces UTF-8 on decode and can't carry binary (salts/ciphertext).
 echo "==> codegen: $OPENAPI -> $GENERATED_DIR/models.py"
 (cd "$REPO_ROOT/lambda" && uv run --quiet datamodel-codegen \
   --input "$OPENAPI" \
@@ -34,6 +37,7 @@ echo "==> codegen: $OPENAPI -> $GENERATED_DIR/models.py"
   --output "$GENERATED_DIR/models.py" \
   --output-model-type pydantic_v2.BaseModel \
   --base-class src.shared._codegen_base.GeneratedBaseModel \
+  --type-mappings string+byte=binary \
   --snake-case-field \
   --use-default \
   --use-annotated \

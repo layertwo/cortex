@@ -6,6 +6,9 @@ build/
 *.js.map
 !jest.config.js
 
+# Generated Smithy TypeScript client (produced by `npm run codegen:client`)
+packages/client/
+
 # Dependencies
 node_modules/
 .pnp

@@ -47,6 +47,7 @@ source = ["src"]
 omit = [
     "*/tests/*",
     "*/test_*",
+    "*/generated/*",
 ]
 branch = true
 parallel = true
@@ -120,3 +121,4 @@ exclude = [
     ".mypy_cache",
     "htmlcov",
 ]
+plugins = ["pydantic.mypy"]

@@ -4,11 +4,15 @@ Item management route handlers for Cortex API.
 This module implements item-related endpoints for all item types
 (MEDIA, NOTE, TASK, EVENT) including upload, download, listing, and deletion.
 
+Request/response shapes are the Smithy-generated models
+(src.shared.generated.models): camelCase wire, epoch timestamps, and Base64Bytes
+blob fields (raw bytes Python-side, base64 on the wire). DynamoDB blobs are
+base64-encoded with `_encode_binary` when building responses.
+
 Requirements: 1.4, 1.5, 2.3, 4.1, 5.1, 7.1, 7.2, 10.1, 10.2, 24.1, 24.2
 """
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+import time
 
 from fastapi import APIRouter, Depends, Query
 
@@ -17,16 +21,49 @@ from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import BadRequestError, NotFoundError
-from src.shared.logger import get_logger
-from src.shared.models import (
-    CompleteUploadRequest,
-    CreateItemRequest,
-    InitiateUploadRequest,
+from src.shared.generated.models import (
+    CompleteItemUploadResponseContent,
+    CreateItemRequestContent,
+    CreateItemResponseContent,
+    DeleteItemResponseContent,
+    GetItemDownloadUrlResponseContent,
+    GetItemResponseContent,
+    InitiateItemUploadRequestContent,
+    InitiateItemUploadResponseContent,
+    ItemData,
     ItemType,
+    ListItemsResponseContent,
 )
-from src.shared.util import _decode_binary
+from src.shared.logger import get_logger
+from src.shared.util import _encode_binary
 
 logger = get_logger("item_routes")
+
+
+def _item_fields(item: dict) -> dict:
+    """Map a DynamoDB item dict to the generated item-model kwargs.
+
+    Blob fields are base64-encoded (Base64Bytes decodes them back to raw bytes,
+    then re-encodes on the wire); timestamps become epoch floats. Shared by the
+    ItemData (list) and GetItemResponseContent (single) shapes, which carry the
+    same fields.
+    """
+    tags = item.get("encrypted_tags")
+    return {
+        "item_id": item["item_id"],
+        "vault_id": item["vault_id"],
+        "item_type": item["item_type"],
+        "encrypted_content": _encode_binary(item.get("encrypted_content")),
+        "encrypted_metadata": _encode_binary(item["encrypted_metadata"]),
+        "encrypted_tags": [_encode_binary(t) for t in tags] if tags else None,
+        "encrypted_date_bucket": _encode_binary(item.get("encrypted_date_bucket")),
+        "time_bucket": item.get("time_bucket"),
+        "size_bytes": int(item["size_bytes"]) if item.get("size_bytes") is not None else None,
+        "s3_key": item.get("s3_key"),
+        "created_at": float(item["created_at"]),
+        "updated_at": float(item["updated_at"]),
+        "version": int(item.get("version", 1)),
+    }
 
 
 class CreateItemRoute(BaseRoute):
@@ -37,20 +74,19 @@ class CreateItemRoute(BaseRoute):
         self.item_service = item_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/items")
+        @app.post("/v1/items", response_model=CreateItemResponseContent)
         def handle(
-            request: CreateItemRequest,
+            request: CreateItemRequestContent,
             user_id: str = Depends(get_current_user),
         ):
             """
             Create item (NOTE, TASK, EVENT with inline content).
 
-            This endpoint stores encrypted content directly in DynamoDB
-            for non-media items. All sensitive data is encrypted client-side.
+            Stores encrypted content directly in DynamoDB for non-media items.
+            All sensitive data is encrypted client-side.
 
             Requirements: 1.4, 2.1, 2.2, 24.1, 24.2, 24.3
             """
-            # Create item
             response = self.item_service.create_item(user_id, request)
 
             logger.info(
@@ -60,11 +96,7 @@ class CreateItemRoute(BaseRoute):
                 item_type=response.item_type,
             )
 
-            return {
-                "item_id": response.item_id,
-                "item_type": response.item_type,
-                "created_at": response.created_at.isoformat(),
-            }
+            return response
 
 
 class InitiateUploadRoute(BaseRoute):
@@ -75,20 +107,20 @@ class InitiateUploadRoute(BaseRoute):
         self.item_service = item_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/items/upload/init")
+        @app.post("/v1/items/upload/init", response_model=InitiateItemUploadResponseContent)
         def handle(
-            request: InitiateUploadRequest,
+            request: InitiateItemUploadRequestContent,
             user_id: str = Depends(get_current_user),
         ):
             """
             Initialize upload for MEDIA items, get presigned URL.
 
-            For files >100MB, initiates multipart upload. For smaller files,
-            generates a simple presigned PUT URL.
+            For files >100MB, initiates multipart upload server-side; for smaller
+            files, generates a simple presigned PUT URL. The presigned PUT is
+            signed with application/octet-stream (the real MIME is encrypted).
 
             Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2
             """
-            # Initiate upload
             response = self.item_service.initiate_upload(user_id, request)
 
             logger.info(
@@ -96,16 +128,9 @@ class InitiateUploadRoute(BaseRoute):
                 user_id=user_id,
                 item_id=response.item_id,
                 size_bytes=request.size_bytes,
-                multipart=response.upload_id is not None,
             )
 
-            return {
-                "item_id": response.item_id,
-                "upload_url": response.upload_url,
-                "expires_at": response.expires_at.isoformat(),
-                "s3_key": response.s3_key,
-                "upload_id": response.upload_id,
-            }
+            return response
 
 
 class CompleteUploadRoute(BaseRoute):
@@ -116,21 +141,23 @@ class CompleteUploadRoute(BaseRoute):
         self.item_service = item_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/items/upload/complete")
+        @app.post(
+            "/v1/items/{item_id}/upload/complete",
+            response_model=CompleteItemUploadResponseContent,
+        )
         def handle(
-            request: CompleteUploadRequest,
+            item_id: str,
             user_id: str = Depends(get_current_user),
         ):
             """
             Mark MEDIA upload complete, store metadata.
 
-            This endpoint verifies the upload succeeded and updates the item
-            status from PENDING to COMPLETE.
+            Verifies the upload succeeded and flips the item from PENDING to
+            COMPLETE. The item id comes from the path (Smithy contract).
 
             Requirements: 1.4, 2.2, 2.5, 24.2
             """
-            # Complete upload
-            response = self.item_service.complete_upload(user_id=user_id, request=request)
+            response = self.item_service.complete_upload(user_id=user_id, item_id=item_id)
 
             logger.info(
                 "Upload completed successfully",
@@ -138,10 +165,7 @@ class CompleteUploadRoute(BaseRoute):
                 item_id=response.item_id,
             )
 
-            return {
-                "item_id": response.item_id,
-                "uploaded_at": response.uploaded_at.isoformat(),
-            }
+            return response
 
 
 class ListItemsRoute(BaseRoute):
@@ -153,31 +177,29 @@ class ListItemsRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/items")
+        @app.get("/v1/items", response_model=ListItemsResponseContent)
         def handle(
-            vault_id: str = Query(..., description="Vault ID"),
-            item_type: Optional[str] = Query(None),
-            page_size: int = Query(50, ge=1, le=100),
-            next_token: Optional[str] = Query(None),
-            sort_order: str = Query("desc", pattern="^(asc|desc)$"),
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
+            item_type: str | None = Query(None, alias="itemType"),
+            page_size: int = Query(50, alias="pageSize", ge=1, le=100),
+            next_token: str | None = Query(None, alias="nextToken"),
+            sort_order: str = Query("desc", alias="sortOrder", pattern="^(asc|desc)$"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            List items (filter by type, tags, date buckets).
+            List items (filter by type), returning encrypted metadata only.
 
-            This endpoint returns encrypted metadata for all items in a vault,
-            with optional filtering by item type. The server cannot decrypt
-            the returned data.
+            The server cannot decrypt the returned data. Vault ownership is
+            verified before listing (deny by default).
 
             Requirements: 2.3, 10.1, 10.2, 24.1, 24.2
             """
-            # Validate item_type if provided
-            if item_type and item_type not in [
-                ItemType.MEDIA,
-                ItemType.NOTE,
-                ItemType.TASK,
-                ItemType.EVENT,
-            ]:
+            if item_type and item_type not in (
+                ItemType.media,
+                ItemType.note,
+                ItemType.task,
+                ItemType.event,
+            ):
                 raise BadRequestError("item_type must be MEDIA, NOTE, TASK, or EVENT")
 
             # Verify vault ownership BEFORE listing items - deny by default
@@ -190,7 +212,6 @@ class ListItemsRoute(BaseRoute):
                 )
                 raise NotFoundError("Vault not found")
 
-            # List items - vault ownership verified
             items, next_page_token = self.item_service.list_items(
                 user_id=user_id,
                 vault_id=vault_id,
@@ -199,49 +220,24 @@ class ListItemsRoute(BaseRoute):
                 next_token=next_token,
                 sort_order=sort_order,
             )
-            response_items = []
 
-            # Convert items to response format
-            for item in items:
-                response_item = {
-                    "item_id": item["item_id"],
-                    "item_type": item["item_type"],
-                    "vault_id": item["vault_id"],
-                    "user_id": item["user_id"],
-                    "encrypted_metadata": _decode_binary(item["encrypted_metadata"]),
-                    "created_at": datetime.fromtimestamp(
-                        float(item["created_at"]), tz=timezone.utc
-                    ).isoformat(),
-                    "updated_at": datetime.fromtimestamp(
-                        float(item["updated_at"]), tz=timezone.utc
-                    ).isoformat(),
-                }
-
-                # Add optional fields
-                if "encrypted_content" in item:
-                    response_item["encrypted_content"] = item["encrypted_content"]
-                if "encrypted_tags" in item:
-                    response_item["encrypted_tags"] = item["encrypted_tags"]
-                if "size_bytes" in item:
-                    response_item["size_bytes"] = item["size_bytes"]
-                if "s3_key" in item:
-                    response_item["s3_key"] = item["s3_key"]
-
-                response_items.append(response_item)
+            item_models = [ItemData(**_item_fields(item)) for item in items]
 
             logger.info(
                 "Listed items successfully",
                 user_id=user_id,
                 vault_id=vault_id,
                 item_type=item_type,
-                count=len(response_items),
+                count=len(item_models),
             )
 
-            response: dict[str, Any] = {"items": response_items}
-            if next_page_token:
-                response["next_token"] = next_page_token
-
-            return response
+            # ponytail: total_count is the page count (contract says "may be
+            # approximate"); add a real COUNT query if global totals matter.
+            return ListItemsResponseContent(
+                items=item_models,
+                next_token=next_page_token or None,
+                total_count=len(item_models),
+            )
 
 
 class GetItemRoute(BaseRoute):
@@ -253,51 +249,20 @@ class GetItemRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/items/{item_id}")
+        @app.get("/v1/items/{item_id}", response_model=GetItemResponseContent)
         def handle(
             item_id: str,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Get item metadata.
-
-            This endpoint returns encrypted metadata for a specific item.
-            The server cannot decrypt the returned data.
-
-            Args:
-                item_id: Item identifier
+            Get encrypted item metadata. The server cannot decrypt it.
 
             Requirements: 2.3, 10.1, 24.1, 24.2
             """
-            # Get item
             item = self.item_service.get_item(user_id, item_id)
 
             if item is None:
                 raise NotFoundError(f"Item {item_id} not found")
-
-            # Convert item to response format
-            response = {
-                "item_id": item["item_id"],
-                "item_type": item["item_type"],
-                "vault_id": item["vault_id"],
-                "encrypted_metadata": _decode_binary(item["encrypted_metadata"]),
-                "created_at": datetime.fromtimestamp(
-                    float(item["created_at"]), tz=timezone.utc
-                ).isoformat(),
-                "updated_at": datetime.fromtimestamp(
-                    float(item["updated_at"]), tz=timezone.utc
-                ).isoformat(),
-            }
-
-            # Add optional fields
-            if "encrypted_content" in item:
-                response["encrypted_content"] = item["encrypted_content"]
-            if "encrypted_tags" in item:
-                response["encrypted_tags"] = item["encrypted_tags"]
-            if "size_bytes" in item:
-                response["size_bytes"] = item["size_bytes"]
-            if "s3_key" in item:
-                response["s3_key"] = item["s3_key"]
 
             logger.info(
                 "Retrieved item successfully",
@@ -306,7 +271,7 @@ class GetItemRoute(BaseRoute):
                 item_type=item["item_type"],
             )
 
-            return response
+            return GetItemResponseContent(**_item_fields(item))
 
 
 class UpdateItemRoute(BaseRoute):
@@ -320,9 +285,6 @@ class UpdateItemRoute(BaseRoute):
         def handle(item_id: str):
             """
             Update item.
-
-            Args:
-                item_id: Item identifier
 
             This endpoint will be implemented in task 12.1.
             """
@@ -339,24 +301,19 @@ class DeleteItemRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.delete("/v1/items/{item_id}")
+        @app.delete("/v1/items/{item_id}", response_model=DeleteItemResponseContent)
         def handle(
             item_id: str,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Delete item.
+            Delete an item and its associated resources.
 
-            This endpoint deletes an item and its associated resources.
-            For MEDIA items, deletes both S3 object and DynamoDB metadata.
-            For other items (NOTE, TASK, EVENT), deletes DynamoDB record only.
-
-            Args:
-                item_id: Item identifier
+            For MEDIA items, deletes both S3 object and DynamoDB metadata. For
+            other items (NOTE, TASK, EVENT), deletes the DynamoDB record only.
 
             Requirements: 5.1, 24.2
             """
-            # Delete item
             self.item_service.delete_item(user_id, item_id)
 
             logger.info(
@@ -365,7 +322,10 @@ class DeleteItemRoute(BaseRoute):
                 item_id=item_id,
             )
 
-            return {"message": "Item deleted successfully", "item_id": item_id}
+            return DeleteItemResponseContent(
+                message="Item deleted successfully",
+                deleted_at=time.time(),
+            )
 
 
 class DownloadItemRoute(BaseRoute):
@@ -377,24 +337,20 @@ class DownloadItemRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/items/{item_id}/download")
+        @app.get("/v1/items/{item_id}/download", response_model=GetItemDownloadUrlResponseContent)
         def handle(
             item_id: str,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Get presigned download URL (for MEDIA items).
+            Get a presigned download URL (for MEDIA items).
 
-            This endpoint generates a time-limited presigned S3 URL for
-            downloading MEDIA items. Returns an error for non-MEDIA items.
-
-            Args:
-                item_id: Item identifier
+            Generates a time-limited presigned S3 URL. Returns an error for
+            non-MEDIA items.
 
             Requirements: 4.1, 4.3, 24.2
             """
-            # Get download URL
-            download_url, expires_at, encrypted_metadata, s3_key = (
+            download_url, expires_at, _encrypted_metadata, _s3_key = (
                 self.item_service.get_download_url(user_id, item_id)
             )
 
@@ -404,13 +360,10 @@ class DownloadItemRoute(BaseRoute):
                 item_id=item_id,
             )
 
-            return {
-                "download_url": download_url,
-                "expires_at": expires_at.isoformat(),
-                "encrypted_metadata": _decode_binary(encrypted_metadata),
-                "item_id": item_id,
-                "s3_key": s3_key,
-            }
+            return GetItemDownloadUrlResponseContent(
+                download_url=download_url,
+                expires_at=expires_at.timestamp(),
+            )
 
 
 class SearchItemsRoute(BaseRoute):

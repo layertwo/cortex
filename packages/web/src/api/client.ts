@@ -1,32 +1,36 @@
+import { CortexClient, CreateVaultCommand, GetVaultSaltCommand } from '@cortex/client';
 import { fetchAuthSession } from 'aws-amplify/auth';
-import { base64ToBytes } from '@cortex/encryption';
 import { getConfig } from '../config';
 
-export async function authHeader(): Promise<{ Authorization: string }> {
-  const session = await fetchAuthSession();
-  const jwt = session.tokens?.idToken?.toString();
-  if (!jwt) throw new Error('No Cognito session — sign in first');
-  return { Authorization: `Bearer ${jwt}` };
-}
-
-async function request(path: string, init: RequestInit = {}): Promise<any> {
+/**
+ * Build the Smithy-generated Cortex SDK client.
+ *
+ * Auth is the Cognito idToken supplied as an HTTP bearer token (the contract is
+ * @httpBearerAuth). The generated restJson1 serde honors the camelCase contract
+ * and marshals Blob fields as Uint8Array<->base64, so callers work in raw bytes
+ * — no manual casing or base64 handling here.
+ */
+function makeClient(): CortexClient {
   const { apiBaseUrl } = getConfig();
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(await authHeader()),
-    ...(init.headers ?? {}),
-  };
-  const res = await fetch(`${apiBaseUrl}${path}`, { ...init, headers });
-  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
-  return res.json();
+  return new CortexClient({
+    endpoint: apiBaseUrl,
+    token: async () => {
+      const session = await fetchAuthSession();
+      const jwt = session.tokens?.idToken?.toString();
+      if (!jwt) throw new Error('No Cognito session — sign in first');
+      return { token: jwt };
+    },
+  });
 }
 
 export async function createVault(): Promise<{ vaultId: string; vaultSalt: Uint8Array }> {
-  const body = await request('/v1/vaults', { method: 'POST', body: JSON.stringify({}) });
-  return { vaultId: body.vaultId, vaultSalt: base64ToBytes(body.vaultSalt) };
+  const out = await makeClient().send(new CreateVaultCommand({}));
+  if (!out.vaultId || !out.vaultSalt) throw new Error('createVault: incomplete response');
+  return { vaultId: out.vaultId, vaultSalt: out.vaultSalt };
 }
 
 export async function getVaultSalt(vaultId: string): Promise<Uint8Array> {
-  const body = await request(`/v1/vaults/${encodeURIComponent(vaultId)}/salt`, { method: 'GET' });
-  return base64ToBytes(body.vaultSalt);
+  const out = await makeClient().send(new GetVaultSaltCommand({ vaultId }));
+  if (!out.vaultSalt) throw new Error('getVaultSalt: missing salt');
+  return out.vaultSalt;
 }

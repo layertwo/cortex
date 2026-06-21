@@ -4,6 +4,7 @@ Unit tests for collection service layer.
 Tests verify collection CRUD operations and item-collection associations.
 """
 
+import base64
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -12,10 +13,8 @@ from botocore.stub import ANY
 
 from src.api.services.collection_service import CollectionService
 from src.shared.exceptions import NotFoundError
-from src.shared.models import (
-    AddItemToCollectionRequest,
-    CreateCollectionRequest,
-    UpdateCollectionRequest,
+from src.shared.generated.models import (
+    CreateCollectionRequestContent,
 )
 
 
@@ -30,9 +29,9 @@ class TestCreateCollection:
         vault_id = "vault-456"
         encrypted_metadata = b"encrypted-metadata"
 
-        request = CreateCollectionRequest(
+        request = CreateCollectionRequestContent(
             vault_id=vault_id,
-            encrypted_metadata=encrypted_metadata,
+            encrypted_metadata=base64.b64encode(encrypted_metadata),
         )
 
         # Stub DynamoDB put_item
@@ -48,7 +47,7 @@ class TestCreateCollection:
         response = collection_service.create_collection(user_id, request)
 
         assert response.collection_id is not None
-        assert isinstance(response.created_at, datetime)
+        assert isinstance(response.created_at, (int, float))
 
 
 class TestListCollections:
@@ -208,12 +207,6 @@ class TestUpdateCollection:
         collection_id = "col-789"
         new_metadata = b"new-metadata"
 
-        request = UpdateCollectionRequest(
-            collection_id=collection_id,
-            vault_id=vault_id,
-            encrypted_metadata=new_metadata,
-        )
-
         # Stub get_item for verification
         dynamodb_stubber.add_response(
             "get_item",
@@ -255,10 +248,15 @@ class TestUpdateCollection:
             },
         )
 
-        response = collection_service.update_collection(user_id, request)
+        response = collection_service.update_collection(
+            user_id,
+            vault_id=vault_id,
+            collection_id=collection_id,
+            encrypted_metadata=new_metadata,
+        )
 
         assert response.collection_id == collection_id
-        assert isinstance(response.updated_at, datetime)
+        assert isinstance(response.updated_at, (int, float))
 
 
 class TestDeleteCollection:
@@ -558,12 +556,6 @@ class TestAddItemToCollection:
         collection_id = "col-789"
         item_id = "item-abc"
 
-        request = AddItemToCollectionRequest(
-            collection_id=collection_id,
-            item_id=item_id,
-            vault_id=vault_id,
-        )
-
         # Stub get collection
         dynamodb_stubber.add_response(
             "get_item",
@@ -632,10 +624,12 @@ class TestAddItemToCollection:
             },
         )
 
-        response = collection_service.add_item_to_collection(user_id, request)
+        response = collection_service.add_item_to_collection(
+            user_id, vault_id=vault_id, collection_id=collection_id, item_id=item_id
+        )
 
-        assert response.collection_id == collection_id
-        assert response.item_id == item_id
+        assert response.message
+        assert isinstance(response.added_at, (int, float))
 
     def test_add_item_to_collection_idempotent(
         self,
@@ -650,12 +644,6 @@ class TestAddItemToCollection:
         vault_id = "vault-456"
         collection_id = "col-789"
         item_id = "item-abc"
-
-        request = AddItemToCollectionRequest(
-            collection_id=collection_id,
-            item_id=item_id,
-            vault_id=vault_id,
-        )
 
         # Stub get collection
         dynamodb_stubber.add_response(
@@ -713,11 +701,13 @@ class TestAddItemToCollection:
             },
         )
 
-        response = collection_service.add_item_to_collection(user_id, request)
+        response = collection_service.add_item_to_collection(
+            user_id, vault_id=vault_id, collection_id=collection_id, item_id=item_id
+        )
 
         # Should return success without incrementing count
-        assert response.collection_id == collection_id
-        assert response.item_id == item_id
+        assert response.message
+        assert isinstance(response.added_at, (int, float))
 
 
 class TestRemoveItemFromCollection:
@@ -830,14 +820,13 @@ class TestAddItemToCollectionAuthorization:
             }
         )
 
-        request = AddItemToCollectionRequest(
-            collection_id="collection-123",
-            vault_id="vault-123",
-            item_id="item-123",
-        )
-
         with pytest.raises(NotFoundError, match="Item not found"):
-            service.add_item_to_collection("user-123", request)
+            service.add_item_to_collection(
+                "user-123",
+                vault_id="vault-123",
+                collection_id="collection-123",
+                item_id="item-123",
+            )
 
 
 class TestRemoveItemFromCollectionValidation:

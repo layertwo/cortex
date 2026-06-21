@@ -16,8 +16,13 @@ from src.api.routes.base_route import BaseRoute
 from src.api.services.share_service import ShareService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import BadRequestError
+from src.shared.generated.models import (
+    CreateShareRequestContent,
+    CreateShareResponseContent,
+    GetShareResponseContent,
+    RevokeShareResponseContent,
+)
 from src.shared.logger import get_logger
-from src.shared.models import CreateShareRequest
 
 logger = get_logger("share_routes")
 
@@ -34,9 +39,9 @@ class CreateShareRoute(BaseRoute):
         self.share_service = share_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/shares")
+        @app.post("/v1/shares", response_model=CreateShareResponseContent)
         def handle(
-            request: CreateShareRequest,
+            request: CreateShareRequestContent,
             user_id: str = Depends(get_current_user),
         ):
             """
@@ -44,7 +49,6 @@ class CreateShareRoute(BaseRoute):
 
             Requirements: 17.3
             """
-            # Create share
             response = self.share_service.create_share(user_id, request)
 
             logger.info(
@@ -54,11 +58,7 @@ class CreateShareRoute(BaseRoute):
                 item_id=request.item_id,
             )
 
-            return {
-                "share_id": response.share_id,
-                "created_at": response.created_at,
-                "expires_at": response.expires_at,
-            }
+            return response
 
 
 class GetShareRoute(BaseRoute):
@@ -69,7 +69,7 @@ class GetShareRoute(BaseRoute):
         self.share_service = share_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/shares/{share_id}")
+        @app.get("/v1/shares/{share_id}", response_model=GetShareResponseContent)
         def handle(
             share_id: str,
             request: Request,
@@ -104,13 +104,7 @@ class GetShareRoute(BaseRoute):
                 client_ip_hash=ip_hash,
             )
 
-            return {
-                "share_id": response.share_id,
-                "item_id": response.item_id,
-                "download_url": response.download_url,
-                "url_expires_at": response.url_expires_at,
-                "expires_at": response.expires_at,
-            }
+            return response
 
 
 class RevokeShareRoute(BaseRoute):
@@ -121,7 +115,7 @@ class RevokeShareRoute(BaseRoute):
         self.share_service = share_service
 
     def register(self, app: APIRouter) -> None:
-        @app.delete("/v1/shares/{share_id}")
+        @app.delete("/v1/shares/{share_id}", response_model=RevokeShareResponseContent)
         def handle(
             share_id: str,
             user_id: str = Depends(get_current_user),
@@ -137,7 +131,6 @@ class RevokeShareRoute(BaseRoute):
             if not UUID_PATTERN.match(share_id):
                 raise BadRequestError("Invalid share ID format")
 
-            # Revoke share
             response = self.share_service.revoke_share(user_id, share_id)
 
             logger.info(
@@ -146,7 +139,4 @@ class RevokeShareRoute(BaseRoute):
                 share_id=share_id,
             )
 
-            return {
-                "message": response.message,
-                "revoked_at": response.revoked_at,
-            }
+            return response

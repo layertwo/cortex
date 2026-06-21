@@ -32,7 +32,7 @@ class TestSearchTagsRoute:
         """Test search tags route handler returns 422 when vault_id is missing."""
         response = client.get(
             "/v1/tags/search",
-            params={"encrypted_tag": "dGVzdC10YWc="},
+            params={"encryptedTag": "dGVzdC10YWc="},
         )
 
         # FastAPI returns 422 for missing required query params
@@ -42,7 +42,7 @@ class TestSearchTagsRoute:
         """Test search tags route handler returns 422 when encrypted_tag is missing."""
         response = client.get(
             "/v1/tags/search",
-            params={"vault_id": "vault-123"},
+            params={"vaultId": "vault-123"},
         )
 
         # FastAPI returns 422 for missing required query params
@@ -53,9 +53,9 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "vault-123",
-                "encrypted_tag": "dGVzdC10YWc=",
-                "page_size": "200",  # Invalid: > 100
+                "vaultId": "vault-123",
+                "encryptedTag": "dGVzdC10YWc=",
+                "pageSize": "200",  # Invalid: > 100
             },
         )
 
@@ -73,8 +73,8 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "invalid-vault",
-                "encrypted_tag": "dGVzdC10YWc=",
+                "vaultId": "invalid-vault",
+                "encryptedTag": "dGVzdC10YWc=",
             },
         )
 
@@ -113,8 +113,8 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "vault-123",
-                "encrypted_tag": "dGVzdC10YWc=",
+                "vaultId": "vault-123",
+                "encryptedTag": "dGVzdC10YWc=",
             },
         )
 
@@ -122,12 +122,12 @@ class TestSearchTagsRoute:
         body = response.json()
         assert "items" in body
         assert len(body["items"]) == 1
-        assert body["items"][0]["item_id"] == "item-1"
-        assert body["items"][0]["item_type"] == "NOTE"
-        assert "encrypted_metadata" in body["items"][0]
-        assert "encrypted_tags" in body["items"][0]
-        assert "created_at" in body["items"][0]
-        assert "updated_at" in body["items"][0]
+        assert body["items"][0]["itemId"] == "item-1"
+        assert body["items"][0]["itemType"] == "NOTE"
+        assert "encryptedMetadata" in body["items"][0]
+        assert "encryptedTags" in body["items"][0]
+        assert "createdAt" in body["items"][0]
+        assert "updatedAt" in body["items"][0]
         assert "version" in body["items"][0]
 
     def test_search_tags_route_handler_success_with_media_item(self):
@@ -161,8 +161,8 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "vault-123",
-                "encrypted_tag": "dGVzdC10YWc=",
+                "vaultId": "vault-123",
+                "encryptedTag": "dGVzdC10YWc=",
             },
         )
 
@@ -170,8 +170,8 @@ class TestSearchTagsRoute:
         body = response.json()
         assert "items" in body
         assert len(body["items"]) == 1
-        assert body["items"][0]["s3_key"] == "vaults/vault-123/files/item-1/file.jpg"
-        assert body["items"][0]["size_bytes"] == 1024
+        assert body["items"][0]["s3Key"] == "vaults/vault-123/files/item-1/file.jpg"
+        assert body["items"][0]["sizeBytes"] == 1024
 
     def test_search_tags_route_handler_success_with_pagination(self):
         """Test search tags route handler includes next_token when present."""
@@ -204,16 +204,16 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "vault-123",
-                "encrypted_tag": "dGVzdC10YWc=",
-                "page_size": "10",
+                "vaultId": "vault-123",
+                "encryptedTag": "dGVzdC10YWc=",
+                "pageSize": "10",
             },
         )
 
         assert response.status_code == 200
         body = response.json()
-        assert "next_token" in body
-        assert body["next_token"] == "next-page-token"
+        assert "nextToken" in body
+        assert body["nextToken"] == "next-page-token"
 
     def test_search_tags_route_handler_success_empty_results(self):
         """Test search tags route handler returns empty items list when no matches."""
@@ -229,8 +229,8 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "vault-123",
-                "encrypted_tag": "dGVzdC10YWc=",
+                "vaultId": "vault-123",
+                "encryptedTag": "dGVzdC10YWc=",
             },
         )
 
@@ -238,7 +238,7 @@ class TestSearchTagsRoute:
         body = response.json()
         assert "items" in body
         assert len(body["items"]) == 0
-        assert "next_token" not in body
+        assert body.get("nextToken") is None
 
     def test_search_tags_route_handler_success_no_tags(self):
         """Test search tags route handler handles items with no tags."""
@@ -271,8 +271,8 @@ class TestSearchTagsRoute:
         response = client.get(
             "/v1/tags/search",
             params={
-                "vault_id": "vault-123",
-                "encrypted_tag": "dGVzdC10YWc=",
+                "vaultId": "vault-123",
+                "encryptedTag": "dGVzdC10YWc=",
             },
         )
 
@@ -280,4 +280,4 @@ class TestSearchTagsRoute:
         body = response.json()
         assert "items" in body
         assert len(body["items"]) == 1
-        assert body["items"][0]["encrypted_tags"] is None
+        assert body["items"][0]["encryptedTags"] is None

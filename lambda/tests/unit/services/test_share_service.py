@@ -202,6 +202,7 @@ class TestGetShare:
                     "vault_id": {"S": "vault-123"},
                     "s3_key": {"S": s3_key},
                     "item_type": {"S": "MEDIA"},
+                    "encrypted_metadata": {"B": b"encrypted-metadata"},
                 }
             },
             {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}"}},

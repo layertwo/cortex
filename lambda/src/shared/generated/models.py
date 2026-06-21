@@ -6,7 +6,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import Base64Str, Field
+from pydantic import Base64Bytes, Field
 
 from src.shared._codegen_base import GeneratedBaseModel
 
@@ -34,7 +34,7 @@ class CollectionData(GeneratedBaseModel):
     collection_id: Annotated[str, Field(alias="collectionId", description="Collection identifier")]
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     encrypted_metadata: Annotated[
-        Base64Str, Field(alias="encryptedMetadata", description="Encrypted collection metadata")
+        Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted collection metadata")
     ]
     item_count: Annotated[
         float, Field(alias="itemCount", description="Number of items in collection")
@@ -54,7 +54,7 @@ class CompleteItemUploadResponseContent(GeneratedBaseModel):
 class CreateCollectionRequestContent(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     encrypted_metadata: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(
             alias="encryptedMetadata",
             description="Encrypted collection metadata (name, description, etc.)",
@@ -91,7 +91,7 @@ class CreateShareResponseContent(GeneratedBaseModel):
 
 class CreateVaultRequestContent(GeneratedBaseModel):
     encrypted_name: Annotated[
-        Base64Str | None,
+        Base64Bytes | None,
         Field(alias="encryptedName", description="Optional vault name (encrypted client-side)"),
     ] = None
 
@@ -99,7 +99,7 @@ class CreateVaultRequestContent(GeneratedBaseModel):
 class CreateVaultResponseContent(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     vault_salt: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(
             alias="vaultSalt", description="Vault salt for key derivation (16 bytes, non-secret)"
         ),
@@ -136,7 +136,7 @@ class GetShareResponseContent(GeneratedBaseModel):
         float, Field(alias="urlExpiresAt", description="URL expiration timestamp")
     ]
     encrypted_metadata: Annotated[
-        Base64Str, Field(alias="encryptedMetadata", description="Encrypted metadata")
+        Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted metadata")
     ]
     expires_at: Annotated[
         float | None, Field(alias="expiresAt", description="Share expiration timestamp")
@@ -149,13 +149,13 @@ class GetShareResponseContent(GeneratedBaseModel):
 class GetVaultResponseContent(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     vault_salt: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(
             alias="vaultSalt", description="Vault salt for key derivation (16 bytes, non-secret)"
         ),
     ]
     encrypted_name: Annotated[
-        Base64Str | None, Field(alias="encryptedName", description="Encrypted vault name")
+        Base64Bytes | None, Field(alias="encryptedName", description="Encrypted vault name")
     ] = None
     created_at: Annotated[float, Field(alias="createdAt", description="Vault creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]
@@ -163,7 +163,7 @@ class GetVaultResponseContent(GeneratedBaseModel):
 
 class GetVaultSaltResponseContent(GeneratedBaseModel):
     vault_salt: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(
             alias="vaultSalt", description="Vault salt for key derivation (16 bytes, non-secret)"
         ),
@@ -173,13 +173,13 @@ class GetVaultSaltResponseContent(GeneratedBaseModel):
 class InitiateItemUploadRequestContent(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     encrypted_metadata: Annotated[
-        Base64Str, Field(alias="encryptedMetadata", description="Encrypted metadata")
+        Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted metadata")
     ]
     size_bytes: Annotated[
         float, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)", ge=1.0)
     ]
     encrypted_tags: Annotated[
-        list[Base64Str] | None,
+        list[Base64Bytes] | None,
         Field(alias="encryptedTags", description="List of encrypted tags", max_length=50),
     ] = None
 
@@ -244,7 +244,7 @@ class ShareRevokedErrorResponseContent(GeneratedBaseModel):
 
 class UpdateCollectionRequestContent(GeneratedBaseModel):
     encrypted_metadata: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(alias="encryptedMetadata", description="Updated encrypted collection metadata"),
     ]
 
@@ -256,17 +256,18 @@ class UpdateCollectionResponseContent(GeneratedBaseModel):
 
 class UpdateItemRequestContent(GeneratedBaseModel):
     encrypted_content: Annotated[
-        Base64Str | None, Field(alias="encryptedContent", description="Updated encrypted content")
+        Base64Bytes | None, Field(alias="encryptedContent", description="Updated encrypted content")
     ] = None
     encrypted_metadata: Annotated[
-        Base64Str | None, Field(alias="encryptedMetadata", description="Updated encrypted metadata")
+        Base64Bytes | None,
+        Field(alias="encryptedMetadata", description="Updated encrypted metadata"),
     ] = None
     encrypted_tags: Annotated[
-        list[Base64Str] | None,
+        list[Base64Bytes] | None,
         Field(alias="encryptedTags", description="Updated encrypted tags", max_length=50),
     ] = None
     encrypted_date_bucket: Annotated[
-        Base64Str | None,
+        Base64Bytes | None,
         Field(alias="encryptedDateBucket", description="Updated encrypted date bucket"),
     ] = None
     time_bucket: Annotated[
@@ -301,19 +302,19 @@ class CreateItemRequestContent(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     item_type: Annotated[ItemType, Field(alias="itemType")]
     encrypted_content: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(alias="encryptedContent", description="Encrypted item content (type-specific JSON)"),
     ]
     encrypted_metadata: Annotated[
-        Base64Str,
+        Base64Bytes,
         Field(alias="encryptedMetadata", description="Encrypted metadata (common fields)"),
     ]
     encrypted_tags: Annotated[
-        list[Base64Str] | None,
+        list[Base64Bytes] | None,
         Field(alias="encryptedTags", description="List of encrypted tags", max_length=50),
     ] = None
     encrypted_date_bucket: Annotated[
-        Base64Str | None,
+        Base64Bytes | None,
         Field(
             alias="encryptedDateBucket",
             description="Encrypted date bucket for tasks/events (deterministic)",
@@ -340,17 +341,21 @@ class GetItemResponseContent(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     item_type: Annotated[ItemType, Field(alias="itemType")]
     encrypted_content: Annotated[
-        Base64Str, Field(alias="encryptedContent", description="Encrypted item content")
-    ]
+        Base64Bytes | None,
+        Field(
+            alias="encryptedContent",
+            description="Encrypted item content (absent for MEDIA items, whose content lives in S3)",
+        ),
+    ] = None
     encrypted_metadata: Annotated[
-        Base64Str, Field(alias="encryptedMetadata", description="Encrypted metadata")
+        Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted metadata")
     ]
     encrypted_tags: Annotated[
-        list[Base64Str] | None,
+        list[Base64Bytes] | None,
         Field(alias="encryptedTags", description="List of encrypted tags", max_length=50),
     ] = None
     encrypted_date_bucket: Annotated[
-        Base64Str | None,
+        Base64Bytes | None,
         Field(alias="encryptedDateBucket", description="Encrypted date bucket (for tasks/events)"),
     ] = None
     time_bucket: Annotated[
@@ -373,17 +378,21 @@ class ItemData(GeneratedBaseModel):
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     item_type: Annotated[ItemType, Field(alias="itemType")]
     encrypted_content: Annotated[
-        Base64Str, Field(alias="encryptedContent", description="Encrypted item content")
-    ]
+        Base64Bytes | None,
+        Field(
+            alias="encryptedContent",
+            description="Encrypted item content (absent for MEDIA items, whose content lives in S3)",
+        ),
+    ] = None
     encrypted_metadata: Annotated[
-        Base64Str, Field(alias="encryptedMetadata", description="Encrypted metadata")
+        Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted metadata")
     ]
     encrypted_tags: Annotated[
-        list[Base64Str] | None,
+        list[Base64Bytes] | None,
         Field(alias="encryptedTags", description="List of encrypted tags", max_length=50),
     ] = None
     encrypted_date_bucket: Annotated[
-        Base64Str | None,
+        Base64Bytes | None,
         Field(alias="encryptedDateBucket", description="Encrypted date bucket (for tasks/events)"),
     ] = None
     time_bucket: Annotated[
@@ -425,7 +434,7 @@ class GetCollectionResponseContent(GeneratedBaseModel):
     collection_id: Annotated[str, Field(alias="collectionId", description="Collection identifier")]
     vault_id: Annotated[str, Field(alias="vaultId", description="Vault identifier")]
     encrypted_metadata: Annotated[
-        Base64Str, Field(alias="encryptedMetadata", description="Encrypted collection metadata")
+        Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted collection metadata")
     ]
     item_count: Annotated[
         float, Field(alias="itemCount", description="Number of items in collection")

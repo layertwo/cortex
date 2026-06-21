@@ -1,6 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { bytesToBase64 } from '@cortex/encryption';
 
+// The generated SDK owns HTTP + auth + serde; our client.ts only constructs the
+// client (endpoint + Cognito bearer token) and maps command I/O. So we mock the
+// SDK and assert that wiring rather than re-testing smithy's transport.
+const { sendMock, configs, commands } = vi.hoisted(() => ({
+  sendMock: vi.fn(),
+  configs: [] as Array<{ endpoint: string; token: () => Promise<{ token: string }> }>,
+  commands: [] as Array<[string, unknown]>,
+}));
+
+vi.mock('@cortex/client', () => ({
+  CortexClient: class {
+    send = sendMock;
+    constructor(config: { endpoint: string; token: () => Promise<{ token: string }> }) {
+      configs.push(config);
+    }
+  },
+  CreateVaultCommand: class {
+    constructor(public input: unknown) {
+      commands.push(['CreateVault', input]);
+    }
+  },
+  GetVaultSaltCommand: class {
+    constructor(public input: unknown) {
+      commands.push(['GetVaultSalt', input]);
+    }
+  },
+}));
 vi.mock('aws-amplify/auth', () => ({
   fetchAuthSession: vi.fn(async () => ({
     tokens: { idToken: { toString: () => 'JWT123' } },
@@ -18,47 +44,43 @@ vi.mock('../config', () => ({
 import { createVault, getVaultSalt } from './client';
 
 beforeEach(() => {
-  vi.restoreAllMocks();
+  sendMock.mockReset();
+  configs.length = 0;
+  commands.length = 0;
 });
 
 describe('api client', () => {
-  it('createVault POSTs with bearer token and decodes the salt', async () => {
+  it('configures the client with the endpoint and a Cognito bearer token', async () => {
+    sendMock.mockResolvedValueOnce({ vaultId: 'v1', vaultSalt: new Uint8Array(16) });
+
+    await createVault();
+
+    expect(configs[0].endpoint).toBe('https://api');
+    expect(await configs[0].token()).toEqual({ token: 'JWT123' });
+  });
+
+  it('createVault returns vaultId and the raw (Uint8Array) salt', async () => {
     const salt = new Uint8Array(16).fill(7);
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({ vaultId: 'v1', vaultSalt: bytesToBase64(salt), createdAt: 1 }),
-          { status: 200 },
-        ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+    sendMock.mockResolvedValueOnce({ vaultId: 'v1', vaultSalt: salt, createdAt: 1 });
 
     const result = await createVault();
 
     expect(result).toEqual({ vaultId: 'v1', vaultSalt: salt });
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe('https://api/v1/vaults');
-    expect(init.method).toBe('POST');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer JWT123');
+    expect(commands).toContainEqual(['CreateVault', {}]);
   });
 
-  it('getVaultSalt GETs and decodes the salt', async () => {
+  it('getVaultSalt passes the vaultId and returns the raw salt', async () => {
     const salt = new Uint8Array(16).fill(3);
-    const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({ vaultSalt: bytesToBase64(salt) }), { status: 200 }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+    sendMock.mockResolvedValueOnce({ vaultSalt: salt });
 
     const result = await getVaultSalt('v9');
 
     expect(result).toEqual(salt);
-    expect((fetchMock.mock.calls[0] as unknown as [string])[0]).toBe(
-      'https://api/v1/vaults/v9/salt',
-    );
+    expect(commands).toContainEqual(['GetVaultSalt', { vaultId: 'v9' }]);
   });
 
-  it('throws on non-2xx', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })));
-    await expect(getVaultSalt('v9')).rejects.toThrow('401');
+  it('throws when the response is missing the salt', async () => {
+    sendMock.mockResolvedValueOnce({});
+    await expect(getVaultSalt('v9')).rejects.toThrow('missing salt');
   });
 });

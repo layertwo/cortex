@@ -19,14 +19,15 @@ from src.shared.exceptions import (
     ShareExpiredError,
     ShareRevokedError,
 )
-from src.shared.logger import get_logger
-from src.shared.models import (
-    CreateShareRequest,
-    CreateShareResponse,
-    GetShareResponse,
-    RevokeShareResponse,
+from src.shared.generated.models import (
+    CreateShareRequestContent,
+    CreateShareResponseContent,
+    GetShareResponseContent,
+    RevokeShareResponseContent,
 )
+from src.shared.logger import get_logger
 from src.shared.repository import DynamoDBRepository, S3Repository
+from src.shared.util import _encode_binary
 
 logger = get_logger("share_service")
 
@@ -63,7 +64,9 @@ class ShareService:
         self.items_repo = DynamoDBRepository(session, items_table_name)
         self.s3_repo = S3Repository(session, s3_bucket_name)
 
-    def create_share(self, user_id: str, request: CreateShareRequest) -> CreateShareResponse:
+    def create_share(
+        self, user_id: str, request: CreateShareRequestContent
+    ) -> CreateShareResponseContent:
         """
         Create a share for an item.
 
@@ -107,11 +110,12 @@ class ShareService:
             "access_count": 0,
         }
 
-        # Set expiration if provided
-        if request.expires_at is not None:
-            share_item["expires_at"] = request.expires_at
+        # Set expiration if provided (cast float epoch -> int for DynamoDB)
+        expires_at = int(request.expires_at) if request.expires_at is not None else None
+        if expires_at is not None:
+            share_item["expires_at"] = expires_at
             # Set TTL to expires_at + grace period for DynamoDB auto-cleanup
-            share_item["ttl"] = request.expires_at + TTL_GRACE_PERIOD
+            share_item["ttl"] = expires_at + TTL_GRACE_PERIOD
 
         # Store share metadata
         self.shares_repo.put_item(share_item)
@@ -126,13 +130,15 @@ class ShareService:
             },
         )
 
-        return CreateShareResponse(
+        # ponytail: password-protected shares aren't implemented yet — always False.
+        return CreateShareResponseContent(
             share_id=share_id,
             created_at=now,
-            expires_at=request.expires_at,
+            expires_at=expires_at,
+            is_password_protected=False,
         )
 
-    def get_share(self, share_id: str, client_ip: str) -> GetShareResponse:
+    def get_share(self, share_id: str, client_ip: str) -> GetShareResponseContent:
         """
         Access a share and generate a presigned download URL.
 
@@ -209,15 +215,17 @@ class ShareService:
             },
         )
 
-        return GetShareResponse(
+        return GetShareResponseContent(
             share_id=share_id,
             item_id=item_id,
             download_url=download_url,
             url_expires_at=url_expires_at,
+            encrypted_metadata=_encode_binary(item["encrypted_metadata"]),
             expires_at=int(expires_at) if expires_at is not None else None,
+            is_password_protected=False,
         )
 
-    def revoke_share(self, user_id: str, share_id: str) -> RevokeShareResponse:
+    def revoke_share(self, user_id: str, share_id: str) -> RevokeShareResponseContent:
         """
         Revoke a share.
 
@@ -265,7 +273,7 @@ class ShareService:
             },
         )
 
-        return RevokeShareResponse(
+        return RevokeShareResponseContent(
             message="Share revoked successfully",
             revoked_at=now,
         )

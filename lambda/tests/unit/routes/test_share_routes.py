@@ -59,12 +59,12 @@ class TestCreateShareRoute:
 
         assert response.status_code == 200
         body = response.json()
-        assert "share_id" in body, "Response should include share_id"
-        assert "created_at" in body, "Response should include created_at"
+        assert "shareId" in body, "Response should include shareId"
+        assert "createdAt" in body, "Response should include createdAt"
 
-        assert isinstance(body["share_id"], str), "share_id should be a string"
-        assert len(body["share_id"]) > 0, "share_id should not be empty"
-        assert isinstance(body["created_at"], int), "created_at should be an integer"
+        assert isinstance(body["shareId"], str), "shareId should be a string"
+        assert len(body["shareId"]) > 0, "shareId should not be empty"
+        assert isinstance(body["createdAt"], (int, float)), "createdAt should be a number"
 
 
 class TestGetShareRoute:
@@ -145,6 +145,7 @@ class TestGetShareRoute:
                     "vault_id": {"S": vault_id},
                     "item_type": {"S": "MEDIA"},
                     "s3_key": {"S": s3_key},
+                    "encrypted_metadata": {"B": b"encrypted-meta"},
                 }
             },
             expected_params={
@@ -175,16 +176,16 @@ class TestGetShareRoute:
 
         assert response.status_code == 200
         body = response.json()
-        assert "share_id" in body, "Response should include share_id"
-        assert "item_id" in body, "Response should include item_id"
-        assert "download_url" in body, "Response should include download_url"
-        assert "url_expires_at" in body, "Response should include url_expires_at"
+        assert "shareId" in body, "Response should include shareId"
+        assert "itemId" in body, "Response should include itemId"
+        assert "downloadUrl" in body, "Response should include downloadUrl"
+        assert "urlExpiresAt" in body, "Response should include urlExpiresAt"
 
-        assert body["share_id"] == share_id
-        assert body["item_id"] == item_id
-        assert isinstance(body["download_url"], str), "download_url should be a string"
-        assert s3_key in body["download_url"], "download_url should contain the S3 key"
-        assert isinstance(body["url_expires_at"], int), "url_expires_at should be an integer"
+        assert body["shareId"] == share_id
+        assert body["itemId"] == item_id
+        assert isinstance(body["downloadUrl"], str), "downloadUrl should be a string"
+        assert s3_key in body["downloadUrl"], "downloadUrl should contain the S3 key"
+        assert isinstance(body["urlExpiresAt"], (int, float)), "urlExpiresAt should be a number"
 
 
 class TestRevokeShareRoute:
@@ -244,10 +245,10 @@ class TestRevokeShareRoute:
         assert response.status_code == 200
         body = response.json()
         assert "message" in body, "Response should include message"
-        assert "revoked_at" in body, "Response should include revoked_at"
+        assert "revokedAt" in body, "Response should include revokedAt"
 
         assert body["message"] == "Share revoked successfully"
-        assert isinstance(body["revoked_at"], int), "revoked_at should be an integer"
+        assert isinstance(body["revokedAt"], (int, float)), "revokedAt should be a number"
 
 
 class TestGetShareRouteErrors:

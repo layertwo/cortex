@@ -4,18 +4,28 @@ Vault management route handlers for Cortex API.
 This module implements vault-related endpoints including vault creation
 and vault salt retrieval for key derivation.
 
+Request/response shapes come from the Smithy-generated models
+(src.shared.generated.models): snake_case attrs with camelCase aliases, so
+FastAPI serializes the camelCase wire contract the web client targets. Blob
+fields are pydantic Base64Bytes — raw bytes Python-side, base64 on the wire —
+so raw salt from the service is base64-encoded at construction.
+
 Requirements: 14.4, 22.1, 22.2, 22.3
 """
 
-from datetime import datetime
+import base64
 
 from fastapi import APIRouter, Depends
 
 from src.api.routes.base_route import BaseRoute
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
+from src.shared.generated.models import (
+    CreateVaultRequestContent,
+    CreateVaultResponseContent,
+    GetVaultSaltResponseContent,
+)
 from src.shared.logger import get_logger
-from src.shared.models import CreateVaultRequest, CreateVaultResponse, GetVaultSaltResponse
 
 logger = get_logger("vault_routes")
 
@@ -33,31 +43,34 @@ class CreateVaultRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/vaults")
+        @app.post("/v1/vaults", response_model=CreateVaultResponseContent)
         def handle(
-            request: CreateVaultRequest,
+            request: CreateVaultRequestContent,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Create new vault with vault salt.
+            Create new vault with a server-generated vault salt.
 
-            This endpoint creates a new vault for the authenticated user.
-            The vault salt is either provided by the client or generated
-            server-side using a cryptographically secure RNG.
+            The vault salt is always generated server-side with a
+            cryptographically secure RNG (the contract no longer accepts a
+            client-provided salt). The optional encrypted vault name is accepted
+            but not yet persisted.
 
             Returns:
-                Vault ID, vault salt, and creation timestamp
+                Vault ID, vault salt (base64), and creation timestamp (epoch).
 
             Requirements: 14.4, 22.1, 22.2, 22.3
             """
             logger.info("Creating vault", user_id=user_id)
 
-            result = self.vault_service.create_vault(user_id=user_id, vault_salt=request.vault_salt)
+            # ponytail: encryptedName is in the contract but vault naming isn't
+            # built yet — wire request.encrypted_name through when it ships.
+            result = self.vault_service.create_vault(user_id=user_id)
 
-            # Build response
-            response = CreateVaultResponse(
+            response = CreateVaultResponseContent(
                 vault_id=result["vault_id"],
-                created_at=datetime.fromtimestamp(result["created_at"]),
+                vault_salt=base64.b64encode(result["vault_salt"]),
+                created_at=result["created_at"],
             )
 
             logger.info(
@@ -66,7 +79,7 @@ class CreateVaultRoute(BaseRoute):
                 vault_id=result["vault_id"],
             )
 
-            return response.model_dump(mode="json")
+            return response
 
 
 class GetVaultSaltRoute(BaseRoute):
@@ -82,7 +95,7 @@ class GetVaultSaltRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/vaults/{vault_id}/salt")
+        @app.get("/v1/vaults/{vault_id}/salt", response_model=GetVaultSaltResponseContent)
         def handle(
             vault_id: str,
             user_id: str = Depends(get_current_user),
@@ -90,15 +103,15 @@ class GetVaultSaltRoute(BaseRoute):
             """
             Retrieve vault salt for key derivation.
 
-            This endpoint returns the vault salt needed by the client to
-            derive the vault master key from the vault password using Argon2id.
-            The salt is non-secret information that enables multi-device access.
+            Returns the vault salt the client needs to derive the vault master
+            key from the vault password using Argon2id. The salt is non-secret
+            and enables multi-device access.
 
             Path Parameters:
                 vault_id: Vault identifier
 
             Returns:
-                Vault ID and 16-byte vault salt
+                The 16-byte vault salt (base64).
 
             Requirements: 14.4, 22.3, 22.5
             """
@@ -106,13 +119,10 @@ class GetVaultSaltRoute(BaseRoute):
 
             vault_salt = self.vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
-            # Build response
-            response = GetVaultSaltResponse(vault_id=vault_id, vault_salt=vault_salt)
-
             logger.info(
                 "Vault salt retrieved successfully",
                 user_id=user_id,
                 vault_id=vault_id,
             )
 
-            return response.model_dump(mode="json")
+            return GetVaultSaltResponseContent(vault_salt=base64.b64encode(vault_salt))

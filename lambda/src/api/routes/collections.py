@@ -4,11 +4,15 @@ Collection management route handlers for Cortex API.
 This module implements collection-related endpoints including CRUD operations
 and item-collection associations.
 
+Request/response shapes are the Smithy-generated models
+(src.shared.generated.models): camelCase wire, epoch timestamps, Base64Bytes
+blobs. Collections are partitioned by vault, so every op takes vaultId (path
+body for create, query param otherwise).
+
 Requirements: 12.1, 12.2, 12.3, 12.5, 13.1, 13.2, 13.3, 13.4, 13.5
 """
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+import time
 
 from fastapi import APIRouter, Depends, Query
 
@@ -17,14 +21,35 @@ from src.api.services.collection_service import CollectionService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import NotFoundError
-from src.shared.logger import get_logger
-from src.shared.models import (
-    AddItemToCollectionRequest,
-    CreateCollectionRequest,
-    UpdateCollectionRequest,
+from src.shared.generated.models import (
+    AddItemToCollectionRequestContent,
+    AddItemToCollectionResponseContent,
+    CollectionData,
+    CreateCollectionRequestContent,
+    CreateCollectionResponseContent,
+    DeleteCollectionResponseContent,
+    GetCollectionResponseContent,
+    ListCollectionsResponseContent,
+    RemoveItemFromCollectionResponseContent,
+    UpdateCollectionRequestContent,
+    UpdateCollectionResponseContent,
 )
+from src.shared.logger import get_logger
+from src.shared.util import _encode_binary
 
 logger = get_logger("collection_routes")
+
+
+def _collection_fields(collection: dict) -> dict:
+    """Map a DynamoDB collection dict to the generated collection-model kwargs."""
+    return {
+        "collection_id": collection["collection_id"],
+        "vault_id": collection["vault_id"],
+        "encrypted_metadata": _encode_binary(collection["encrypted_metadata"]),
+        "item_count": int(collection.get("item_count", 0)),
+        "created_at": float(collection["created_at"]),
+        "updated_at": float(collection["updated_at"]),
+    }
 
 
 class CreateCollectionRoute(BaseRoute):
@@ -36,24 +61,19 @@ class CreateCollectionRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/collections")
+        @app.post("/v1/collections", response_model=CreateCollectionResponseContent)
         def handle(
-            request: CreateCollectionRequest,
+            request: CreateCollectionRequestContent,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Create collection.
-
-            This endpoint creates a new collection with encrypted metadata.
-            All sensitive data is encrypted client-side.
+            Create collection with encrypted metadata.
 
             Requirements: 12.1, 13.1
             """
-            # Verify vault ownership
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
                 raise NotFoundError("Vault not found")
 
-            # Create collection
             response = self.collection_service.create_collection(user_id, request)
 
             logger.info(
@@ -63,10 +83,7 @@ class CreateCollectionRoute(BaseRoute):
                 collection_id=response.collection_id,
             )
 
-            return {
-                "collection_id": response.collection_id,
-                "created_at": response.created_at.isoformat(),
-            }
+            return response
 
 
 class ListCollectionsRoute(BaseRoute):
@@ -78,26 +95,21 @@ class ListCollectionsRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/collections")
+        @app.get("/v1/collections", response_model=ListCollectionsResponseContent)
         def handle(
-            vault_id: str = Query(..., description="Vault ID"),
-            page_size: int = Query(50, ge=1, le=100),
-            next_token: Optional[str] = Query(None),
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
+            page_size: int = Query(50, alias="pageSize", ge=1, le=100),
+            next_token: str | None = Query(None, alias="nextToken"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            List collections.
-
-            This endpoint returns encrypted metadata for all collections in a vault.
-            The server cannot decrypt the returned data.
+            List collections (encrypted metadata only).
 
             Requirements: 12.2, 13.5
             """
-            # Verify vault ownership
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            # List collections
             collections, next_page_token = self.collection_service.list_collections(
                 user_id=user_id,
                 vault_id=vault_id,
@@ -105,37 +117,19 @@ class ListCollectionsRoute(BaseRoute):
                 next_token=next_token,
             )
 
-            # Convert collections to response format
-            response_collections = []
-            for collection in collections:
-                response_item = {
-                    "collection_id": collection["collection_id"],
-                    "vault_id": collection["vault_id"],
-                    "user_id": collection["user_id"],
-                    "encrypted_metadata": collection["encrypted_metadata"],
-                    "created_at": datetime.fromtimestamp(
-                        collection["created_at"], tz=timezone.utc
-                    ).isoformat(),
-                    "updated_at": datetime.fromtimestamp(
-                        collection["updated_at"], tz=timezone.utc
-                    ).isoformat(),
-                    "item_count": collection.get("item_count", 0),
-                }
-
-                response_collections.append(response_item)
+            collection_models = [CollectionData(**_collection_fields(c)) for c in collections]
 
             logger.info(
                 "Listed collections successfully",
                 user_id=user_id,
                 vault_id=vault_id,
-                count=len(response_collections),
+                count=len(collection_models),
             )
 
-            response: dict[str, Any] = {"collections": response_collections}
-            if next_page_token:
-                response["next_token"] = next_page_token
-
-            return response
+            return ListCollectionsResponseContent(
+                collections=collection_models,
+                next_token=next_page_token or None,
+            )
 
 
 class GetCollectionRoute(BaseRoute):
@@ -147,28 +141,20 @@ class GetCollectionRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/collections/{collection_id}")
+        @app.get("/v1/collections/{collection_id}", response_model=GetCollectionResponseContent)
         def handle(
             collection_id: str,
-            vault_id: str = Query(..., description="Vault ID"),
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            Get collection details.
-
-            This endpoint returns encrypted metadata for a specific collection.
-            The server cannot decrypt the returned data.
-
-            Args:
-                collection_id: Collection identifier
+            Get collection details (encrypted metadata only).
 
             Requirements: 12.2, 13.1
             """
-            # Verify vault ownership
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            # Get collection
             collection = self.collection_service.get_collection(user_id, vault_id, collection_id)
 
             if not collection:
@@ -179,27 +165,13 @@ class GetCollectionRoute(BaseRoute):
                 )
                 raise NotFoundError("Collection not found")
 
-            # Convert collection to response format
-            response = {
-                "collection_id": collection["collection_id"],
-                "vault_id": collection["vault_id"],
-                "encrypted_metadata": collection["encrypted_metadata"],
-                "created_at": datetime.fromtimestamp(
-                    collection["created_at"], tz=timezone.utc
-                ).isoformat(),
-                "updated_at": datetime.fromtimestamp(
-                    collection["updated_at"], tz=timezone.utc
-                ).isoformat(),
-                "item_count": collection.get("item_count", 0),
-            }
-
             logger.info(
                 "Retrieved collection successfully",
                 user_id=user_id,
                 collection_id=collection_id,
             )
 
-            return response
+            return GetCollectionResponseContent(**_collection_fields(collection))
 
 
 class UpdateCollectionRoute(BaseRoute):
@@ -211,32 +183,27 @@ class UpdateCollectionRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.put("/v1/collections/{collection_id}")
+        @app.put("/v1/collections/{collection_id}", response_model=UpdateCollectionResponseContent)
         def handle(
             collection_id: str,
-            body: UpdateCollectionRequest,
+            body: UpdateCollectionRequestContent,
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            Update collection.
-
-            This endpoint updates encrypted collection metadata.
-            All sensitive data is encrypted client-side.
-
-            Args:
-                collection_id: Collection identifier
+            Update encrypted collection metadata.
 
             Requirements: 13.3
             """
-            # Merge path param into request
-            request = body.model_copy(update={"collection_id": collection_id})
-
-            # Verify vault ownership
-            if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            # Update collection
-            response = self.collection_service.update_collection(user_id, request)
+            response = self.collection_service.update_collection(
+                user_id=user_id,
+                vault_id=vault_id,
+                collection_id=collection_id,
+                encrypted_metadata=body.encrypted_metadata,
+            )
 
             logger.info(
                 "Collection updated successfully",
@@ -244,10 +211,7 @@ class UpdateCollectionRoute(BaseRoute):
                 collection_id=collection_id,
             )
 
-            return {
-                "collection_id": response.collection_id,
-                "updated_at": response.updated_at.isoformat(),
-            }
+            return response
 
 
 class DeleteCollectionRoute(BaseRoute):
@@ -259,28 +223,22 @@ class DeleteCollectionRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.delete("/v1/collections/{collection_id}")
+        @app.delete(
+            "/v1/collections/{collection_id}", response_model=DeleteCollectionResponseContent
+        )
         def handle(
             collection_id: str,
-            vault_id: str = Query(..., description="Vault ID"),
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            Delete collection.
-
-            This endpoint deletes a collection and all its item associations,
-            but preserves the items themselves.
-
-            Args:
-                collection_id: Collection identifier
+            Delete a collection (preserves its items).
 
             Requirements: 13.3, 13.4
             """
-            # Verify vault ownership
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            # Delete collection
             self.collection_service.delete_collection(user_id, vault_id, collection_id)
 
             logger.info(
@@ -290,10 +248,10 @@ class DeleteCollectionRoute(BaseRoute):
                 collection_id=collection_id,
             )
 
-            return {
-                "message": "Collection deleted successfully",
-                "collection_id": collection_id,
-            }
+            return DeleteCollectionResponseContent(
+                message="Collection deleted successfully",
+                deleted_at=time.time(),
+            )
 
 
 class AddItemToCollectionRoute(BaseRoute):
@@ -305,46 +263,39 @@ class AddItemToCollectionRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/collections/{collection_id}/items")
+        @app.post(
+            "/v1/collections/{collection_id}/items",
+            response_model=AddItemToCollectionResponseContent,
+        )
         def handle(
             collection_id: str,
-            body: AddItemToCollectionRequest,
+            body: AddItemToCollectionRequestContent,
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            Add item to collection.
-
-            This endpoint creates an item-collection association.
-            Items can belong to multiple collections simultaneously.
-            Supports all item types (MEDIA, NOTE, TASK, EVENT).
-
-            Args:
-                collection_id: Collection identifier
+            Add an item to a collection (item may belong to many collections).
 
             Requirements: 12.3, 12.5
             """
-            # Merge path param into request
-            request = body.model_copy(update={"collection_id": collection_id})
-
-            # Verify vault ownership
-            if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
+            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            # Add item to collection
-            response = self.collection_service.add_item_to_collection(user_id, request)
+            response = self.collection_service.add_item_to_collection(
+                user_id=user_id,
+                vault_id=vault_id,
+                collection_id=collection_id,
+                item_id=body.item_id,
+            )
 
             logger.info(
                 "Item added to collection successfully",
                 user_id=user_id,
                 collection_id=collection_id,
-                item_id=request.item_id,
+                item_id=body.item_id,
             )
 
-            return {
-                "collection_id": response.collection_id,
-                "item_id": response.item_id,
-                "added_at": response.added_at.isoformat(),
-            }
+            return response
 
 
 class RemoveItemFromCollectionRoute(BaseRoute):
@@ -356,30 +307,24 @@ class RemoveItemFromCollectionRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.delete("/v1/collections/{collection_id}/items/{item_id}")
+        @app.delete(
+            "/v1/collections/{collection_id}/items/{item_id}",
+            response_model=RemoveItemFromCollectionResponseContent,
+        )
         def handle(
             collection_id: str,
             item_id: str,
-            vault_id: str = Query(..., description="Vault ID"),
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            Remove item from collection.
-
-            This endpoint deletes the item-collection association but
-            preserves the item itself. Supports all item types (MEDIA, NOTE, TASK, EVENT).
-
-            Args:
-                collection_id: Collection identifier
-                item_id: Item identifier
+            Remove an item from a collection (preserves the item).
 
             Requirements: 13.2
             """
-            # Verify vault ownership
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            # Remove item from collection
             self.collection_service.remove_item_from_collection(
                 user_id, vault_id, collection_id, item_id
             )
@@ -392,8 +337,7 @@ class RemoveItemFromCollectionRoute(BaseRoute):
                 item_id=item_id,
             )
 
-            return {
-                "message": "Item removed from collection successfully",
-                "collection_id": collection_id,
-                "item_id": item_id,
-            }
+            return RemoveItemFromCollectionResponseContent(
+                message="Item removed from collection successfully",
+                removed_at=time.time(),
+            )
