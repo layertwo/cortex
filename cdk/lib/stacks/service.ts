@@ -223,7 +223,7 @@ export class ServiceStack extends Stack {
             rootDir: path.join(__dirname, "../../../lambda"),
             index: "src/entrypoint/api.py",
             handler: "handler",
-            runtime: Runtime.PYTHON_3_11,
+            runtime: Runtime.PYTHON_3_14,
             architecture: Architecture.ARM_64,
             bundling: {
                 buildArgs: {UV_VERSION: "0.11.16"},

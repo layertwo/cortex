@@ -4,8 +4,6 @@ Unit tests for collection route handlers.
 Tests verify that collection routes work correctly through the FastAPI test client.
 """
 
-from datetime import datetime
-
 from botocore.stub import ANY
 
 
@@ -47,25 +45,20 @@ class TestCreateCollectionRoute:
         response = client.post(
             "/v1/collections",
             json={
-                "vault_id": vault_id,
-                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+                "vaultId": vault_id,
+                "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
         )
 
         assert response.status_code == 200
         body = response.json()
-        assert "collection_id" in body, "Response should include collection_id"
-        assert "created_at" in body, "Response should include created_at"
+        assert "collectionId" in body, "Response should include collectionId"
+        assert "createdAt" in body, "Response should include createdAt"
 
-        assert isinstance(body["collection_id"], str), "collection_id should be a string"
-        assert len(body["collection_id"]) > 0, "collection_id should not be empty"
-
-        try:
-            datetime.fromisoformat(body["created_at"])
-        except ValueError:
-            raise AssertionError(
-                f"created_at should be ISO format datetime, got {body['created_at']}"
-            )
+        assert isinstance(body["collectionId"], str), "collectionId should be a string"
+        assert len(body["collectionId"]) > 0, "collectionId should not be empty"
+        # createdAt is an epoch timestamp (number), not an ISO string
+        assert isinstance(body["createdAt"], (int, float))
 
     def test_create_collection_route_handler_missing_vault_id(self, client):
         """Test create collection route handler returns error when vault_id is missing."""
@@ -225,7 +218,7 @@ class TestCollectionVaultOwnership:
             },
         )
 
-        response = client.get(f"/v1/collections?vault_id={vault_id}")
+        response = client.get(f"/v1/collections?vaultId={vault_id}")
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "NOT_FOUND"
@@ -246,7 +239,7 @@ class TestCollectionVaultOwnership:
             },
         )
 
-        response = client.get(f"/v1/collections/{collection_id}?vault_id={vault_id}")
+        response = client.get(f"/v1/collections/{collection_id}?vaultId={vault_id}")
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "NOT_FOUND"
@@ -268,12 +261,8 @@ class TestCollectionVaultOwnership:
         )
 
         response = client.put(
-            f"/v1/collections/{collection_id}",
-            json={
-                "collection_id": collection_id,
-                "vault_id": vault_id,
-                "encrypted_metadata": "ZW5j",
-            },
+            f"/v1/collections/{collection_id}?vaultId={vault_id}",
+            json={"encryptedMetadata": "ZW5j"},
         )
 
         assert response.status_code == 404
@@ -295,7 +284,7 @@ class TestCollectionVaultOwnership:
             },
         )
 
-        response = client.delete(f"/v1/collections/{collection_id}?vault_id={vault_id}")
+        response = client.delete(f"/v1/collections/{collection_id}?vaultId={vault_id}")
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "NOT_FOUND"
@@ -317,12 +306,8 @@ class TestCollectionVaultOwnership:
         )
 
         response = client.post(
-            f"/v1/collections/{collection_id}/items",
-            json={
-                "collection_id": collection_id,
-                "vault_id": vault_id,
-                "item_id": "i-1",
-            },
+            f"/v1/collections/{collection_id}/items?vaultId={vault_id}",
+            json={"itemId": "i-1"},
         )
 
         assert response.status_code == 404
@@ -346,7 +331,7 @@ class TestCollectionVaultOwnership:
         )
 
         response = client.delete(
-            f"/v1/collections/{collection_id}/items/{item_id}?vault_id={vault_id}"
+            f"/v1/collections/{collection_id}/items/{item_id}?vaultId={vault_id}"
         )
 
         assert response.status_code == 404

@@ -15,17 +15,15 @@ from typing import Optional
 import boto3
 
 from src.shared.exceptions import BadRequestError, NotFoundError
-from src.shared.logger import get_logger
-from src.shared.models import (
-    CompleteUploadRequest,
-    CompleteUploadResponse,
-    CreateItemRequest,
-    CreateItemResponse,
-    InitiateUploadRequest,
-    InitiateUploadResponse,
-    ItemType,
-    SearchByTagResponse,
+from src.shared.generated.models import (
+    CompleteItemUploadResponseContent,
+    CreateItemRequestContent,
+    CreateItemResponseContent,
+    InitiateItemUploadRequestContent,
+    InitiateItemUploadResponseContent,
 )
+from src.shared.logger import get_logger
+from src.shared.models import ItemType, SearchByTagResponse
 from src.shared.repository import (
     DynamoDBRepository,
     S3Repository,
@@ -39,6 +37,10 @@ logger = get_logger("item_service")
 # Multipart upload threshold: 100MB
 MULTIPART_THRESHOLD_BYTES = 100 * 1024 * 1024
 PRESIGNED_URL_EXPIRATION = 900  # 15 minutes
+
+# Zero-knowledge: the real MIME type is encrypted client-side, so the presigned
+# PUT is signed with a fixed content type (matches the web client's putToS3).
+UPLOAD_CONTENT_TYPE = "application/octet-stream"
 
 
 class ItemService:
@@ -61,7 +63,9 @@ class ItemService:
         self.items_repo = DynamoDBRepository(session, items_table_name)
         self.s3_repo = S3Repository(session, s3_bucket_name)
 
-    def create_item(self, user_id: str, request: CreateItemRequest) -> CreateItemResponse:
+    def create_item(
+        self, user_id: str, request: CreateItemRequestContent
+    ) -> CreateItemResponseContent:
         """
         Create item with inline encrypted content (NOTE, TASK, EVENT).
 
@@ -145,15 +149,16 @@ class ItemService:
             },
         )
 
-        return CreateItemResponse(
+        return CreateItemResponseContent(
             item_id=item_id,
             item_type=request.item_type,
-            created_at=now,
+            created_at=int(now.timestamp()),
+            version=1,
         )
 
     def initiate_upload(
-        self, user_id: str, request: InitiateUploadRequest
-    ) -> InitiateUploadResponse:
+        self, user_id: str, request: InitiateItemUploadRequestContent
+    ) -> InitiateItemUploadResponseContent:
         """
         Initiate MEDIA item upload and generate presigned S3 URL.
 
@@ -185,12 +190,12 @@ class ItemService:
 
         if use_multipart:
             # Initiate multipart upload
-            upload_id = self.s3_repo.initiate_multipart_upload(s3_key, request.content_type)
+            upload_id = self.s3_repo.initiate_multipart_upload(s3_key, UPLOAD_CONTENT_TYPE)
 
             # Generate presigned URL for first part
             # Client will request additional part URLs as needed
             upload_url = self.s3_repo.generate_multipart_upload_url(
-                s3_key, request.content_type, 1, upload_id, PRESIGNED_URL_EXPIRATION
+                s3_key, UPLOAD_CONTENT_TYPE, 1, upload_id, PRESIGNED_URL_EXPIRATION
             )
 
             logger.info(
@@ -205,7 +210,7 @@ class ItemService:
         else:
             # Generate simple presigned PUT URL
             upload_url = self.s3_repo.generate_upload_url(
-                s3_key, request.content_type, PRESIGNED_URL_EXPIRATION
+                s3_key, UPLOAD_CONTENT_TYPE, PRESIGNED_URL_EXPIRATION
             )
 
             logger.info(
@@ -233,7 +238,9 @@ class ItemService:
             "created_at": int(now.timestamp()),
             "updated_at": int(now.timestamp()),
             "version": 1,
-            "size_bytes": request.size_bytes,
+            # size_bytes is a float in the generated model; DynamoDB numbers must
+            # be int/Decimal, so cast at the storage boundary.
+            "size_bytes": int(request.size_bytes),
             "upload_status": "PENDING",  # Mark as pending until completion
             "ttl": int(expires_at.timestamp()),
         }
@@ -257,17 +264,16 @@ class ItemService:
         # Store metadata
         self.items_repo.put_item(item)
 
-        return InitiateUploadResponse(
+        # NOTE: upload_id (multipart) is stored on the item but not returned —
+        # the contract has no field for it (multipart isn't wired in the client).
+        return InitiateItemUploadResponseContent(
             item_id=item_id,
             upload_url=upload_url,
-            expires_at=expires_at,
+            expires_at=int(expires_at.timestamp()),
             s3_key=s3_key,
-            upload_id=upload_id,
         )
 
-    def complete_upload(
-        self, user_id: str, request: CompleteUploadRequest
-    ) -> CompleteUploadResponse:
+    def complete_upload(self, user_id: str, item_id: str) -> CompleteItemUploadResponseContent:
         """
         Mark MEDIA upload as complete and finalize metadata.
 
@@ -290,14 +296,14 @@ class ItemService:
             StorageError: If DynamoDB operation fails or S3 verification fails
         """
         # Retrieve item from DynamoDB
-        key = {"PK": f"ITEM#{request.item_id}"}
+        key = {"PK": f"ITEM#{item_id}"}
 
         item = self.items_repo.get_item(key)
 
         if not item:
             logger.warning(
                 "Item not found for upload completion",
-                **{"user_id": user_id, "item_id": request.item_id},
+                **{"user_id": user_id, "item_id": item_id},
             )
             raise NotFoundError("Item not found")
 
@@ -312,7 +318,7 @@ class ItemService:
         if not s3_metadata:
             logger.error(
                 "S3 object not found after upload",
-                **{"user_id": user_id, "item_id": request.item_id, "s3_key": s3_key},
+                **{"user_id": user_id, "item_id": item_id, "s3_key": s3_key},
             )
 
             # Abort multipart upload if present
@@ -322,12 +328,12 @@ class ItemService:
                     self.s3_repo.abort_multipart_upload(s3_key, upload_id)
                     logger.info(
                         "Aborted multipart upload during cleanup",
-                        **{"item_id": request.item_id, "upload_id": upload_id},
+                        **{"item_id": item_id, "upload_id": upload_id},
                     )
                 except Exception as e:
                     logger.warning(
                         "Failed to abort multipart upload during cleanup",
-                        **{"item_id": request.item_id, "upload_id": upload_id, "error": str(e)},
+                        **{"item_id": item_id, "upload_id": upload_id, "error": str(e)},
                     )
                     raise
 
@@ -371,7 +377,7 @@ class ItemService:
                     "S3 object deleted during upload completion (TOCTOU race condition detected)",
                     **{
                         "user_id": user_id,
-                        "item_id": request.item_id,
+                        "item_id": item_id,
                         "s3_key": s3_key,
                     },
                 )
@@ -384,7 +390,7 @@ class ItemService:
                 "Conditional update failed during upload completion",
                 **{
                     "user_id": user_id,
-                    "item_id": request.item_id,
+                    "item_id": item_id,
                     "current_status": item.get("upload_status"),
                 },
             )
@@ -394,13 +400,17 @@ class ItemService:
             "Completed upload",
             **{
                 "user_id": user_id,
-                "vault_id": request.vault_id,
-                "item_id": request.item_id,
+                "vault_id": item.get("vault_id"),
+                "item_id": item_id,
                 "s3_version_id": s3_metadata.get("version_id"),
             },
         )
 
-        return CompleteUploadResponse(item_id=request.item_id, uploaded_at=now)
+        return CompleteItemUploadResponseContent(
+            item_id=item_id,
+            completed_at=int(now.timestamp()),
+            message="Upload completed successfully",
+        )
 
     def cleanup_failed_upload(
         self, item_id: str, s3_key: Optional[str], upload_id: Optional[str] = None

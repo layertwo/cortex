@@ -24,8 +24,15 @@ jobs:
       contents: read
 
     steps:
+
       - name: Checkout code
         uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: 17
+          cache: gradle
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -34,14 +41,20 @@ jobs:
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
-      # Single workspace install — covers @cortex/encryption and @cortex/web.
+      - name: Build Smithy model
+        working-directory: smithy
+        run: ./gradlew smithyBuild
+
+      # Single workspace install — covers @cortex/client, @cortex/encryption, @cortex/web.
       - name: Install dependencies
         run: npm ci
 
-      # Build @cortex/encryption first: @cortex/web imports its compiled dist
-      # (package main: dist/index.js), which a fresh `npm ci` does not produce.
-      - name: Build encryption package
-        run: npm run build:encryption
+      # Build generated/source packages whose compiled output @cortex/web imports
+      # (dist-*/dist), which a fresh `npm ci` does not produce.
+      - name: Build client + encryption packages
+        run: |
+          npm run build:client
+          npm run build:encryption
 
       # Runs test:encryption (jest) then test:web (vitest).
       - name: Run TypeScript/JS unit tests

@@ -14,15 +14,13 @@ from typing import Any, Optional
 import boto3
 
 from src.shared.exceptions import BadRequestError, NotFoundError
-from src.shared.logger import get_logger
-from src.shared.models import (
-    AddItemToCollectionRequest,
-    AddItemToCollectionResponse,
-    CreateCollectionRequest,
-    CreateCollectionResponse,
-    UpdateCollectionRequest,
-    UpdateCollectionResponse,
+from src.shared.generated.models import (
+    AddItemToCollectionResponseContent,
+    CreateCollectionRequestContent,
+    CreateCollectionResponseContent,
+    UpdateCollectionResponseContent,
 )
+from src.shared.logger import get_logger
 from src.shared.repository import (
     DynamoDBRepository,
     encode_pagination_token,
@@ -53,8 +51,8 @@ class CollectionService:
         self.items_repo = DynamoDBRepository(session, items_table_name)
 
     def create_collection(
-        self, user_id: str, request: CreateCollectionRequest
-    ) -> CreateCollectionResponse:
+        self, user_id: str, request: CreateCollectionRequestContent
+    ) -> CreateCollectionResponseContent:
         """
         Create collection with encrypted metadata.
 
@@ -100,9 +98,9 @@ class CollectionService:
             },
         )
 
-        return CreateCollectionResponse(
+        return CreateCollectionResponseContent(
             collection_id=collection_id,
-            created_at=now,
+            created_at=int(now.timestamp()),
         )
 
     def list_collections(
@@ -224,8 +222,8 @@ class CollectionService:
         return collection
 
     def update_collection(
-        self, user_id: str, request: UpdateCollectionRequest
-    ) -> UpdateCollectionResponse:
+        self, user_id: str, vault_id: str, collection_id: str, encrypted_metadata: bytes
+    ) -> UpdateCollectionResponseContent:
         """
         Update collection metadata.
 
@@ -234,7 +232,9 @@ class CollectionService:
 
         Args:
             user_id: Authenticated user ID
-            request: Update collection request
+            vault_id: Vault ID (collections are partitioned by vault)
+            collection_id: Collection ID to update
+            encrypted_metadata: New encrypted collection metadata
 
         Returns:
             Update collection response
@@ -245,7 +245,7 @@ class CollectionService:
             StorageError: If DynamoDB operation fails
         """
         # Verify collection exists and user owns it
-        collection = self.get_collection(user_id, request.vault_id, request.collection_id)
+        collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
             raise NotFoundError("Collection not found")
@@ -253,13 +253,13 @@ class CollectionService:
         # Update collection metadata
         now = datetime.now(tz=timezone.utc)
         key = {
-            "PK": f"VAULT#{request.vault_id}",
-            "SK": f"COLLECTION#{request.collection_id}",
+            "PK": f"VAULT#{vault_id}",
+            "SK": f"COLLECTION#{collection_id}",
         }
 
         update_expression = "SET encrypted_metadata = :metadata, updated_at = :updated_at"
         expression_attribute_values = {
-            ":metadata": request.encrypted_metadata,
+            ":metadata": encrypted_metadata,
             ":updated_at": int(now.timestamp()),
         }
 
@@ -273,14 +273,14 @@ class CollectionService:
             "Updated collection",
             **{
                 "user_id": user_id,
-                "vault_id": request.vault_id,
-                "collection_id": request.collection_id,
+                "vault_id": vault_id,
+                "collection_id": collection_id,
             },
         )
 
-        return UpdateCollectionResponse(
-            collection_id=request.collection_id,
-            updated_at=now,
+        return UpdateCollectionResponseContent(
+            collection_id=collection_id,
+            updated_at=int(now.timestamp()),
         )
 
     def delete_collection(self, user_id: str, vault_id: str, collection_id: str) -> None:
@@ -379,8 +379,8 @@ class CollectionService:
         )
 
     def add_item_to_collection(
-        self, user_id: str, request: AddItemToCollectionRequest
-    ) -> AddItemToCollectionResponse:
+        self, user_id: str, vault_id: str, collection_id: str, item_id: str
+    ) -> AddItemToCollectionResponseContent:
         """
         Add item to collection (many-to-many support).
 
@@ -389,7 +389,9 @@ class CollectionService:
 
         Args:
             user_id: Authenticated user ID
-            request: Add item to collection request
+            vault_id: Vault ID (collections are partitioned by vault)
+            collection_id: Collection ID to add the item to
+            item_id: Item ID to add
 
         Returns:
             Add item to collection response
@@ -400,13 +402,13 @@ class CollectionService:
             StorageError: If DynamoDB operation fails
         """
         # Verify collection exists and user owns it
-        collection = self.get_collection(user_id, request.vault_id, request.collection_id)
+        collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
             raise NotFoundError("Collection not found")
 
         # Verify item exists and user owns it via direct lookup
-        item = self.items_repo.get_item({"PK": f"ITEM#{request.item_id}", "SK": "METADATA"})
+        item = self.items_repo.get_item({"PK": f"ITEM#{item_id}", "SK": "METADATA"})
 
         if not item:
             raise NotFoundError("Item not found")
@@ -417,31 +419,31 @@ class CollectionService:
                 "User does not own item",
                 **{
                     "user_id": user_id,
-                    "item_id": request.item_id,
+                    "item_id": item_id,
                     "item_user_id": item["user_id"],
                 },
             )
             raise NotFoundError("Item not found")
 
         # Verify item belongs to the specified vault
-        if item["vault_id"] != request.vault_id:
+        if item["vault_id"] != vault_id:
             raise NotFoundError("Item not found")
 
         # Create item-collection association
         now = datetime.now(tz=timezone.utc)
 
         association = {
-            "PK": f"COLLECTION#{request.collection_id}",
-            "SK": f"ITEM#{request.item_id}",
-            "collection_id": request.collection_id,
-            "item_id": request.item_id,
+            "PK": f"COLLECTION#{collection_id}",
+            "SK": f"ITEM#{item_id}",
+            "collection_id": collection_id,
+            "item_id": item_id,
             "item_type": item["item_type"],  # Store item type for efficient lookups
-            "vault_id": request.vault_id,
+            "vault_id": vault_id,
             "user_id": user_id,
             "added_at": int(now.timestamp()),
             # GSI for reverse lookup (find collections by item)
-            "GSI1PK": f"ITEM#{request.item_id}",
-            "GSI1SK": f"COLLECTION#{request.collection_id}",
+            "GSI1PK": f"ITEM#{item_id}",
+            "GSI1SK": f"COLLECTION#{collection_id}",
         }
 
         # Store association with conditional write to prevent race condition
@@ -454,8 +456,8 @@ class CollectionService:
 
             # Only increment if put succeeded (new association created)
             collection_key = {
-                "PK": f"VAULT#{request.vault_id}",
-                "SK": f"COLLECTION#{request.collection_id}",
+                "PK": f"VAULT#{vault_id}",
+                "SK": f"COLLECTION#{collection_id}",
             }
 
             # Use ADD to increment atomically
@@ -475,32 +477,30 @@ class CollectionService:
                 "Item already in collection (idempotent operation)",
                 **{
                     "user_id": user_id,
-                    "vault_id": request.vault_id,
-                    "collection_id": request.collection_id,
-                    "item_id": request.item_id,
+                    "vault_id": vault_id,
+                    "collection_id": collection_id,
+                    "item_id": item_id,
                 },
             )
             # Return success response without incrementing count
-            return AddItemToCollectionResponse(
-                collection_id=request.collection_id,
-                item_id=request.item_id,
-                added_at=datetime.fromtimestamp(association["added_at"], tz=timezone.utc),
+            return AddItemToCollectionResponseContent(
+                message="Item added to collection",
+                added_at=association["added_at"],
             )
 
         logger.info(
             "Added item to collection",
             **{
                 "user_id": user_id,
-                "vault_id": request.vault_id,
-                "collection_id": request.collection_id,
-                "item_id": request.item_id,
+                "vault_id": vault_id,
+                "collection_id": collection_id,
+                "item_id": item_id,
             },
         )
 
-        return AddItemToCollectionResponse(
-            collection_id=request.collection_id,
-            item_id=request.item_id,
-            added_at=now,
+        return AddItemToCollectionResponseContent(
+            message="Item added to collection",
+            added_at=int(now.timestamp()),
         )
 
     def remove_item_from_collection(

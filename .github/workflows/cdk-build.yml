@@ -26,15 +26,24 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
-      # Node.js/CDK Setup
+      - uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: 17
+          cache: gradle
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: cdk/package-lock.json
+          cache-dependency-path: package-lock.json
+
+      - name: Build Smithy model
+        working-directory: smithy
+        run: ./gradlew smithyBuild
 
       - name: Install CDK dependencies
         working-directory: cdk

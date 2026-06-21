@@ -32,12 +32,14 @@ class TestCreateVaultRoute:
 
         assert response.status_code == 200
         body = response.json()
-        assert "vault_id" in body
-        assert "created_at" in body
+        # camelCase wire (Smithy contract); response now includes the salt.
+        assert "vaultId" in body
+        assert "vaultSalt" in body
+        assert "createdAt" in body
 
-    def test_create_vault_route_handler_with_provided_salt(self, client, dynamodb_stubber):
-        """Test create vault route handler accepts provided salt."""
-        provided_salt = secrets.token_bytes(16)
+    def test_create_vault_route_handler_accepts_encrypted_name(self, client, dynamodb_stubber):
+        """Test create vault route handler accepts the optional encrypted name."""
+        encrypted_name = secrets.token_bytes(32)
 
         # Stub successful put_item response
         dynamodb_stubber.add_response(
@@ -52,12 +54,12 @@ class TestCreateVaultRoute:
 
         response = client.post(
             "/v1/vaults",
-            json={"vault_salt": base64.b64encode(provided_salt).decode("utf-8")},
+            json={"encryptedName": base64.b64encode(encrypted_name).decode("utf-8")},
         )
 
         assert response.status_code == 200
         body = response.json()
-        assert "vault_id" in body
+        assert "vaultId" in body
 
 
 class TestGetVaultSaltRoute:
@@ -92,8 +94,8 @@ class TestGetVaultSaltRoute:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["vault_id"] == vault_id
-        assert "vault_salt" in body
+        # GetVaultSaltOutput is vaultSalt only (no vaultId in the contract).
+        assert "vaultSalt" in body
 
     def test_get_vault_salt_route_handler_vault_not_found(self, client, dynamodb_stubber):
         """Test get vault salt route handler returns 404 when vault not found."""

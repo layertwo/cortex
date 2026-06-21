@@ -175,6 +175,11 @@ structure GetCollectionInput {
     @httpLabel
     @documentation("Collection identifier")
     collectionId: String
+
+    @required
+    @httpQuery("vaultId")
+    @documentation("Vault identifier (collections are partitioned by vault)")
+    vaultId: String
 }
 
 structure GetCollectionOutput {
@@ -213,6 +218,11 @@ structure UpdateCollectionInput {
     collectionId: String
 
     @required
+    @httpQuery("vaultId")
+    @documentation("Vault identifier (collections are partitioned by vault)")
+    vaultId: String
+
+    @required
     @documentation("Updated encrypted collection metadata")
     encryptedMetadata: Blob
 }
@@ -232,6 +242,11 @@ structure DeleteCollectionInput {
     @httpLabel
     @documentation("Collection identifier")
     collectionId: String
+
+    @required
+    @httpQuery("vaultId")
+    @documentation("Vault identifier (collections are partitioned by vault)")
+    vaultId: String
 }
 
 structure DeleteCollectionOutput {
@@ -249,6 +264,11 @@ structure AddItemToCollectionInput {
     @httpLabel
     @documentation("Collection identifier")
     collectionId: String
+
+    @required
+    @httpQuery("vaultId")
+    @documentation("Vault identifier (collections are partitioned by vault)")
+    vaultId: String
 
     @required
     @documentation("Item identifier to add")
@@ -275,6 +295,11 @@ structure RemoveItemFromCollectionInput {
     @httpLabel
     @documentation("Item identifier to remove")
     itemId: String
+
+    @required
+    @httpQuery("vaultId")
+    @documentation("Vault identifier (collections are partitioned by vault)")
+    vaultId: String
 }
 
 structure RemoveItemFromCollectionOutput {

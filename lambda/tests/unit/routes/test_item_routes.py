@@ -4,9 +4,9 @@ Unit tests for item route handlers.
 Tests verify that item routes work correctly through the FastAPI test client.
 """
 
+import base64
 from datetime import datetime, timezone
 
-import pytest
 from botocore.stub import ANY
 
 
@@ -30,28 +30,26 @@ class TestCreateItemRoute:
         response = client.post(
             "/v1/items",
             json={
-                "vault_id": vault_id,
-                "item_type": "NOTE",
-                "encrypted_content": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
-                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+                "vaultId": vault_id,
+                "itemType": "NOTE",
+                "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
+                "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
         )
 
         assert response.status_code == 200
         body = response.json()
 
-        assert "item_id" in body, "Response should include item_id"
-        assert "item_type" in body, "Response should include item_type"
-        assert "created_at" in body, "Response should include created_at"
+        assert "itemId" in body, "Response should include itemId"
+        assert "itemType" in body, "Response should include itemType"
+        assert "createdAt" in body, "Response should include createdAt"
 
-        assert isinstance(body["item_id"], str), "item_id should be a string"
-        assert len(body["item_id"]) > 0, "item_id should not be empty"
-        assert body["item_type"] == "NOTE", f"item_type should be NOTE, got {body['item_type']}"
+        assert isinstance(body["itemId"], str), "itemId should be a string"
+        assert len(body["itemId"]) > 0, "itemId should not be empty"
+        assert body["itemType"] == "NOTE", f"itemType should be NOTE, got {body['itemType']}"
 
-        try:
-            datetime.fromisoformat(body["created_at"])
-        except ValueError:
-            pytest.fail(f"created_at should be ISO format datetime, got {body['created_at']}")
+        # createdAt is an epoch timestamp (number), not an ISO string
+        assert isinstance(body["createdAt"], (int, float))
 
 
 class TestInitiateUploadRoute:
@@ -74,39 +72,32 @@ class TestInitiateUploadRoute:
         response = client.post(
             "/v1/items/upload/init",
             json={
-                "vault_id": vault_id,
-                "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
-                "size_bytes": 50 * 1024 * 1024,  # 50MB - small file
-                "content_type": "image/jpeg",
+                "vaultId": vault_id,
+                "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+                "sizeBytes": 50 * 1024 * 1024,  # 50MB - small file
             },
         )
 
         assert response.status_code == 200
         body = response.json()
 
-        assert "item_id" in body, "Response should include item_id"
-        assert "upload_url" in body, "Response should include upload_url"
-        assert "expires_at" in body, "Response should include expires_at"
-        assert "s3_key" in body, "Response should include s3_key"
-        assert "upload_id" in body, "Response should include upload_id"
+        assert "itemId" in body, "Response should include itemId"
+        assert "uploadUrl" in body, "Response should include uploadUrl"
+        assert "expiresAt" in body, "Response should include expiresAt"
+        assert "s3Key" in body, "Response should include s3Key"
 
-        assert isinstance(body["item_id"], str), "item_id should be a string"
-        assert len(body["item_id"]) > 0, "item_id should not be empty"
+        assert isinstance(body["itemId"], str), "itemId should be a string"
+        assert len(body["itemId"]) > 0, "itemId should not be empty"
 
-        assert isinstance(body["upload_url"], str), "upload_url should be a string"
-        assert body["upload_url"].startswith("https://"), "upload_url should be HTTPS"
+        assert isinstance(body["uploadUrl"], str), "uploadUrl should be a string"
+        assert body["uploadUrl"].startswith("https://"), "uploadUrl should be HTTPS"
 
-        assert isinstance(body["s3_key"], str), "s3_key should be a string"
-        assert vault_id in body["s3_key"], f"s3_key should contain vault_id {vault_id}"
-        assert body["item_id"] in body["s3_key"], "s3_key should contain item_id"
+        assert isinstance(body["s3Key"], str), "s3Key should be a string"
+        assert vault_id in body["s3Key"], f"s3Key should contain vault_id {vault_id}"
+        assert body["itemId"] in body["s3Key"], "s3Key should contain itemId"
 
-        try:
-            datetime.fromisoformat(body["expires_at"])
-        except ValueError:
-            pytest.fail(f"expires_at should be ISO format datetime, got {body['expires_at']}")
-
-        # For small files (<100MB), upload_id should be None (no multipart)
-        assert body["upload_id"] is None, "upload_id should be None for small files"
+        # expiresAt is an epoch timestamp (number), not an ISO string
+        assert isinstance(body["expiresAt"], (int, float))
 
 
 class TestCompleteUploadRoute:
@@ -179,31 +170,22 @@ class TestCompleteUploadRoute:
             },
         )
 
-        response = client.post(
-            "/v1/items/upload/complete",
-            json={
-                "item_id": item_id,
-                "vault_id": vault_id,
-            },
-        )
+        # itemId is in the path now (Smithy contract); no request body.
+        response = client.post(f"/v1/items/{item_id}/upload/complete")
 
         assert response.status_code == 200
         body = response.json()
 
-        assert "item_id" in body, "Response should include item_id"
-        assert "uploaded_at" in body, "Response should include uploaded_at"
+        assert "itemId" in body, "Response should include itemId"
+        assert "completedAt" in body, "Response should include completedAt"
 
-        assert body["item_id"] == item_id, f"item_id should be {item_id}, got {body['item_id']}"
+        assert body["itemId"] == item_id, f"itemId should be {item_id}, got {body['itemId']}"
 
-        try:
-            uploaded_at = datetime.fromisoformat(body["uploaded_at"])
-            now = datetime.now(tz=timezone.utc)
-            time_diff = abs((now - uploaded_at.replace(tzinfo=timezone.utc)).total_seconds())
-            assert (
-                time_diff < 60
-            ), f"uploaded_at timestamp should be recent, got {body['uploaded_at']}"
-        except ValueError:
-            pytest.fail(f"uploaded_at should be ISO format datetime, got {body['uploaded_at']}")
+        # completedAt is an epoch timestamp; should be within ~60s of now
+        now_ts = datetime.now(tz=timezone.utc).timestamp()
+        assert (
+            abs(now_ts - body["completedAt"]) < 60
+        ), f"completedAt not recent: {body['completedAt']}"
 
 
 class TestListItemsRoute:
@@ -255,7 +237,7 @@ class TestListItemsRoute:
             },
         )
 
-        response = client.get("/v1/items", params={"vault_id": vault_id})
+        response = client.get("/v1/items", params={"vaultId": vault_id})
         body = response.json()
 
         assert response.status_code == 200
@@ -278,7 +260,7 @@ class TestListItemsRoute:
             },
         )
 
-        response = client.get("/v1/items", params={"vault_id": vault_id})
+        response = client.get("/v1/items", params={"vaultId": vault_id})
 
         assert response.status_code == 404
         body = response.json()
@@ -301,7 +283,7 @@ class TestListItemsRoute:
             },
         )
 
-        response = client.get("/v1/items", params={"vault_id": vault_id})
+        response = client.get("/v1/items", params={"vaultId": vault_id})
 
         assert response.status_code == 404
         body = response.json()
@@ -324,9 +306,11 @@ class TestGetItemRoute:
                 "Item": {
                     "user_id": {"S": user_id},
                     "item_id": {"S": item_id},
-                    "item_type": {"S": "event"},
+                    "item_type": {"S": "EVENT"},
                     "vault_id": {"S": vault_id},
-                    "encrypted_metadata": {"B": "foobar".encode()},
+                    "encrypted_content": {"B": b"secret-content"},
+                    "encrypted_metadata": {"B": b"foobar"},
+                    "version": {"N": "1"},
                     "created_at": {"N": now_timestamp},
                     "updated_at": {"N": now_timestamp},
                 }
@@ -341,12 +325,13 @@ class TestGetItemRoute:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["item_id"] == item_id
-        assert body["item_type"] == "event"
-        assert body["vault_id"] == vault_id
-        assert body["encrypted_metadata"] == "foobar"
-        assert "created_at" in body
-        assert "updated_at" in body
+        assert body["itemId"] == item_id
+        assert body["itemType"] == "EVENT"
+        assert body["vaultId"] == vault_id
+        # blobs are base64 on the wire now (not raw UTF-8)
+        assert body["encryptedMetadata"] == base64.b64encode(b"foobar").decode()
+        assert "createdAt" in body
+        assert "updatedAt" in body
 
 
 class TestUpdateItemRoute:
@@ -407,7 +392,7 @@ class TestDeleteItemRoute:
         assert response.status_code == 200
         body = response.json()
         assert body["message"] == "Item deleted successfully"
-        assert body["item_id"] == item_id
+        assert "deletedAt" in body
 
     def test_delete_item_route_enforces_user_authorization(
         self, client, dynamodb_stubber, items_table_name
@@ -504,8 +489,9 @@ class TestDownloadItemRoute:
         body = response.json()
 
         assert response.status_code == 200
-        assert body["s3_key"] == s3_key
-        assert s3_key in body["download_url"]
+        assert "downloadUrl" in body
+        assert s3_key in body["downloadUrl"]
+        assert "expiresAt" in body
 
 
 class TestSearchItemRoute:

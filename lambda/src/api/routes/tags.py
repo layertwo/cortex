@@ -6,8 +6,6 @@ This module implements tag-related endpoints for searching items by encrypted ta
 Requirements: 11.4, 11.5
 """
 
-from typing import Any, Optional
-
 from fastapi import APIRouter, Depends, Query
 
 from src.api.routes.base_route import BaseRoute
@@ -15,10 +13,36 @@ from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import BadRequestError
+from src.shared.generated.models import ItemData, SearchByTagResponseContent
 from src.shared.logger import get_logger
 from src.shared.util import _encode_binary
 
 logger = get_logger("tag_routes")
+
+
+def _tag_item_data(item) -> ItemData:
+    """Map a tag-search ItemMetadata to the generated ItemData model.
+
+    Blob fields are base64-encoded (Base64Bytes decodes them back); timestamps
+    become epoch floats. Built via dict-splat so the Base64Bytes-as-str inputs
+    don't trip static type checks (the validator decodes them at runtime).
+    """
+    fields = {
+        "item_id": item.item_id,
+        "vault_id": item.vault_id,
+        "item_type": item.item_type,
+        "encrypted_content": _encode_binary(item.encrypted_content),
+        "encrypted_metadata": _encode_binary(item.encrypted_metadata),
+        "encrypted_tags": (
+            [_encode_binary(tag) for tag in item.encrypted_tags] if item.encrypted_tags else None
+        ),
+        "size_bytes": item.size_bytes,
+        "s3_key": item.s3_key,
+        "created_at": item.created_at.timestamp(),
+        "updated_at": item.updated_at.timestamp(),
+        "version": item.version,
+    }
+    return ItemData(**fields)
 
 
 class SearchTagsRoute(BaseRoute):
@@ -36,27 +60,21 @@ class SearchTagsRoute(BaseRoute):
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/tags/search")
+        @app.get("/v1/tags/search", response_model=SearchByTagResponseContent)
         def handle(
-            vault_id: str = Query(..., description="Vault ID to search within"),
+            vault_id: str = Query(..., alias="vaultId", description="Vault ID to search within"),
             encrypted_tag: str = Query(
-                ..., description="Base64-encoded encrypted tag to search for"
+                ..., alias="encryptedTag", description="Base64-encoded encrypted tag"
             ),
-            page_size: int = Query(50, ge=1, le=100),
-            next_token: Optional[str] = Query(None),
+            page_size: int = Query(50, alias="pageSize", ge=1, le=100),
+            next_token: str | None = Query(None, alias="nextToken"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            Search by encrypted tag.
+            Search by encrypted tag, returning items with matching tags.
 
-            Query parameters:
-            - vault_id (required): Vault ID to search within
-            - encrypted_tag (required): Base64-encoded encrypted tag to search for
-            - page_size (optional): Number of results per page (default: 50, max: 100)
-            - next_token (optional): Pagination token from previous response
-
-            Returns:
-                List of items with matching encrypted tag
+            The server cannot decrypt the tag or the returned data; it matches
+            the (deterministically) encrypted tag against stored tag index rows.
 
             Requirements: 11.4, 11.5
             """
@@ -70,7 +88,6 @@ class SearchTagsRoute(BaseRoute):
                 )
                 raise BadRequestError("Invalid vault_id")
 
-            # Search by encrypted tag
             response = self.item_service.search_by_tag(
                 vault_id=vault_id,
                 encrypted_tag=encrypted_tag,
@@ -85,35 +102,10 @@ class SearchTagsRoute(BaseRoute):
                 result_count=len(response.items),
             )
 
-            # Build response
-            result: dict[str, Any] = {
-                "items": [
-                    {
-                        "item_id": item.item_id,
-                        "item_type": item.item_type,
-                        "encrypted_metadata": _encode_binary(item.encrypted_metadata),
-                        "encrypted_tags": (
-                            [_encode_binary(tag) for tag in item.encrypted_tags]
-                            if item.encrypted_tags
-                            else None
-                        ),
-                        "created_at": item.created_at.isoformat(),
-                        "updated_at": item.updated_at.isoformat(),
-                        "version": item.version,
-                    }
-                    for item in response.items
-                ],
-            }
+            items = [_tag_item_data(item) for item in response.items]
 
-            # Add optional fields for media items
-            for i, item in enumerate(response.items):
-                if hasattr(item, "s3_key") and item.s3_key:
-                    result["items"][i]["s3_key"] = item.s3_key
-                if hasattr(item, "size_bytes") and item.size_bytes:
-                    result["items"][i]["size_bytes"] = item.size_bytes
-
-            # Add pagination token if present
-            if response.next_token:
-                result["next_token"] = response.next_token
-
-            return result
+            return SearchByTagResponseContent(
+                items=items,
+                next_token=response.next_token or None,
+                total_count=len(items),
+            )

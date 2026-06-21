@@ -9,6 +9,7 @@ GSI1: VAULT#{vaultId}#TYPE#{itemType} for type-filtered queries
 GSI2: VAULT#{vaultId} for listing all items in vault
 """
 
+import base64
 import uuid
 from datetime import datetime, timezone
 
@@ -16,12 +17,11 @@ import pytest
 from botocore.stub import ANY
 
 from src.shared.exceptions import BadRequestError, NotFoundError
-from src.shared.models import (
-    CompleteUploadRequest,
-    CreateItemRequest,
-    InitiateUploadRequest,
-    ItemType,
+from src.shared.generated.models import (
+    CreateItemRequestContent,
+    InitiateItemUploadRequestContent,
 )
+from src.shared.models import ItemType
 
 
 class TestCreateItem:
@@ -29,12 +29,12 @@ class TestCreateItem:
 
     def test_create_note_item(self, item_service, dynamodb_stubber):
         """Test creating a NOTE item with inline content and tags uses transact_write_items."""
-        request = CreateItemRequest(
+        request = CreateItemRequestContent(
             vault_id="vault-123",
             item_type=ItemType.NOTE,
-            encrypted_content=b"encrypted-note-content",
-            encrypted_metadata=b"encrypted-metadata",
-            encrypted_tags=[b"tag1", b"tag2"],
+            encrypted_content=base64.b64encode(b"encrypted-note-content"),
+            encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
+            encrypted_tags=[base64.b64encode(b"tag1"), base64.b64encode(b"tag2")],
         )
 
         dynamodb_stubber.add_response("transact_write_items", {}, {"TransactItems": ANY})
@@ -43,16 +43,16 @@ class TestCreateItem:
 
         assert response.item_id is not None
         assert response.item_type == ItemType.NOTE
-        assert isinstance(response.created_at, datetime)
+        assert isinstance(response.created_at, (int, float))
 
     def test_create_task_item_with_date_bucket(self, item_service, dynamodb_stubber):
         """Test creating a TASK item with date bucket."""
-        request = CreateItemRequest(
+        request = CreateItemRequestContent(
             vault_id="vault-123",
             item_type=ItemType.TASK,
-            encrypted_content=b"encrypted-task-content",
-            encrypted_metadata=b"encrypted-metadata",
-            encrypted_date_bucket=b"encrypted-bucket",
+            encrypted_content=base64.b64encode(b"encrypted-task-content"),
+            encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
+            encrypted_date_bucket=base64.b64encode(b"encrypted-bucket"),
             time_bucket="2026-01-24T14:00",
         )
 
@@ -64,15 +64,15 @@ class TestCreateItem:
 
         assert response.item_id is not None
         assert response.item_type == ItemType.TASK
-        assert isinstance(response.created_at, datetime)
+        assert isinstance(response.created_at, (int, float))
 
     def test_create_event_item(self, item_service, dynamodb_stubber):
         """Test creating an EVENT item."""
-        request = CreateItemRequest(
+        request = CreateItemRequestContent(
             vault_id="vault-123",
             item_type=ItemType.EVENT,
-            encrypted_content=b"encrypted-event-content",
-            encrypted_metadata=b"encrypted-metadata",
+            encrypted_content=base64.b64encode(b"encrypted-event-content"),
+            encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
         )
 
         dynamodb_stubber.add_response(
@@ -86,11 +86,11 @@ class TestCreateItem:
 
     def test_create_item_without_tags_uses_put_item(self, item_service, dynamodb_stubber):
         """Test that creating item without tags uses simple put_item."""
-        request = CreateItemRequest(
+        request = CreateItemRequestContent(
             vault_id="vault-123",
             item_type=ItemType.NOTE,
-            encrypted_content=b"content",
-            encrypted_metadata=b"metadata",
+            encrypted_content=base64.b64encode(b"content"),
+            encrypted_metadata=base64.b64encode(b"metadata"),
         )
 
         dynamodb_stubber.add_response(
@@ -109,12 +109,11 @@ class TestInitiateUpload:
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test initiating upload for small file (<100MB)."""
-        request = InitiateUploadRequest(
+        request = InitiateItemUploadRequestContent(
             vault_id="vault-123",
-            encrypted_metadata=b"encrypted-metadata",
+            encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             size_bytes=50 * 1024 * 1024,  # 50MB
-            content_type="image/jpeg",
-            encrypted_tags=[b"tag1"],
+            encrypted_tags=[base64.b64encode(b"tag1")],
         )
 
         dynamodb_stubber.add_response(
@@ -126,18 +125,17 @@ class TestInitiateUpload:
         assert response.item_id is not None
         assert response.upload_url is not None
         assert response.s3_key is not None
-        assert response.upload_id is None  # No multipart for small files
-        assert isinstance(response.expires_at, datetime)
+        # expires_at is an epoch timestamp now (no upload_id in the contract)
+        assert isinstance(response.expires_at, (int, float))
 
     def test_initiate_large_file_upload(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test initiating multipart upload for large file (>100MB)."""
-        request = InitiateUploadRequest(
+        request = InitiateItemUploadRequestContent(
             vault_id="vault-123",
-            encrypted_metadata=b"encrypted-metadata",
+            encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             size_bytes=150 * 1024 * 1024,  # 150MB
-            content_type="video/mp4",
         )
 
         s3_stubber.add_response(
@@ -150,7 +148,8 @@ class TestInitiateUpload:
             {
                 "Bucket": files_bucket_name,
                 "Key": ANY,
-                "ContentType": "video/mp4",
+                # presigned PUT is signed with a fixed content type (zero-knowledge)
+                "ContentType": "application/octet-stream",
                 "ServerSideEncryption": "AES256",
             },
         )
@@ -164,7 +163,6 @@ class TestInitiateUpload:
         assert response.item_id is not None
         assert response.upload_url is not None
         assert response.s3_key is not None
-        assert response.upload_id == "test-upload-id"
 
 
 class TestCompleteUpload:
@@ -175,7 +173,6 @@ class TestCompleteUpload:
     ):
         """Test successfully completing an upload."""
         item_id = str(uuid.uuid4())
-        request = CompleteUploadRequest(item_id=item_id, vault_id="vault-123")
 
         # get_item with new schema: PK=ITEM#{itemId}
         dynamodb_stubber.add_response(
@@ -220,23 +217,20 @@ class TestCompleteUpload:
             },
         )
 
-        response = item_service.complete_upload("user-123", request)
+        response = item_service.complete_upload("user-123", item_id)
 
         assert response.item_id == item_id
 
     def test_complete_upload_item_not_found(self, item_service, dynamodb_stubber):
         """Test completing upload when item doesn't exist."""
-        request = CompleteUploadRequest(item_id="nonexistent-item", vault_id="vault-123")
-
         dynamodb_stubber.add_response("get_item", {}, {"TableName": "test-items-table", "Key": ANY})
 
         with pytest.raises(NotFoundError):
-            item_service.complete_upload("user-123", request)
+            item_service.complete_upload("user-123", "nonexistent-item")
 
     def test_complete_upload_unauthorized(self, item_service, dynamodb_stubber):
         """Test completing upload when user doesn't own the item."""
         item_id = str(uuid.uuid4())
-        request = CompleteUploadRequest(item_id=item_id, vault_id="vault-123")
 
         dynamodb_stubber.add_response(
             "get_item",
@@ -253,12 +247,11 @@ class TestCompleteUpload:
         )
 
         with pytest.raises(NotFoundError):
-            item_service.complete_upload("user-123", request)
+            item_service.complete_upload("user-123", item_id)
 
     def test_complete_upload_s3_object_missing(self, item_service, dynamodb_stubber, s3_stubber):
         """Test completing upload when S3 object doesn't exist."""
         item_id = str(uuid.uuid4())
-        request = CompleteUploadRequest(item_id=item_id, vault_id="vault-123")
 
         dynamodb_stubber.add_response(
             "get_item",
@@ -283,7 +276,7 @@ class TestCompleteUpload:
         )
 
         with pytest.raises(BadRequestError, match="Uploaded object not found"):
-            item_service.complete_upload("user-123", request)
+            item_service.complete_upload("user-123", item_id)
 
 
 class TestCleanupFailedUpload:

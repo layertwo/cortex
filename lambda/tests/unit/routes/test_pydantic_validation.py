@@ -50,12 +50,12 @@ class TestPydanticValidationErrorHandling:
 
         assert response.status_code == 422
 
-    def test_create_vault_invalid_salt(self, client):
-        """Test that invalid vault_salt returns validation error."""
+    def test_create_vault_invalid_encrypted_name(self, client):
+        """Test that an invalid base64 encryptedName returns a validation error."""
         response = client.post(
             "/v1/vaults",
             json={
-                "vault_salt": "invalid-base64!!!",  # Invalid base64
+                "encryptedName": "invalid-base64!!!",  # Invalid base64
             },
         )
 

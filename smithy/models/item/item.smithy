@@ -300,8 +300,7 @@ structure GetItemOutput {
     @documentation("Item type")
     itemType: ItemType
 
-    @required
-    @documentation("Encrypted item content")
+    @documentation("Encrypted item content (absent for MEDIA items, whose content lives in S3)")
     encryptedContent: Blob
 
     @required

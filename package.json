@@ -9,9 +9,10 @@
   "scripts": {
     "dev:web": "npm run dev --workspace=@cortex/web",
     "dev:encryption": "npm run build --workspace=@cortex/encryption -- --watch",
+    "build:client": "tsc -p packages/client/tsconfig.es.json && tsc -p packages/client/tsconfig.cjs.json && tsc -p packages/client/tsconfig.types.json",
     "build:web": "npm run build --workspace=@cortex/web",
     "build:encryption": "npm run build --workspace=@cortex/encryption",
-    "build:all": "npm run build:encryption && npm run build:web",
+    "build:all": "npm run build:client && npm run build:encryption && npm run build:web",
     "test:web": "npm run test --workspace=@cortex/web",
     "test:encryption": "npm run test --workspace=@cortex/encryption",
     "test:all": "npm run test:encryption && npm run test:web"

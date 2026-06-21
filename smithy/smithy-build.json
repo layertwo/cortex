@@ -2,13 +2,7 @@
   "version": "1.0",
   "sources": ["models"],
   "maven": {
-    "dependencies": [
-      "software.amazon.smithy:smithy-aws-traits:1.71.0",
-      "software.amazon.smithy:smithy-aws-apigateway-traits:1.71.0",
-      "software.amazon.smithy:smithy-validation-model:1.71.0",
-      "software.amazon.smithy:smithy-openapi:1.71.0",
-      "software.amazon.smithy:smithy-aws-apigateway-openapi:1.71.0"
-    ]
+    "dependencies": []
   },
   "projections": {
     "openapi": {
@@ -19,6 +13,16 @@
           "version": "3.0.2",
           "apiGatewayType": "REST",
           "disableCloudFormationSubstitution": true
+        }
+      }
+    },
+    "typescript": {
+      "plugins": {
+        "typescript-client-codegen": {
+          "package": "@cortex/client",
+          "packageVersion": "0.1.0",
+          "service": "layertwo.cortex#Cortex",
+          "protocol": "aws.protocols#restJson1"
         }
       }
     }
