@@ -9,8 +9,11 @@ import { getConfig } from '../config';
  * @httpBearerAuth). The generated restJson1 serde honors the camelCase contract
  * and marshals Blob fields as Uint8Array<->base64, so callers work in raw bytes
  * — no manual casing or base64 handling here.
+ *
+ * Exported so sibling API modules (e.g. ./items) send their own commands through
+ * the same endpoint + Cognito-bearer configuration.
  */
-function makeClient(): CortexClient {
+export function makeClient(): CortexClient {
   const { apiBaseUrl } = getConfig();
   return new CortexClient({
     endpoint: apiBaseUrl,
