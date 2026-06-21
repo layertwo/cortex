@@ -8,8 +8,6 @@ import {
 import type { ItemData } from '@cortex/client';
 import { makeClient } from './client';
 
-export type { ItemData };
-
 export async function initiateUpload(args: {
   vaultId: string;
   encryptedMetadata: Uint8Array;

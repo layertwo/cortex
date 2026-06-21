@@ -20,17 +20,15 @@ export default function FileList({ refreshKey }: { refreshKey: number }) {
       const { vaultId, metadataKey } = await getVaultKeys();
       const items = await listItems(vaultId);
       setRows(
-        items
-          .filter((it) => it.itemId)
-          .map((it) => {
-            let meta: FileMetadata | null = null;
-            try {
-              if (it.encryptedMetadata) meta = decryptMetadata(it.encryptedMetadata, metadataKey);
-            } catch {
-              meta = null;
-            }
-            return { itemId: it.itemId!, createdAt: it.createdAt, meta };
-          }),
+        items.map((it) => {
+          let meta: FileMetadata | null = null;
+          try {
+            if (it.encryptedMetadata) meta = decryptMetadata(it.encryptedMetadata, metadataKey);
+          } catch {
+            // metadata won't decrypt → show the row as unreadable
+          }
+          return { itemId: it.itemId!, createdAt: it.createdAt, meta };
+        }),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load files');
