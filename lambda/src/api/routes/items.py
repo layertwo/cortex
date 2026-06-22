@@ -22,9 +22,14 @@ from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
+    AbortItemUploadRequestContent,
+    AbortItemUploadResponseContent,
+    CompleteItemUploadRequestContent,
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
+    CreateUploadPartUrlsRequestContent,
+    CreateUploadPartUrlsResponseContent,
     DeleteItemResponseContent,
     GetItemDownloadUrlResponseContent,
     GetItemResponseContent,
@@ -147,17 +152,22 @@ class CompleteUploadRoute(BaseRoute):
         )
         def handle(
             item_id: str,
+            request: CompleteItemUploadRequestContent | None = None,
             user_id: str = Depends(get_current_user),
         ):
             """
             Mark MEDIA upload complete, store metadata.
 
             Verifies the upload succeeded and flips the item from PENDING to
-            COMPLETE. The item id comes from the path (Smithy contract).
+            COMPLETE. The item id comes from the path (Smithy contract). The
+            body is optional: multipart uploads send uploadId + parts, single-PUT
+            uploads send no body.
 
             Requirements: 1.4, 2.2, 2.5, 24.2
             """
-            response = self.item_service.complete_upload(user_id=user_id, item_id=item_id)
+            response = self.item_service.complete_upload(
+                user_id=user_id, item_id=item_id, request=request
+            )
 
             logger.info(
                 "Upload completed successfully",
@@ -166,6 +176,46 @@ class CompleteUploadRoute(BaseRoute):
             )
 
             return response
+
+
+class CreateUploadPartUrlsRoute(BaseRoute):
+    """Mint presigned URLs for multipart upload parts."""
+
+    def __init__(self, item_service: ItemService):
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.post(
+            "/v1/items/{item_id}/upload/parts",
+            response_model=CreateUploadPartUrlsResponseContent,
+        )
+        def handle(
+            item_id: str,
+            request: CreateUploadPartUrlsRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
+            """Mint a batch of presigned URLs for multipart upload parts."""
+            return self.item_service.create_upload_part_urls(user_id, item_id, request)
+
+
+class AbortItemUploadRoute(BaseRoute):
+    """Abort an in-progress multipart upload."""
+
+    def __init__(self, item_service: ItemService):
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.post(
+            "/v1/items/{item_id}/upload/abort",
+            response_model=AbortItemUploadResponseContent,
+        )
+        def handle(
+            item_id: str,
+            request: AbortItemUploadRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
+            """Abort an in-progress multipart upload and delete the pending item."""
+            return self.item_service.abort_upload(user_id, item_id, request)
 
 
 class ListItemsRoute(BaseRoute):

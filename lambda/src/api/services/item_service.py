@@ -16,11 +16,17 @@ import boto3
 
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
+    AbortItemUploadRequestContent,
+    AbortItemUploadResponseContent,
+    CompleteItemUploadRequestContent,
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
+    CreateUploadPartUrlsRequestContent,
+    CreateUploadPartUrlsResponseContent,
     InitiateItemUploadRequestContent,
     InitiateItemUploadResponseContent,
+    UploadPartUrl,
 )
 from src.shared.logger import get_logger
 from src.shared.models import ItemType, SearchByTagResponse
@@ -264,16 +270,68 @@ class ItemService:
         # Store metadata
         self.items_repo.put_item(item)
 
-        # NOTE: upload_id (multipart) is stored on the item but not returned —
-        # the contract has no field for it (multipart isn't wired in the client).
         return InitiateItemUploadResponseContent(
             item_id=item_id,
             upload_url=upload_url,
             expires_at=int(expires_at.timestamp()),
             s3_key=s3_key,
+            upload_id=upload_id,
         )
 
-    def complete_upload(self, user_id: str, item_id: str) -> CompleteItemUploadResponseContent:
+    def create_upload_part_urls(
+        self, user_id: str, item_id: str, request: CreateUploadPartUrlsRequestContent
+    ) -> CreateUploadPartUrlsResponseContent:
+        """
+        Mint presigned URLs for a batch of multipart upload parts.
+
+        The client requests fresh batches as it uploads, so URLs never outlive
+        the 15-minute presign window during a long transfer.
+        """
+        item = self.items_repo.get_item({"PK": f"ITEM#{item_id}"})
+        if not item or item["user_id"] != user_id:
+            raise NotFoundError("Item not found")
+
+        s3_key = item["s3_key"]
+        expires_at = int(
+            (
+                datetime.now(tz=timezone.utc) + timedelta(seconds=PRESIGNED_URL_EXPIRATION)
+            ).timestamp()
+        )
+        urls = [
+            UploadPartUrl(
+                part_number=n,
+                url=self.s3_repo.generate_multipart_upload_url(
+                    s3_key, UPLOAD_CONTENT_TYPE, n, request.upload_id, PRESIGNED_URL_EXPIRATION
+                ),
+                expires_at=expires_at,
+            )
+            for n in request.part_numbers
+        ]
+        return CreateUploadPartUrlsResponseContent(urls=urls)
+
+    def abort_upload(
+        self, user_id: str, item_id: str, request: AbortItemUploadRequestContent
+    ) -> AbortItemUploadResponseContent:
+        """Abort an in-progress multipart upload and delete the pending item."""
+        key = {"PK": f"ITEM#{item_id}"}
+        item = self.items_repo.get_item(key)
+        if not item or item["user_id"] != user_id:
+            raise NotFoundError("Item not found")
+
+        self.s3_repo.abort_multipart_upload(item["s3_key"], request.upload_id)
+        self.items_repo.delete_item(key)
+        logger.info(
+            "Aborted upload",
+            **{"user_id": user_id, "item_id": item_id, "upload_id": request.upload_id},
+        )
+        return AbortItemUploadResponseContent(message="Upload aborted")
+
+    def complete_upload(
+        self,
+        user_id: str,
+        item_id: str,
+        request: CompleteItemUploadRequestContent | None = None,
+    ) -> CompleteItemUploadResponseContent:
         """
         Mark MEDIA upload as complete and finalize metadata.
 
@@ -282,10 +340,14 @@ class ItemService:
         TOCTOU race conditions where S3 object could be deleted between
         verification and DynamoDB update.
 
+        For multipart uploads (request.parts present), the staged parts are
+        assembled into the final object before verification. Single-PUT uploads
+        (no request body / no parts) skip straight to verification.
+
         Args:
             item_id: Item ID to complete
             user_id: Authenticated user ID
-            request: Upload completion request
+            request: Upload completion request (multipart uploadId + parts; optional)
 
         Returns:
             Upload completion response
@@ -310,6 +372,15 @@ class ItemService:
         # Verify user owns the item
         if item["user_id"] != user_id:
             raise NotFoundError("Item not found")
+
+        # Multipart: assemble the staged parts into the final object before we
+        # verify it exists. Single-PUT uploads (no parts) skip straight to verify.
+        if request is not None and request.parts:
+            upload_id = request.upload_id or item.get("upload_id")
+            if not upload_id:
+                raise BadRequestError("Multipart completion requires an uploadId")
+            s3_parts = [{"PartNumber": p.part_number, "ETag": p.e_tag} for p in request.parts]
+            self.s3_repo.complete_multipart_upload(item["s3_key"], upload_id, s3_parts)
 
         # Verify S3 object exists and get metadata (including version if available)
         s3_key = item["s3_key"]

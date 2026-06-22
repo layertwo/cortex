@@ -12,7 +12,8 @@
           "protocol": "aws.protocols#restJson1",
           "version": "3.0.2",
           "apiGatewayType": "REST",
-          "disableCloudFormationSubstitution": true
+          "disableCloudFormationSubstitution": true,
+          "useIntegerType": true
         }
       }
     },

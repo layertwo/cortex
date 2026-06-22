@@ -871,3 +871,230 @@ class TestDeleteItem:
         )
 
         item_service.delete_item("user-123", "item-1")
+
+
+class TestCreateUploadPartUrls:
+    """Tests for create_upload_part_urls (multipart part-URL minting)."""
+
+    def _pending_media_item(self, item_id, user_id="user-123"):
+        return {
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",
+            "item_id": item_id,
+            "user_id": user_id,
+            "vault_id": "vault-1",
+            "s3_key": f"vault-1/{item_id}",
+            "upload_id": "u1",
+            "upload_status": "PENDING",
+        }
+
+    def test_mints_urls_for_requested_parts(self, item_service, dynamodb_stubber):
+        from src.shared.generated.models import CreateUploadPartUrlsRequestContent
+
+        item = self._pending_media_item("item-1")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+
+        req = CreateUploadPartUrlsRequestContent(upload_id="u1", part_numbers=[1, 2, 3])
+        resp = item_service.create_upload_part_urls("user-123", "item-1", req)
+
+        assert [u.part_number for u in resp.urls] == [1, 2, 3]
+        assert all(u.url for u in resp.urls)
+
+    def test_rejects_when_user_does_not_own_item(self, item_service, dynamodb_stubber):
+        from src.shared.generated.models import CreateUploadPartUrlsRequestContent
+
+        item = self._pending_media_item("item-1", user_id="someone-else")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        req = CreateUploadPartUrlsRequestContent(upload_id="u1", part_numbers=[1])
+        with pytest.raises(NotFoundError):
+            item_service.create_upload_part_urls("user-123", "item-1", req)
+
+
+class TestCompleteMultipartUpload:
+    """complete_upload assembles multipart parts before verifying the object."""
+
+    def _pending(self, item_id, user_id="user-123"):
+        return {
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",
+            "item_id": item_id,
+            "user_id": user_id,
+            "vault_id": "vault-1",
+            "s3_key": f"vault-1/{item_id}",
+            "upload_id": "u1",
+            "upload_status": "PENDING",
+        }
+
+    def test_assembles_parts_then_completes(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        from src.shared.generated.models import CompleteItemUploadRequestContent, UploadPart
+
+        item = self._pending("item-1")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        # multipart assembly happens first
+        s3_stubber.add_response(
+            "complete_multipart_upload",
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-1", "ETag": '"final"'},
+            {
+                "Bucket": files_bucket_name,
+                "Key": "vault-1/item-1",
+                "UploadId": "u1",
+                "MultipartUpload": {"Parts": [{"PartNumber": 1, "ETag": '"e1"'}]},
+            },
+        )
+        # then the existing verify (head_object) + status flip
+        s3_stubber.add_response(
+            "head_object",
+            {"ContentLength": 10},
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-1"},
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {}},
+            {
+                "Key": ANY,
+                "TableName": ANY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
+        req = CompleteItemUploadRequestContent(
+            upload_id="u1", parts=[UploadPart(part_number=1, e_tag='"e1"')]
+        )
+        resp = item_service.complete_upload("user-123", "item-1", req)
+        assert resp.item_id == "item-1"
+        s3_stubber.assert_no_pending_responses()
+
+    def test_single_put_path_unchanged_when_no_parts(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        item = self._pending("item-2")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        s3_stubber.add_response(
+            "head_object",
+            {"ContentLength": 10},
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-2"},
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {}},
+            {
+                "Key": ANY,
+                "TableName": ANY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeNames": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        resp = item_service.complete_upload("user-123", "item-2", None)  # no body → single-PUT
+        assert resp.item_id == "item-2"
+
+
+class TestAbortUpload:
+    def _pending(self, item_id, user_id="user-123"):
+        return {
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",
+            "item_id": item_id,
+            "user_id": user_id,
+            "vault_id": "vault-1",
+            "s3_key": f"vault-1/{item_id}",
+            "upload_id": "u1",
+        }
+
+    def test_aborts_and_deletes_pending_item(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        from src.shared.generated.models import AbortItemUploadRequestContent
+
+        item = self._pending("item-1")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        s3_stubber.add_response(
+            "abort_multipart_upload",
+            {},
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-1", "UploadId": "u1"},
+        )
+        dynamodb_stubber.add_response("delete_item", {}, {"TableName": ANY, "Key": ANY})
+
+        resp = item_service.abort_upload(
+            "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
+        )
+        assert resp.message
+        s3_stubber.assert_no_pending_responses()
+
+    def test_rejects_foreign_item(self, item_service, dynamodb_stubber):
+        from src.shared.generated.models import AbortItemUploadRequestContent
+
+        item = self._pending("item-1", user_id="someone-else")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        with pytest.raises(NotFoundError):
+            item_service.abort_upload(
+                "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
+            )
+
+
+class TestInitiateReturnsUploadId:
+    def test_multipart_returns_upload_id(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        # > 100 MB triggers multipart
+        s3_stubber.add_response(
+            "create_multipart_upload",
+            {"UploadId": "mp-123", "Bucket": files_bucket_name, "Key": "vaults/vault-1/files/x/y"},
+            {
+                "Bucket": files_bucket_name,
+                "Key": ANY,
+                "ContentType": ANY,
+                "ServerSideEncryption": "AES256",
+            },
+        )
+        dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
+
+        req = InitiateItemUploadRequestContent(
+            vault_id="vault-1",
+            encrypted_metadata=base64.b64encode(b"m"),
+            size_bytes=200 * 1024 * 1024,
+        )
+        resp = item_service.initiate_upload("user-123", req)
+        assert resp.upload_id == "mp-123"
+
+    def test_single_put_has_no_upload_id(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
+        req = InitiateItemUploadRequestContent(
+            vault_id="vault-1", encrypted_metadata=base64.b64encode(b"m"), size_bytes=1024
+        )
+        resp = item_service.initiate_upload("user-123", req)
+        assert resp.upload_id is None
