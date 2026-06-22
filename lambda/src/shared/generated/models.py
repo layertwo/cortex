@@ -11,6 +11,14 @@ from pydantic import Base64Bytes, Field
 from src.shared._codegen_base import GeneratedBaseModel
 
 
+class AbortItemUploadRequestContent(GeneratedBaseModel):
+    upload_id: Annotated[str, Field(alias="uploadId", description="Multipart upload id to abort")]
+
+
+class AbortItemUploadResponseContent(GeneratedBaseModel):
+    message: Annotated[str | None, Field(description="Confirmation message")] = None
+
+
 class AddItemToCollectionRequestContent(GeneratedBaseModel):
     item_id: Annotated[str, Field(alias="itemId", description="Item identifier to add")]
 
@@ -86,6 +94,15 @@ class CreateShareResponseContent(GeneratedBaseModel):
     ] = None
     is_password_protected: Annotated[
         bool, Field(alias="isPasswordProtected", description="Whether share is password protected")
+    ]
+
+
+class CreateUploadPartUrlsRequestContent(GeneratedBaseModel):
+    upload_id: Annotated[
+        str, Field(alias="uploadId", description="Multipart upload id from InitiateItemUpload")
+    ]
+    part_numbers: Annotated[
+        list[float], Field(alias="partNumbers", description="Part numbers to mint URLs for")
     ]
 
 
@@ -193,6 +210,13 @@ class InitiateItemUploadResponseContent(GeneratedBaseModel):
     s3_key: Annotated[
         str | None, Field(alias="s3Key", description="S3 key for the uploaded object")
     ] = None
+    upload_id: Annotated[
+        str | None,
+        Field(
+            alias="uploadId",
+            description="Multipart upload id (present only for files above the multipart threshold)",
+        ),
+    ] = None
 
 
 class InternalErrorResponseContent(GeneratedBaseModel):
@@ -285,6 +309,23 @@ class UpdateItemResponseContent(GeneratedBaseModel):
     version: Annotated[float, Field(description="New version number")]
 
 
+class UploadPart(GeneratedBaseModel):
+    part_number: Annotated[
+        float, Field(alias="partNumber", description="Part number (1-10000)", ge=1.0, le=10000.0)
+    ]
+    e_tag: Annotated[
+        str, Field(alias="eTag", description="S3 ETag returned when the part was uploaded")
+    ]
+
+
+class UploadPartUrl(GeneratedBaseModel):
+    part_number: Annotated[
+        float, Field(alias="partNumber", description="Part number this URL uploads")
+    ]
+    url: Annotated[str, Field(description="Presigned S3 URL for this part")]
+    expires_at: Annotated[float, Field(alias="expiresAt", description="URL expiration timestamp")]
+
+
 class ValidationErrorDetail(GeneratedBaseModel):
     field: Annotated[str, Field(description="Field name that failed validation")]
     message: Annotated[str, Field(description="Validation error message")]
@@ -295,6 +336,17 @@ class ValidationErrorResponseContent(GeneratedBaseModel):
     code: Annotated[str | None, Field(description="Error code for client handling")] = None
     errors: Annotated[
         list[ValidationErrorDetail] | None, Field(description="List of validation errors")
+    ] = None
+
+
+class CompleteItemUploadRequestContent(GeneratedBaseModel):
+    upload_id: Annotated[
+        str | None,
+        Field(alias="uploadId", description="Multipart upload id (omit for single-PUT uploads)"),
+    ] = None
+    parts: Annotated[
+        list[UploadPart] | None,
+        Field(description="Uploaded parts to assemble, in order (multipart only)"),
     ] = None
 
 
@@ -334,6 +386,12 @@ class CreateItemResponseContent(GeneratedBaseModel):
     item_type: Annotated[ItemType, Field(alias="itemType")]
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     version: Annotated[float, Field(description="Version number for conflict resolution")]
+
+
+class CreateUploadPartUrlsResponseContent(GeneratedBaseModel):
+    urls: Annotated[
+        list[UploadPartUrl], Field(description="Presigned URLs, one per requested part number")
+    ]
 
 
 class GetItemResponseContent(GeneratedBaseModel):

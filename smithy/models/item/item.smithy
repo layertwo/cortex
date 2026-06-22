@@ -21,6 +21,8 @@ resource Item {
     operations: [
         CompleteItemUpload
         GetItemDownloadUrl
+        CreateUploadPartUrls
+        AbortItemUpload
     ]
 }
 
@@ -220,6 +222,9 @@ structure InitiateItemUploadOutput {
 
     @documentation("S3 key for the uploaded object")
     s3Key: String
+
+    @documentation("Multipart upload id (present only for files above the multipart threshold)")
+    uploadId: String
 }
 
 structure CompleteItemUploadInput {
@@ -227,6 +232,12 @@ structure CompleteItemUploadInput {
     @httpLabel
     @documentation("Item identifier (must be MEDIA type)")
     itemId: String
+
+    @documentation("Multipart upload id (omit for single-PUT uploads)")
+    uploadId: String
+
+    @documentation("Uploaded parts to assemble, in order (multipart only)")
+    parts: UploadPartList
 }
 
 structure CompleteItemUploadOutput {
@@ -406,4 +417,111 @@ structure DeleteItemOutput {
     @required
     @documentation("Deletion timestamp")
     deletedAt: Timestamp
+}
+
+// ============================================================================
+// Multipart upload (large-file streaming, slice 2.5b)
+// ============================================================================
+@documentation("An uploaded multipart part and its S3 ETag")
+structure UploadPart {
+    @required
+    @documentation("Part number (1-10000)")
+    @range(min: 1, max: 10000)
+    partNumber: Integer
+
+    @required
+    @documentation("S3 ETag returned when the part was uploaded")
+    eTag: String
+}
+
+list UploadPartList {
+    member: UploadPart
+}
+
+list PartNumberList {
+    member: Integer
+}
+
+@documentation("A presigned URL for uploading one multipart part")
+structure UploadPartUrl {
+    @required
+    @documentation("Part number this URL uploads")
+    partNumber: Integer
+
+    @required
+    @documentation("Presigned S3 URL for this part")
+    url: String
+
+    @required
+    @documentation("URL expiration timestamp")
+    expiresAt: Timestamp
+}
+
+list UploadPartUrlList {
+    member: UploadPartUrl
+}
+
+@http(method: "POST", uri: "/v1/items/{itemId}/upload/parts")
+@documentation("Mint a batch of presigned URLs for multipart upload parts")
+operation CreateUploadPartUrls {
+    input: CreateUploadPartUrlsInput
+    output: CreateUploadPartUrlsOutput
+    errors: [
+        AuthenticationError
+        AuthorizationError
+        ResourceNotFoundError
+        ValidationError
+        InternalError
+    ]
+}
+
+structure CreateUploadPartUrlsInput {
+    @required
+    @httpLabel
+    @documentation("Item identifier (must be a pending MEDIA upload)")
+    itemId: String
+
+    @required
+    @documentation("Multipart upload id from InitiateItemUpload")
+    uploadId: String
+
+    @required
+    @documentation("Part numbers to mint URLs for")
+    partNumbers: PartNumberList
+}
+
+structure CreateUploadPartUrlsOutput {
+    @required
+    @documentation("Presigned URLs, one per requested part number")
+    urls: UploadPartUrlList
+}
+
+@http(method: "POST", uri: "/v1/items/{itemId}/upload/abort")
+@documentation("Abort an in-progress multipart upload and clean up the pending item")
+operation AbortItemUpload {
+    input: AbortItemUploadInput
+    output: AbortItemUploadOutput
+    errors: [
+        AuthenticationError
+        AuthorizationError
+        ResourceNotFoundError
+        ValidationError
+        InternalError
+    ]
+}
+
+structure AbortItemUploadInput {
+    @required
+    @httpLabel
+    @documentation("Item identifier")
+    itemId: String
+
+    @required
+    @documentation("Multipart upload id to abort")
+    uploadId: String
+}
+
+structure AbortItemUploadOutput {
+    @documentation("Confirmation message")
+    message: String
 }
