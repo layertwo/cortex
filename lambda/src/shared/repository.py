@@ -557,6 +557,43 @@ class S3Repository:
             )
             raise
 
+    def complete_multipart_upload(
+        self, object_key: str, upload_id: str, parts: list[dict]
+    ) -> None:
+        """
+        Complete a multipart upload, assembling the staged parts into one object.
+
+        Args:
+            object_key: S3 object key
+            upload_id: Multipart upload ID
+            parts: Ordered list of {"PartNumber": int, "ETag": str}
+
+        Raises:
+            ClientError: If S3 rejects the completion (e.g. missing/mismatched parts)
+        """
+        try:
+            self._client.complete_multipart_upload(
+                Bucket=self.bucket_name,
+                Key=object_key,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+            logger.info(
+                "Completed multipart upload",
+                **{"object_key": object_key, "upload_id": upload_id, "part_count": len(parts)},
+            )
+        except ClientError as e:
+            logger.error(
+                "Failed to complete multipart upload",
+                **{
+                    "error": str(e),
+                    "bucket": self.bucket_name,
+                    "key": object_key,
+                    "upload_id": upload_id,
+                },
+            )
+            raise
+
     def delete_object(self, object_key: str) -> None:
         """
         Delete object from S3.
