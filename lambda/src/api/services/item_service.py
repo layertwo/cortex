@@ -270,13 +270,12 @@ class ItemService:
         # Store metadata
         self.items_repo.put_item(item)
 
-        # NOTE: upload_id (multipart) is stored on the item but not returned —
-        # the contract has no field for it (multipart isn't wired in the client).
         return InitiateItemUploadResponseContent(
             item_id=item_id,
             upload_url=upload_url,
             expires_at=int(expires_at.timestamp()),
             s3_key=s3_key,
+            upload_id=upload_id,
         )
 
     def create_upload_part_urls(
@@ -294,7 +293,9 @@ class ItemService:
 
         s3_key = item["s3_key"]
         expires_at = int(
-            (datetime.now(tz=timezone.utc) + timedelta(seconds=PRESIGNED_URL_EXPIRATION)).timestamp()
+            (
+                datetime.now(tz=timezone.utc) + timedelta(seconds=PRESIGNED_URL_EXPIRATION)
+            ).timestamp()
         )
         urls = [
             UploadPartUrl(
@@ -378,9 +379,7 @@ class ItemService:
             upload_id = request.upload_id or item.get("upload_id")
             if not upload_id:
                 raise BadRequestError("Multipart completion requires an uploadId")
-            s3_parts = [
-                {"PartNumber": p.part_number, "ETag": p.e_tag} for p in request.parts
-            ]
+            s3_parts = [{"PartNumber": p.part_number, "ETag": p.e_tag} for p in request.parts]
             self.s3_repo.complete_multipart_upload(item["s3_key"], upload_id, s3_parts)
 
         # Verify S3 object exists and get metadata (including version if available)

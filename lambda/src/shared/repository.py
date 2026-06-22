@@ -557,9 +557,7 @@ class S3Repository:
             )
             raise
 
-    def complete_multipart_upload(
-        self, object_key: str, upload_id: str, parts: list[dict]
-    ) -> None:
+    def complete_multipart_upload(self, object_key: str, upload_id: str, parts: list[dict]) -> None:
         """
         Complete a multipart upload, assembling the staged parts into one object.
 

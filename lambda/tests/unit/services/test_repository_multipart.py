@@ -29,11 +29,15 @@ class TestCompleteMultipartUpload:
         )
 
         s3_repo.complete_multipart_upload(
-            "vault/item", "u1", [{"PartNumber": 1, "ETag": '"e1"'}, {"PartNumber": 2, "ETag": '"e2"'}]
+            "vault/item",
+            "u1",
+            [{"PartNumber": 1, "ETag": '"e1"'}, {"PartNumber": 2, "ETag": '"e2"'}],
         )
         s3_stubber.assert_no_pending_responses()
 
     def test_raises_on_s3_error(self, s3_repo, s3_stubber):
         s3_stubber.add_client_error("complete_multipart_upload", service_error_code="NoSuchUpload")
         with pytest.raises(Exception):
-            s3_repo.complete_multipart_upload("vault/item", "bad", [{"PartNumber": 1, "ETag": '"e1"'}])
+            s3_repo.complete_multipart_upload(
+                "vault/item", "bad", [{"PartNumber": 1, "ETag": '"e1"'}]
+            )

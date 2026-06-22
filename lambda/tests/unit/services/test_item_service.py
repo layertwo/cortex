@@ -957,7 +957,9 @@ class TestCompleteMultipartUpload:
         )
         # then the existing verify (head_object) + status flip
         s3_stubber.add_response(
-            "head_object", {"ContentLength": 10}, {"Bucket": files_bucket_name, "Key": "vault-1/item-1"}
+            "head_object",
+            {"ContentLength": 10},
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-1"},
         )
         dynamodb_stubber.add_response(
             "update_item",
@@ -990,7 +992,9 @@ class TestCompleteMultipartUpload:
             {"Key": ANY, "TableName": ANY},
         )
         s3_stubber.add_response(
-            "head_object", {"ContentLength": 10}, {"Bucket": files_bucket_name, "Key": "vault-1/item-2"}
+            "head_object",
+            {"ContentLength": 10},
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-2"},
         )
         dynamodb_stubber.add_response(
             "update_item",
@@ -1037,9 +1041,7 @@ class TestAbortUpload:
             {},
             {"Bucket": files_bucket_name, "Key": "vault-1/item-1", "UploadId": "u1"},
         )
-        dynamodb_stubber.add_response(
-            "delete_item", {}, {"TableName": ANY, "Key": ANY}
-        )
+        dynamodb_stubber.add_response("delete_item", {}, {"TableName": ANY, "Key": ANY})
 
         resp = item_service.abort_upload(
             "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
@@ -1060,3 +1062,39 @@ class TestAbortUpload:
             item_service.abort_upload(
                 "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
             )
+
+
+class TestInitiateReturnsUploadId:
+    def test_multipart_returns_upload_id(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        # > 100 MB triggers multipart
+        s3_stubber.add_response(
+            "create_multipart_upload",
+            {"UploadId": "mp-123", "Bucket": files_bucket_name, "Key": "vaults/vault-1/files/x/y"},
+            {
+                "Bucket": files_bucket_name,
+                "Key": ANY,
+                "ContentType": ANY,
+                "ServerSideEncryption": "AES256",
+            },
+        )
+        dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
+
+        req = InitiateItemUploadRequestContent(
+            vault_id="vault-1",
+            encrypted_metadata=base64.b64encode(b"m"),
+            size_bytes=200 * 1024 * 1024,
+        )
+        resp = item_service.initiate_upload("user-123", req)
+        assert resp.upload_id == "mp-123"
+
+    def test_single_put_has_no_upload_id(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
+        req = InitiateItemUploadRequestContent(
+            vault_id="vault-1", encrypted_metadata=base64.b64encode(b"m"), size_bytes=1024
+        )
+        resp = item_service.initiate_upload("user-123", req)
+        assert resp.upload_id is None
