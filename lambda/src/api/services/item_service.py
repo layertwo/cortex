@@ -16,6 +16,7 @@ import boto3
 
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
+    CompleteItemUploadRequestContent,
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
@@ -305,7 +306,12 @@ class ItemService:
         ]
         return CreateUploadPartUrlsResponseContent(urls=urls)
 
-    def complete_upload(self, user_id: str, item_id: str) -> CompleteItemUploadResponseContent:
+    def complete_upload(
+        self,
+        user_id: str,
+        item_id: str,
+        request: CompleteItemUploadRequestContent | None = None,
+    ) -> CompleteItemUploadResponseContent:
         """
         Mark MEDIA upload as complete and finalize metadata.
 
@@ -314,10 +320,14 @@ class ItemService:
         TOCTOU race conditions where S3 object could be deleted between
         verification and DynamoDB update.
 
+        For multipart uploads (request.parts present), the staged parts are
+        assembled into the final object before verification. Single-PUT uploads
+        (no request body / no parts) skip straight to verification.
+
         Args:
             item_id: Item ID to complete
             user_id: Authenticated user ID
-            request: Upload completion request
+            request: Upload completion request (multipart uploadId + parts; optional)
 
         Returns:
             Upload completion response
@@ -342,6 +352,17 @@ class ItemService:
         # Verify user owns the item
         if item["user_id"] != user_id:
             raise NotFoundError("Item not found")
+
+        # Multipart: assemble the staged parts into the final object before we
+        # verify it exists. Single-PUT uploads (no parts) skip straight to verify.
+        if request is not None and request.parts:
+            upload_id = request.upload_id or item.get("upload_id")
+            if not upload_id:
+                raise BadRequestError("Multipart completion requires an uploadId")
+            s3_parts = [
+                {"PartNumber": p.part_number, "ETag": p.e_tag} for p in request.parts
+            ]
+            self.s3_repo.complete_multipart_upload(item["s3_key"], upload_id, s3_parts)
 
         # Verify S3 object exists and get metadata (including version if available)
         s3_key = item["s3_key"]

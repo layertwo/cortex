@@ -22,6 +22,7 @@ from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
+    CompleteItemUploadRequestContent,
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
@@ -149,17 +150,22 @@ class CompleteUploadRoute(BaseRoute):
         )
         def handle(
             item_id: str,
+            request: CompleteItemUploadRequestContent | None = None,
             user_id: str = Depends(get_current_user),
         ):
             """
             Mark MEDIA upload complete, store metadata.
 
             Verifies the upload succeeded and flips the item from PENDING to
-            COMPLETE. The item id comes from the path (Smithy contract).
+            COMPLETE. The item id comes from the path (Smithy contract). The
+            body is optional: multipart uploads send uploadId + parts, single-PUT
+            uploads send no body.
 
             Requirements: 1.4, 2.2, 2.5, 24.2
             """
-            response = self.item_service.complete_upload(user_id=user_id, item_id=item_id)
+            response = self.item_service.complete_upload(
+                user_id=user_id, item_id=item_id, request=request
+            )
 
             logger.info(
                 "Upload completed successfully",
