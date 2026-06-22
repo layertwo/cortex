@@ -16,6 +16,8 @@ import boto3
 
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
+    AbortItemUploadRequestContent,
+    AbortItemUploadResponseContent,
     CompleteItemUploadRequestContent,
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
@@ -305,6 +307,23 @@ class ItemService:
             for n in request.part_numbers
         ]
         return CreateUploadPartUrlsResponseContent(urls=urls)
+
+    def abort_upload(
+        self, user_id: str, item_id: str, request: AbortItemUploadRequestContent
+    ) -> AbortItemUploadResponseContent:
+        """Abort an in-progress multipart upload and delete the pending item."""
+        key = {"PK": f"ITEM#{item_id}"}
+        item = self.items_repo.get_item(key)
+        if not item or item["user_id"] != user_id:
+            raise NotFoundError("Item not found")
+
+        self.s3_repo.abort_multipart_upload(item["s3_key"], request.upload_id)
+        self.items_repo.delete_item(key)
+        logger.info(
+            "Aborted upload",
+            **{"user_id": user_id, "item_id": item_id, "upload_id": request.upload_id},
+        )
+        return AbortItemUploadResponseContent(message="Upload aborted")
 
     def complete_upload(
         self,

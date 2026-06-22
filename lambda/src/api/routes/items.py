@@ -22,6 +22,8 @@ from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
+    AbortItemUploadRequestContent,
+    AbortItemUploadResponseContent,
     CompleteItemUploadRequestContent,
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
@@ -194,6 +196,26 @@ class CreateUploadPartUrlsRoute(BaseRoute):
         ):
             """Mint a batch of presigned URLs for multipart upload parts."""
             return self.item_service.create_upload_part_urls(user_id, item_id, request)
+
+
+class AbortItemUploadRoute(BaseRoute):
+    """Abort an in-progress multipart upload."""
+
+    def __init__(self, item_service: ItemService):
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.post(
+            "/v1/items/{item_id}/upload/abort",
+            response_model=AbortItemUploadResponseContent,
+        )
+        def handle(
+            item_id: str,
+            request: AbortItemUploadRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
+            """Abort an in-progress multipart upload and delete the pending item."""
+            return self.item_service.abort_upload(user_id, item_id, request)
 
 
 class ListItemsRoute(BaseRoute):

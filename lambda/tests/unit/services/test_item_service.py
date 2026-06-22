@@ -1007,3 +1007,56 @@ class TestCompleteMultipartUpload:
         )
         resp = item_service.complete_upload("user-123", "item-2", None)  # no body → single-PUT
         assert resp.item_id == "item-2"
+
+
+class TestAbortUpload:
+    def _pending(self, item_id, user_id="user-123"):
+        return {
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",
+            "item_id": item_id,
+            "user_id": user_id,
+            "vault_id": "vault-1",
+            "s3_key": f"vault-1/{item_id}",
+            "upload_id": "u1",
+        }
+
+    def test_aborts_and_deletes_pending_item(
+        self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
+    ):
+        from src.shared.generated.models import AbortItemUploadRequestContent
+
+        item = self._pending("item-1")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        s3_stubber.add_response(
+            "abort_multipart_upload",
+            {},
+            {"Bucket": files_bucket_name, "Key": "vault-1/item-1", "UploadId": "u1"},
+        )
+        dynamodb_stubber.add_response(
+            "delete_item", {}, {"TableName": ANY, "Key": ANY}
+        )
+
+        resp = item_service.abort_upload(
+            "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
+        )
+        assert resp.message
+        s3_stubber.assert_no_pending_responses()
+
+    def test_rejects_foreign_item(self, item_service, dynamodb_stubber):
+        from src.shared.generated.models import AbortItemUploadRequestContent
+
+        item = self._pending("item-1", user_id="someone-else")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        with pytest.raises(NotFoundError):
+            item_service.abort_upload(
+                "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
+            )
