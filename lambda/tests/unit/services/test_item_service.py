@@ -871,3 +871,48 @@ class TestDeleteItem:
         )
 
         item_service.delete_item("user-123", "item-1")
+
+
+class TestCreateUploadPartUrls:
+    """Tests for create_upload_part_urls (multipart part-URL minting)."""
+
+    def _pending_media_item(self, item_id, user_id="user-123"):
+        return {
+            "PK": f"ITEM#{item_id}",
+            "SK": "METADATA",
+            "item_id": item_id,
+            "user_id": user_id,
+            "vault_id": "vault-1",
+            "s3_key": f"vault-1/{item_id}",
+            "upload_id": "u1",
+            "upload_status": "PENDING",
+        }
+
+    def test_mints_urls_for_requested_parts(self, item_service, dynamodb_stubber):
+        from src.shared.generated.models import CreateUploadPartUrlsRequestContent
+
+        item = self._pending_media_item("item-1")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+
+        req = CreateUploadPartUrlsRequestContent(upload_id="u1", part_numbers=[1, 2, 3])
+        resp = item_service.create_upload_part_urls("user-123", "item-1", req)
+
+        assert [u.part_number for u in resp.urls] == [1, 2, 3]
+        assert all(u.url for u in resp.urls)
+
+    def test_rejects_when_user_does_not_own_item(self, item_service, dynamodb_stubber):
+        from src.shared.generated.models import CreateUploadPartUrlsRequestContent
+
+        item = self._pending_media_item("item-1", user_id="someone-else")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        req = CreateUploadPartUrlsRequestContent(upload_id="u1", part_numbers=[1])
+        with pytest.raises(NotFoundError):
+            item_service.create_upload_part_urls("user-123", "item-1", req)

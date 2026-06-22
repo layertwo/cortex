@@ -25,6 +25,8 @@ from src.shared.generated.models import (
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
+    CreateUploadPartUrlsRequestContent,
+    CreateUploadPartUrlsResponseContent,
     DeleteItemResponseContent,
     GetItemDownloadUrlResponseContent,
     GetItemResponseContent,
@@ -166,6 +168,26 @@ class CompleteUploadRoute(BaseRoute):
             )
 
             return response
+
+
+class CreateUploadPartUrlsRoute(BaseRoute):
+    """Mint presigned URLs for multipart upload parts."""
+
+    def __init__(self, item_service: ItemService):
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.post(
+            "/v1/items/{item_id}/upload/parts",
+            response_model=CreateUploadPartUrlsResponseContent,
+        )
+        def handle(
+            item_id: str,
+            request: CreateUploadPartUrlsRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
+            """Mint a batch of presigned URLs for multipart upload parts."""
+            return self.item_service.create_upload_part_urls(user_id, item_id, request)
 
 
 class ListItemsRoute(BaseRoute):

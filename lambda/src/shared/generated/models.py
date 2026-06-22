@@ -45,7 +45,7 @@ class CollectionData(GeneratedBaseModel):
         Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted collection metadata")
     ]
     item_count: Annotated[
-        float, Field(alias="itemCount", description="Number of items in collection")
+        int, Field(alias="itemCount", description="Number of items in collection")
     ]
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]
@@ -102,7 +102,7 @@ class CreateUploadPartUrlsRequestContent(GeneratedBaseModel):
         str, Field(alias="uploadId", description="Multipart upload id from InitiateItemUpload")
     ]
     part_numbers: Annotated[
-        list[float], Field(alias="partNumbers", description="Part numbers to mint URLs for")
+        list[int], Field(alias="partNumbers", description="Part numbers to mint URLs for")
     ]
 
 
@@ -193,7 +193,7 @@ class InitiateItemUploadRequestContent(GeneratedBaseModel):
         Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted metadata")
     ]
     size_bytes: Annotated[
-        float, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)", ge=1.0)
+        int, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)", ge=1)
     ]
     encrypted_tags: Annotated[
         list[Base64Bytes] | None,
@@ -298,7 +298,7 @@ class UpdateItemRequestContent(GeneratedBaseModel):
         str | None, Field(alias="timeBucket", description="Updated time bucket")
     ] = None
     expected_version: Annotated[
-        float | None,
+        int | None,
         Field(alias="expectedVersion", description="Expected version for optimistic locking"),
     ] = None
 
@@ -306,12 +306,12 @@ class UpdateItemRequestContent(GeneratedBaseModel):
 class UpdateItemResponseContent(GeneratedBaseModel):
     item_id: Annotated[str, Field(alias="itemId", description="Item identifier")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Update timestamp")]
-    version: Annotated[float, Field(description="New version number")]
+    version: Annotated[int, Field(description="New version number")]
 
 
 class UploadPart(GeneratedBaseModel):
     part_number: Annotated[
-        float, Field(alias="partNumber", description="Part number (1-10000)", ge=1.0, le=10000.0)
+        int, Field(alias="partNumber", description="Part number (1-10000)", ge=1, le=10000)
     ]
     e_tag: Annotated[
         str, Field(alias="eTag", description="S3 ETag returned when the part was uploaded")
@@ -320,7 +320,7 @@ class UploadPart(GeneratedBaseModel):
 
 class UploadPartUrl(GeneratedBaseModel):
     part_number: Annotated[
-        float, Field(alias="partNumber", description="Part number this URL uploads")
+        int, Field(alias="partNumber", description="Part number this URL uploads")
     ]
     url: Annotated[str, Field(description="Presigned S3 URL for this part")]
     expires_at: Annotated[float, Field(alias="expiresAt", description="URL expiration timestamp")]
@@ -385,7 +385,7 @@ class CreateItemResponseContent(GeneratedBaseModel):
     item_id: Annotated[str, Field(alias="itemId", description="Item identifier")]
     item_type: Annotated[ItemType, Field(alias="itemType")]
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
-    version: Annotated[float, Field(description="Version number for conflict resolution")]
+    version: Annotated[int, Field(description="Version number for conflict resolution")]
 
 
 class CreateUploadPartUrlsResponseContent(GeneratedBaseModel):
@@ -421,14 +421,14 @@ class GetItemResponseContent(GeneratedBaseModel):
         Field(alias="timeBucket", description="Plaintext time bucket (for tasks/events)"),
     ] = None
     size_bytes: Annotated[
-        float | None, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)")
+        int | None, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)")
     ] = None
     s3_key: Annotated[str | None, Field(alias="s3Key", description="S3 key (for MEDIA items)")] = (
         None
     )
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]
-    version: Annotated[float, Field(description="Version number for conflict resolution")]
+    version: Annotated[int, Field(description="Version number for conflict resolution")]
 
 
 class ItemData(GeneratedBaseModel):
@@ -458,14 +458,14 @@ class ItemData(GeneratedBaseModel):
         Field(alias="timeBucket", description="Plaintext time bucket (for tasks/events)"),
     ] = None
     size_bytes: Annotated[
-        float | None, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)")
+        int | None, Field(alias="sizeBytes", description="File size in bytes (for MEDIA items)")
     ] = None
     s3_key: Annotated[str | None, Field(alias="s3Key", description="S3 key (for MEDIA items)")] = (
         None
     )
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]
-    version: Annotated[float, Field(description="Version number for conflict resolution")]
+    version: Annotated[int, Field(description="Version number for conflict resolution")]
 
 
 class ListItemsResponseContent(GeneratedBaseModel):
@@ -474,7 +474,7 @@ class ListItemsResponseContent(GeneratedBaseModel):
         str | None, Field(alias="nextToken", description="Token for next page of results")
     ] = None
     total_count: Annotated[
-        float, Field(alias="totalCount", description="Total count of items (may be approximate)")
+        int, Field(alias="totalCount", description="Total count of items (may be approximate)")
     ]
 
 
@@ -484,7 +484,7 @@ class SearchByTagResponseContent(GeneratedBaseModel):
         str | None, Field(alias="nextToken", description="Token for next page of results")
     ] = None
     total_count: Annotated[
-        float, Field(alias="totalCount", description="Total count of matching items")
+        int, Field(alias="totalCount", description="Total count of matching items")
     ]
 
 
@@ -495,7 +495,7 @@ class GetCollectionResponseContent(GeneratedBaseModel):
         Base64Bytes, Field(alias="encryptedMetadata", description="Encrypted collection metadata")
     ]
     item_count: Annotated[
-        float, Field(alias="itemCount", description="Number of items in collection")
+        int, Field(alias="itemCount", description="Number of items in collection")
     ]
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]

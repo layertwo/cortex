@@ -32,6 +32,7 @@ from src.api.routes.collections import (
 from src.api.routes.items import (
     CompleteUploadRoute,
     CreateItemRoute,
+    CreateUploadPartUrlsRoute,
     DeleteItemRoute,
     DownloadItemRoute,
     GetItemRoute,
@@ -244,6 +245,7 @@ class ServiceProvider:
             CreateItemRoute(item_service=self.item_service),
             InitiateUploadRoute(item_service=self.item_service),
             CompleteUploadRoute(item_service=self.item_service),
+            CreateUploadPartUrlsRoute(item_service=self.item_service),
             ListItemsRoute(item_service=self.item_service, vault_service=self.vault_service),
             GetItemRoute(item_service=self.item_service, vault_service=self.vault_service),
             UpdateItemRoute(item_service=self.item_service),

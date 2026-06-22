@@ -19,8 +19,11 @@ from src.shared.generated.models import (
     CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
+    CreateUploadPartUrlsRequestContent,
+    CreateUploadPartUrlsResponseContent,
     InitiateItemUploadRequestContent,
     InitiateItemUploadResponseContent,
+    UploadPartUrl,
 )
 from src.shared.logger import get_logger
 from src.shared.models import ItemType, SearchByTagResponse
@@ -272,6 +275,35 @@ class ItemService:
             expires_at=int(expires_at.timestamp()),
             s3_key=s3_key,
         )
+
+    def create_upload_part_urls(
+        self, user_id: str, item_id: str, request: CreateUploadPartUrlsRequestContent
+    ) -> CreateUploadPartUrlsResponseContent:
+        """
+        Mint presigned URLs for a batch of multipart upload parts.
+
+        The client requests fresh batches as it uploads, so URLs never outlive
+        the 15-minute presign window during a long transfer.
+        """
+        item = self.items_repo.get_item({"PK": f"ITEM#{item_id}"})
+        if not item or item["user_id"] != user_id:
+            raise NotFoundError("Item not found")
+
+        s3_key = item["s3_key"]
+        expires_at = int(
+            (datetime.now(tz=timezone.utc) + timedelta(seconds=PRESIGNED_URL_EXPIRATION)).timestamp()
+        )
+        urls = [
+            UploadPartUrl(
+                part_number=n,
+                url=self.s3_repo.generate_multipart_upload_url(
+                    s3_key, UPLOAD_CONTENT_TYPE, n, request.upload_id, PRESIGNED_URL_EXPIRATION
+                ),
+                expires_at=expires_at,
+            )
+            for n in request.part_numbers
+        ]
+        return CreateUploadPartUrlsResponseContent(urls=urls)
 
     def complete_upload(self, user_id: str, item_id: str) -> CompleteItemUploadResponseContent:
         """
