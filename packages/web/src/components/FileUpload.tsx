@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { getVaultKeys } from '../vault/keyAccess';
-import { encryptFileForUpload } from '../items/itemCrypto';
-import { initiateUpload, putToS3, completeUpload } from '../api/items';
+import { uploadFileStreaming } from '../items/streamingUpload';
 
-export const MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+// Soft ceiling ~5 GB. S3 multipart's hard cap at 8 MiB parts is ~80 GB; we guard
+// well below that and show a clear message instead of letting a huge file hang.
+export const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
 
 export default function FileUpload({ onUploaded }: { onUploaded: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
 
   async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -15,23 +17,14 @@ export default function FileUpload({ onUploaded }: { onUploaded: () => void }) {
     if (!file) return;
     setError('');
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      setError("Files over 100 MB aren't supported yet — large-file streaming is coming.");
+      setError('Files over 5 GB aren’t supported.');
       return;
     }
     setBusy(true);
+    setProgress(0);
     try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
       const keys = await getVaultKeys();
-      const { blob, encryptedMetadata } = await encryptFileForUpload(
-        bytes, file.name, file.type || 'application/octet-stream', keys,
-      );
-      const { itemId, uploadUrl } = await initiateUpload({
-        vaultId: keys.vaultId,
-        encryptedMetadata,
-        sizeBytes: blob.length,
-      });
-      await putToS3(uploadUrl, blob);
-      await completeUpload(itemId);
+      await uploadFileStreaming(file, keys, setProgress);
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
@@ -46,7 +39,7 @@ export default function FileUpload({ onUploaded }: { onUploaded: () => void }) {
         Upload file
         <input type="file" onChange={onChange} disabled={busy} />
       </label>
-      {busy && <p>Encrypting and uploading…</p>}
+      {busy && <p>Encrypting and uploading… {Math.round(progress * 100)}%</p>}
       {error && <p role="alert">{error}</p>}
     </div>
   );

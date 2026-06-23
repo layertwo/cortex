@@ -28,13 +28,28 @@ vi.mock('@cortex/client', () => ({
   DeleteItemCommand: class {
     constructor(public input: unknown) { commands.push(['DeleteItem', input]); }
   },
+  CreateUploadPartUrlsCommand: class {
+    constructor(public input: unknown) { commands.push(['CreateUploadPartUrls', input]); }
+  },
+  AbortItemUploadCommand: class {
+    constructor(public input: unknown) { commands.push(['AbortItemUpload', input]); }
+  },
 }));
 vi.mock('aws-amplify/auth', () => ({
   fetchAuthSession: vi.fn(async () => ({ tokens: { idToken: { toString: () => 'JWT' } } })),
 }));
 vi.mock('../config', () => ({ getConfig: () => ({ apiBaseUrl: 'https://api' }) }));
 
-import { initiateUpload, putToS3, completeUpload, listItems, getDownloadUrl, deleteItem } from './items';
+import {
+  initiateUpload,
+  putToS3,
+  completeUpload,
+  createUploadPartUrls,
+  abortUpload,
+  listItems,
+  getDownloadUrl,
+  deleteItem,
+} from './items';
 
 beforeEach(() => {
   sendMock.mockReset();
@@ -51,11 +66,12 @@ describe('items api', () => {
     expect(commands).toContainEqual(['InitiateItemUpload', { vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200 }]);
   });
 
-  it('putToS3 PUTs raw bytes with NO Authorization header', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+  it('putToS3 PUTs raw bytes with NO Authorization header and returns the ETag', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200, headers: { ETag: '"abc"' } }));
     vi.stubGlobal('fetch', fetchMock);
     const blob = new Uint8Array([1, 2, 3]);
-    await putToS3('https://s3/put', blob);
+    const eTag = await putToS3('https://s3/put', blob);
+    expect(eTag).toBe('"abc"');
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://s3/put');
     expect(init.method).toBe('PUT');
@@ -68,10 +84,48 @@ describe('items api', () => {
     await expect(putToS3('https://s3/put', new Uint8Array([1]))).rejects.toThrow('403');
   });
 
-  it('completeUpload sends the command with the itemId', async () => {
+  it('putToS3 throws when the ETag header is missing (CORS not exposing it)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 200 })));
+    await expect(putToS3('https://s3/put', new Uint8Array([1]))).rejects.toThrow(/ETag/);
+  });
+
+  it('initiateUpload surfaces uploadId when the server sends one (multipart)', async () => {
+    sendMock.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
+    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), sizeBytes: 999 });
+    expect(out).toEqual({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
+  });
+
+  it('createUploadPartUrls maps the response to {partNumber, url}', async () => {
+    sendMock.mockResolvedValueOnce({
+      urls: [
+        { partNumber: 1, url: 'https://s3/p1', expiresAt: new Date(0) },
+        { partNumber: 2, url: 'https://s3/p2', expiresAt: new Date(0) },
+      ],
+    });
+    const urls = await createUploadPartUrls('i1', 'mp1', [1, 2]);
+    expect(urls).toEqual([{ partNumber: 1, url: 'https://s3/p1' }, { partNumber: 2, url: 'https://s3/p2' }]);
+    expect(commands).toContainEqual(['CreateUploadPartUrls', { itemId: 'i1', uploadId: 'mp1', partNumbers: [1, 2] }]);
+  });
+
+  it('completeUpload sends only the itemId for single-PUT', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', completedAt: new Date(0) });
     await completeUpload('i1');
     expect(commands).toContainEqual(['CompleteItemUpload', { itemId: 'i1' }]);
+  });
+
+  it('completeUpload passes uploadId + parts for multipart', async () => {
+    sendMock.mockResolvedValueOnce({ itemId: 'i1', completedAt: new Date(0) });
+    await completeUpload('i1', { uploadId: 'mp1', parts: [{ partNumber: 1, eTag: '"e1"' }] });
+    expect(commands).toContainEqual([
+      'CompleteItemUpload',
+      { itemId: 'i1', uploadId: 'mp1', parts: [{ partNumber: 1, eTag: '"e1"' }] },
+    ]);
+  });
+
+  it('abortUpload sends itemId + uploadId', async () => {
+    sendMock.mockResolvedValueOnce({ message: 'Upload aborted' });
+    await abortUpload('i1', 'mp1');
+    expect(commands).toContainEqual(['AbortItemUpload', { itemId: 'i1', uploadId: 'mp1' }]);
   });
 
   it('listItems sends vaultId and returns items', async () => {

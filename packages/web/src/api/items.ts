@@ -1,6 +1,8 @@
 import {
   InitiateItemUploadCommand,
   CompleteItemUploadCommand,
+  CreateUploadPartUrlsCommand,
+  AbortItemUploadCommand,
   ListItemsCommand,
   GetItemDownloadUrlCommand,
   DeleteItemCommand,
@@ -8,17 +10,20 @@ import {
 import type { ItemData } from '@cortex/client';
 import { makeClient } from './client';
 
+export type UploadedPart = { partNumber: number; eTag: string };
+
 export async function initiateUpload(args: {
   vaultId: string;
   encryptedMetadata: Uint8Array;
   sizeBytes: number;
-}): Promise<{ itemId: string; uploadUrl: string }> {
+}): Promise<{ itemId: string; uploadUrl: string; uploadId?: string }> {
   const out = await makeClient().send(new InitiateItemUploadCommand(args));
   if (!out.itemId || !out.uploadUrl) throw new Error('initiateUpload: incomplete response');
-  return { itemId: out.itemId, uploadUrl: out.uploadUrl };
+  // uploadId is present only when the server chose multipart (sizeBytes > threshold).
+  return { itemId: out.itemId, uploadUrl: out.uploadUrl, uploadId: out.uploadId };
 }
 
-export async function putToS3(uploadUrl: string, blob: Uint8Array): Promise<void> {
+export async function putToS3(uploadUrl: string, blob: Uint8Array): Promise<string> {
   // Raw PUT to the presigned URL — not a Smithy op, so no Authorization header
   // (the URL carries auth). The body is opaque ciphertext → octet-stream; the
   // real MIME lives only in the encrypted metadata.
@@ -30,10 +35,36 @@ export async function putToS3(uploadUrl: string, blob: Uint8Array): Promise<void
     headers: { 'Content-Type': 'application/octet-stream' },
   });
   if (!res.ok) throw new Error(`S3 upload failed: ${res.status}`);
+  // Multipart completion needs each part's ETag. The browser can only read it if
+  // the bucket CORS lists ETag under ExposeHeaders — otherwise this is null.
+  const eTag = res.headers.get('ETag') ?? res.headers.get('etag');
+  if (!eTag) throw new Error('S3 upload: missing ETag (bucket CORS must expose ETag)');
+  return eTag;
 }
 
-export async function completeUpload(itemId: string): Promise<void> {
-  await makeClient().send(new CompleteItemUploadCommand({ itemId }));
+export async function createUploadPartUrls(
+  itemId: string,
+  uploadId: string,
+  partNumbers: number[],
+): Promise<{ partNumber: number; url: string }[]> {
+  const out = await makeClient().send(
+    new CreateUploadPartUrlsCommand({ itemId, uploadId, partNumbers }),
+  );
+  return (out.urls ?? []).map((u) => {
+    if (u.partNumber == null || !u.url) throw new Error('createUploadPartUrls: incomplete URL');
+    return { partNumber: u.partNumber, url: u.url };
+  });
+}
+
+export async function completeUpload(
+  itemId: string,
+  opts?: { uploadId: string; parts: UploadedPart[] },
+): Promise<void> {
+  await makeClient().send(new CompleteItemUploadCommand({ itemId, ...opts }));
+}
+
+export async function abortUpload(itemId: string, uploadId: string): Promise<void> {
+  await makeClient().send(new AbortItemUploadCommand({ itemId, uploadId }));
 }
 
 export async function listItems(vaultId: string): Promise<ItemData[]> {

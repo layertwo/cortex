@@ -1,22 +1,10 @@
-import { encryptFileWithDek, decryptFileWithDek } from '@cortex/encryption';
-import { encodeItemBlob, decodeItemBlob } from './itemBlob';
-import { encryptMetadata, type FileMetadata } from './metadata';
+import { decryptFileWithDek } from '@cortex/encryption';
+import { decodeItemBlob } from './itemBlob';
+import { type FileMetadata } from './metadata';
 
-export async function encryptFileForUpload(
-  bytes: Uint8Array,
-  name: string,
-  contentType: string,
-  keys: { kek: Uint8Array; metadataKey: Uint8Array },
-): Promise<{ blob: Uint8Array; encryptedMetadata: Uint8Array; metadata: FileMetadata }> {
-  const contentId = crypto.randomUUID();
-  // fileId = contentId binds the DEK to this file (HMAC); wrappedDek is 97 bytes.
-  const { encryptedContent, wrappedDek } = await encryptFileWithDek(bytes, keys.kek, contentId);
-  const blob = encodeItemBlob(wrappedDek, encryptedContent);
-  const metadata: FileMetadata = { name, contentType, size: bytes.length, contentId };
-  const encryptedMetadata = await encryptMetadata(metadata, keys.metadataKey);
-  return { blob, encryptedMetadata, metadata };
-}
-
+// Legacy (Slice 2) whole-buffer download path. New uploads use the chunked
+// streaming format (see streamingUpload.ts); the download path selects this only
+// when metadata has no streamVersion. Kept for objects uploaded before 2.5c.
 export function decryptDownloadedBlob(
   blob: Uint8Array,
   metadata: FileMetadata,
