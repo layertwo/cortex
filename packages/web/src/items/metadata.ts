@@ -5,6 +5,9 @@ export interface FileMetadata {
   contentType: string;
   size: number;
   contentId: string;
+  // Set to STREAM_VERSION for chunked-stream uploads (2.5c). Absent ⇒ legacy
+  // Slice 2 whole-buffer object; the download path dispatches on this.
+  streamVersion?: number;
 }
 
 // Adapted for #208: the Smithy `encryptedMetadata` field is a Blob (Uint8Array)
