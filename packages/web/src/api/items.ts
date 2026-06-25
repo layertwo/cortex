@@ -6,6 +6,7 @@ import {
   ListItemsCommand,
   GetItemDownloadUrlCommand,
   DeleteItemCommand,
+  SearchByTagCommand,
 } from '@cortex/client';
 import type { ItemData } from '@cortex/client';
 import { makeClient } from './client';
@@ -69,6 +70,11 @@ export async function abortUpload(itemId: string, uploadId: string): Promise<voi
 
 export async function listItems(vaultId: string): Promise<ItemData[]> {
   const out = await makeClient().send(new ListItemsCommand({ vaultId }));
+  return out.items ?? [];
+}
+
+export async function searchByTag(vaultId: string, encryptedTag: string): Promise<ItemData[]> {
+  const out = await makeClient().send(new SearchByTagCommand({ vaultId, encryptedTag }));
   return out.items ?? [];
 }
 
