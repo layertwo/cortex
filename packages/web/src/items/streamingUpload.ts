@@ -4,6 +4,7 @@ import {
   generateNoncePrefix,
   buildStreamHeader,
   encryptChunk,
+  encryptTagForSearch,
   DEFAULT_CHUNK_SIZE,
   STREAM_HEADER_SIZE,
   STREAM_VERSION,
@@ -65,9 +66,10 @@ export async function uploadFileStreaming(
   file: File,
   keys: VaultKeys,
   onProgress?: (fraction: number) => void,
-  opts?: { chunkSize?: number }, // ponytail: chunkSize is in the header anyway; override is test-only
+  opts?: { chunkSize?: number; tags?: string[] }, // chunkSize override is test-only
 ): Promise<void> {
   const chunkSize = opts?.chunkSize ?? DEFAULT_CHUNK_SIZE;
+  const tags = opts?.tags?.map((t) => t.trim()).filter(Boolean) ?? [];
   const plaintextSize = file.size;
   const partCount = Math.max(1, Math.ceil(plaintextSize / chunkSize));
   const sizeBytes = WRAPPED_DEK_SIZE + STREAM_HEADER_SIZE + plaintextSize + TAG_SIZE * partCount;
@@ -85,13 +87,19 @@ export async function uploadFileStreaming(
       size: plaintextSize,
       contentId,
       streamVersion: STREAM_VERSION,
+      ...(tags.length ? { tags } : {}),
     };
     const encryptedMetadata = await encryptMetadata(metadata, keys.metadataKey);
+
+    // Searchable form: one-way HMAC per tag (see encryptTagForSearch). Keyed on
+    // metadataKey + vaultId so the search path produces matching HMACs.
+    const encryptedTags = tags.map((t) => encryptTagForSearch(t, keys.metadataKey, keys.vaultId));
 
     const { itemId, uploadUrl, uploadId } = await initiateUpload({
       vaultId: keys.vaultId,
       encryptedMetadata,
       sizeBytes,
+      ...(encryptedTags.length ? { encryptedTags } : {}),
     });
 
     // Read + encrypt one chunk lazily; part 1 prepends wrappedDek + header.

@@ -30,7 +30,16 @@ describe('FileUpload', () => {
       expect.objectContaining({ name: 'a.png' }),
       expect.objectContaining({ vaultId: 'v1' }),
       expect.any(Function),
+      expect.objectContaining({ tags: expect.any(Array) }),
     );
+  });
+
+  it('passes parsed tags from the tags input', async () => {
+    render(<FileUpload onUploaded={vi.fn()} />);
+    await userEvent.type(screen.getByLabelText(/tags/i), 'Trip, beach ,');
+    await userEvent.upload(screen.getByLabelText(/upload/i), pick('a.png', 3));
+    await waitFor(() => expect(h.uploadFileStreaming).toHaveBeenCalled());
+    expect(h.uploadFileStreaming.mock.calls[0][3]).toEqual({ tags: ['Trip', 'beach'] });
   });
 
   it('rejects files over the 5 GB cap without uploading', async () => {

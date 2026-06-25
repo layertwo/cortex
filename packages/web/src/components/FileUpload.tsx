@@ -9,6 +9,7 @@ export const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024;
 export default function FileUpload({ onUploaded }: { onUploaded: () => void }) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [tags, setTags] = useState('');
   const [error, setError] = useState('');
 
   async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -24,7 +25,10 @@ export default function FileUpload({ onUploaded }: { onUploaded: () => void }) {
     setProgress(0);
     try {
       const keys = await getVaultKeys();
-      await uploadFileStreaming(file, keys, setProgress);
+      await uploadFileStreaming(file, keys, setProgress, {
+        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+      });
+      setTags('');
       onUploaded();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
@@ -35,6 +39,14 @@ export default function FileUpload({ onUploaded }: { onUploaded: () => void }) {
 
   return (
     <div>
+      <input
+        type="text"
+        aria-label="tags"
+        placeholder="tags, comma separated"
+        value={tags}
+        onChange={(e) => setTags(e.target.value)}
+        disabled={busy}
+      />
       <label>
         Upload file
         <input type="file" onChange={onChange} disabled={busy} />
