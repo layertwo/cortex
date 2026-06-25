@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getVaultKeys } from '../vault/keyAccess';
-import { listItems, getDownloadUrl, deleteItem } from '../api/items';
+import { listItems, getDownloadUrl, deleteItem, searchByTag } from '../api/items';
+import { getCollection, listCollections, addItemToCollection } from '../api/collections';
 import { decryptMetadata, type FileMetadata } from '../items/metadata';
 import { decryptDownloadedBlob } from '../items/itemCrypto';
+import { decryptCollectionName } from '../items/collectionMetadata';
 import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
+import type { View } from './CollectionSidebar';
 
 interface Row {
   itemId: string;
-  createdAt?: Date; // generated ItemData.createdAt is a Date (not epoch seconds)
+  createdAt?: Date;
   meta: FileMetadata | null; // null = metadata failed to decrypt
 }
 
-export default function FileList({ refreshKey }: { refreshKey: number }) {
+export default function FileList({ view, refreshKey }: { view: View; refreshKey: number }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState('');
 
@@ -19,7 +22,13 @@ export default function FileList({ refreshKey }: { refreshKey: number }) {
     setError('');
     try {
       const { vaultId, metadataKey } = await getVaultKeys();
-      const items = await listItems(vaultId);
+      // All three sources return ItemData[]; the view picks which.
+      const items =
+        view.kind === 'collection'
+          ? await getCollection(view.id)
+          : view.kind === 'tag'
+            ? await searchByTag(vaultId, view.encryptedTag)
+            : await listItems(vaultId);
       setRows(
         items.map((it) => {
           let meta: FileMetadata | null = null;
@@ -34,7 +43,7 @@ export default function FileList({ refreshKey }: { refreshKey: number }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load files');
     }
-  }, []);
+  }, [view]);
 
   useEffect(() => {
     void load();
@@ -84,11 +93,62 @@ export default function FileList({ refreshKey }: { refreshKey: number }) {
         <li key={row.itemId}>
           <span>{row.meta ? row.meta.name : '(unreadable)'}</span>
           {row.meta && <span> · {row.meta.size} bytes</span>}
+          {row.meta?.tags?.map((t) => (
+            <span key={t} className="tag-chip"> #{t}</span>
+          ))}
           {row.createdAt && <span> · {row.createdAt.toLocaleDateString()}</span>}
           <button onClick={() => onDownload(row)} disabled={!row.meta}>Download</button>
           <button onClick={() => onDelete(row.itemId)}>Delete</button>
+          {row.meta && <AddToCollection itemId={row.itemId} onChanged={load} />}
         </li>
       ))}
     </ul>
   );
+}
+
+function AddToCollection({ itemId, onChanged }: { itemId: string; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [cols, setCols] = useState<{ id: string; name: string }[]>([]);
+
+  async function openMenu() {
+    const { vaultId, metadataKey } = await getVaultKeys();
+    const list = await listCollections(vaultId);
+    setCols(
+      list.map((c) => ({
+        id: c.collectionId!,
+        name: c.encryptedMetadata ? tryName(c.encryptedMetadata, metadataKey) : '(unreadable)',
+      })),
+    );
+    setOpen(true);
+  }
+
+  async function add(collectionId: string) {
+    const { vaultId } = await getVaultKeys();
+    await addItemToCollection(collectionId, vaultId, itemId);
+    setOpen(false);
+    onChanged();
+  }
+
+  return (
+    <span>
+      <button onClick={openMenu}>Add to collection</button>
+      {open && (
+        <ul role="menu">
+          {cols.map((c) => (
+            <li key={c.id}>
+              <button role="menuitem" onClick={() => add(c.id)}>{c.name}</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </span>
+  );
+}
+
+function tryName(blob: Uint8Array, metadataKey: Uint8Array): string {
+  try {
+    return decryptCollectionName(blob, metadataKey);
+  } catch {
+    return '(unreadable)';
+  }
 }
