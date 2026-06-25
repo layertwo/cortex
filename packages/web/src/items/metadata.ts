@@ -8,6 +8,9 @@ export interface FileMetadata {
   // Set to STREAM_VERSION for chunked-stream uploads (2.5c). Absent ⇒ legacy
   // Slice 2 whole-buffer object; the download path dispatches on this.
   streamVersion?: number;
+  // Readable tags (chips). The searchable form is the one-way HMAC encryptedTags
+  // on the item; this plaintext copy lives here so the UI can display them.
+  tags?: string[];
 }
 
 // Adapted for #208: the Smithy `encryptedMetadata` field is a Blob (Uint8Array)
