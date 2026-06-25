@@ -25,7 +25,7 @@ export default function FileList({ view, refreshKey }: { view: View; refreshKey:
       // All three sources return ItemData[]; the view picks which.
       const items =
         view.kind === 'collection'
-          ? await getCollection(view.id)
+          ? await getCollection(view.id, vaultId)
           : view.kind === 'tag'
             ? await searchByTag(vaultId, view.encryptedTag)
             : await listItems(vaultId);

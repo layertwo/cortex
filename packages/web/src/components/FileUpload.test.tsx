@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 
 const h = vi.hoisted(() => ({
   getVaultKeys: vi.fn(async () => ({ vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32) })),
-  uploadFileStreaming: vi.fn(async () => {}),
+  uploadFileStreaming: vi.fn(async (..._args: unknown[]) => {}),
 }));
 vi.mock('../vault/keyAccess', () => ({ getVaultKeys: h.getVaultKeys }));
 vi.mock('../items/streamingUpload', () => ({ uploadFileStreaming: h.uploadFileStreaming }));

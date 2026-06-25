@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   deleteItem: vi.fn(async () => {}),
   searchByTag: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
   getCollection: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
-  listCollections: vi.fn(async () => []),
+  listCollections: vi.fn(async (): Promise<import('@cortex/client').CollectionData[]> => []),
   addItemToCollection: vi.fn(async () => {}),
   decryptMetadata: vi.fn((): FileMetadata => ({ name: 'cat.png', contentType: 'image/png', size: 1234, contentId: 'c1' })),
   decryptDownloadedBlob: vi.fn(() => new Uint8Array([1, 2, 3])),
@@ -60,7 +60,7 @@ describe('FileList', () => {
 
   it('a collection view loads via getCollection, not listItems', async () => {
     render(<FileList view={{ kind: 'collection', id: 'c1', name: 'Trip' }} refreshKey={0} />);
-    await waitFor(() => expect(h.getCollection).toHaveBeenCalledWith('c1'));
+    await waitFor(() => expect(h.getCollection).toHaveBeenCalledWith('c1', 'v1'));
     expect(h.listItems).not.toHaveBeenCalled();
   });
 

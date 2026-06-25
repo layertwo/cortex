@@ -21,8 +21,8 @@ export async function listCollections(vaultId: string): Promise<CollectionData[]
   return out.collections ?? [];
 }
 
-export async function getCollection(collectionId: string): Promise<ItemData[]> {
-  const out = await makeClient().send(new GetCollectionCommand({ collectionId }));
+export async function getCollection(collectionId: string, vaultId: string): Promise<ItemData[]> {
+  const out = await makeClient().send(new GetCollectionCommand({ collectionId, vaultId }));
   return out.items ?? [];
 }
 

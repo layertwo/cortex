@@ -64,8 +64,8 @@ describe('collections api', () => {
   it('getCollection returns its items (or [])', async () => {
     const items = [{ itemId: 'i1', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(0) }];
     sendMock.mockResolvedValueOnce({ collectionId: 'c1', items });
-    expect(await getCollection('c1')).toBe(items);
-    expect(commands).toContainEqual(['GetCollection', { collectionId: 'c1' }]);
+    expect(await getCollection('c1', 'v1')).toBe(items);
+    expect(commands).toContainEqual(['GetCollection', { collectionId: 'c1', vaultId: 'v1' }]);
   });
 
   it('add/remove/update/delete send the right inputs', async () => {
