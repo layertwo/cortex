@@ -20,6 +20,7 @@ from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
     CreateItemRequestContent,
     InitiateItemUploadRequestContent,
+    UpdateItemRequestContent,
 )
 from src.shared.models import ItemType
 
@@ -1098,3 +1099,86 @@ class TestInitiateReturnsUploadId:
         )
         resp = item_service.initiate_upload("user-123", req)
         assert resp.upload_id is None
+
+
+class TestUpdateItem:
+    """Tests for update_item (tags-focused)."""
+
+    def _existing_item(self, user_id="user-123", tags=(b"tagA", b"tagB"), version=1):
+        item = {
+            "PK": {"S": "ITEM#item-1"},
+            "SK": {"S": "METADATA"},
+            "item_id": {"S": "item-1"},
+            "item_type": {"S": "MEDIA"},
+            "vault_id": {"S": "vault-123"},
+            "user_id": {"S": user_id},
+            "encrypted_metadata": {"B": b"old-metadata"},
+            "created_at": {"N": "1234567890"},
+            "updated_at": {"N": "1234567890"},
+            "version": {"N": str(version)},
+        }
+        if tags:
+            item["encrypted_tags"] = {"L": [{"B": t} for t in tags]}
+        return item
+
+    def test_update_metadata_and_tags_bumps_version_and_reconciles(
+        self, item_service, dynamodb_stubber
+    ):
+        # old tags {tagA, tagB} -> new {tagB, tagC}: delete tagA row, add tagC row.
+        dynamodb_stubber.add_response(
+            "get_item", {"Item": self._existing_item()}, {"TableName": "test-items-table", "Key": ANY}
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {}},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        dynamodb_stubber.add_response(
+            "batch_write_item", {"UnprocessedItems": {}}, {"RequestItems": ANY}
+        )
+
+        request = UpdateItemRequestContent(
+            encrypted_metadata=base64.b64encode(b"new-metadata"),
+            encrypted_tags=[base64.b64encode(b"tagB"), base64.b64encode(b"tagC")],
+        )
+        response = item_service.update_item("user-123", "item-1", request)
+
+        assert response.item_id == "item-1"
+        assert response.version == 2
+
+    def test_update_not_found(self, item_service, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item", {}, {"TableName": "test-items-table", "Key": ANY}
+        )
+        request = UpdateItemRequestContent(encrypted_metadata=base64.b64encode(b"x"))
+        with pytest.raises(NotFoundError, match="Item not found"):
+            item_service.update_item("user-123", "item-1", request)
+
+    def test_update_unauthorized(self, item_service, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": self._existing_item(user_id="other-user")},
+            {"TableName": "test-items-table", "Key": ANY},
+        )
+        request = UpdateItemRequestContent(encrypted_metadata=base64.b64encode(b"x"))
+        with pytest.raises(NotFoundError, match="Item not found"):
+            item_service.update_item("user-123", "item-1", request)
+
+    def test_update_optimistic_lock_conflict(self, item_service, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item", {"Item": self._existing_item(version=5)}, {"TableName": "test-items-table", "Key": ANY}
+        )
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        request = UpdateItemRequestContent(
+            encrypted_metadata=base64.b64encode(b"x"), expected_version=4
+        )
+        with pytest.raises(BadRequestError):
+            item_service.update_item("user-123", "item-1", request)
