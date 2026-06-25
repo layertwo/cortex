@@ -8,7 +8,6 @@ Uses botocore Stubber for AWS service testing (not mocking).
 import base64
 import secrets
 
-import pytest
 from botocore.stub import ANY
 
 
@@ -116,7 +115,3 @@ class TestGetVaultSaltRoute:
         assert response.status_code == 404
         body = response.json()
         assert "not found" in body["error"]["message"].lower()
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
