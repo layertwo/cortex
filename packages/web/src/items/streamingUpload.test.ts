@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { encryptTagForSearch } from '@cortex/encryption';
 import { decryptMetadata } from './metadata';
 
 const api = vi.hoisted(() => ({
@@ -51,6 +52,18 @@ describe('uploadFileStreaming', () => {
     expect(api.putToS3.mock.calls[0][1].length).toBe(129);
     expect(api.completeUpload).toHaveBeenCalledWith('i1'); // no opts
     expect(onProgress).toHaveBeenLastCalledWith(1);
+  });
+
+  it('dual-writes tags: plaintext in metadata, HMAC in encryptedTags', async () => {
+    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'https://s3/put' });
+    await uploadFileStreaming(fakeFile(new Uint8Array([1, 2, 3])), keys, undefined, { tags: ['Trip', 'beach'] });
+
+    const arg = api.initiateUpload.mock.calls[0][0];
+    // plaintext tags ride in the (reversible) metadata
+    expect(decryptMetadata(arg.encryptedMetadata, keys.metadataKey).tags).toEqual(['Trip', 'beach']);
+    // searchable HMACs match encryptTagForSearch(tag, metadataKey, vaultId)
+    const expected = ['Trip', 'beach'].map((t) => encryptTagForSearch(t, keys.metadataKey, 'v1'));
+    expect(arg.encryptedTags.map((u: Uint8Array) => Array.from(u))).toEqual(expected.map((u) => Array.from(u)));
   });
 
   it('multipart path: parts uploaded in order, eTags collected, complete gets ordered parts', async () => {

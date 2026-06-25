@@ -34,6 +34,9 @@ vi.mock('@cortex/client', () => ({
   AbortItemUploadCommand: class {
     constructor(public input: unknown) { commands.push(['AbortItemUpload', input]); }
   },
+  SearchByTagCommand: class {
+    constructor(public input: unknown) { commands.push(['SearchByTag', input]); }
+  },
 }));
 vi.mock('aws-amplify/auth', () => ({
   fetchAuthSession: vi.fn(async () => ({ tokens: { idToken: { toString: () => 'JWT' } } })),
@@ -46,6 +49,7 @@ import {
   completeUpload,
   createUploadPartUrls,
   abortUpload,
+  searchByTag,
   listItems,
   getDownloadUrl,
   deleteItem,
@@ -145,6 +149,13 @@ describe('items api', () => {
     sendMock.mockResolvedValueOnce({ downloadUrl: 'https://s3/get', expiresAt: new Date(0) });
     expect(await getDownloadUrl('i1')).toBe('https://s3/get');
     expect(commands).toContainEqual(['GetItemDownloadUrl', { itemId: 'i1' }]);
+  });
+
+  it('searchByTag returns items (or [])', async () => {
+    const items = [{ itemId: 'i1', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(0) }];
+    sendMock.mockResolvedValueOnce({ items, totalCount: 1 });
+    expect(await searchByTag('v1', 'YWJj')).toBe(items);
+    expect(commands).toContainEqual(['SearchByTag', { vaultId: 'v1', encryptedTag: 'YWJj' }]);
   });
 
   it('deleteItem sends the command with the itemId', async () => {
