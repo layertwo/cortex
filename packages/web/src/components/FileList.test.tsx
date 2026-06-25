@@ -1,13 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { FileMetadata } from '../items/metadata';
 
 const h = vi.hoisted(() => ({
   getVaultKeys: vi.fn(async () => ({ vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32) })),
   listItems: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
   getDownloadUrl: vi.fn(async () => 'https://s3/get'),
   deleteItem: vi.fn(async () => {}),
-  decryptMetadata: vi.fn(() => ({ name: 'cat.png', contentType: 'image/png', size: 1234, contentId: 'c1' })),
+  decryptMetadata: vi.fn((): FileMetadata => ({ name: 'cat.png', contentType: 'image/png', size: 1234, contentId: 'c1' })),
   decryptDownloadedBlob: vi.fn(() => new Uint8Array([1, 2, 3])),
   pickSink: vi.fn(async () => ({ write: vi.fn(), close: vi.fn(), abort: vi.fn() })),
   downloadFileStreaming: vi.fn(async () => {}),
