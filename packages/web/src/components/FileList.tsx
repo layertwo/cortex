@@ -3,6 +3,7 @@ import { getVaultKeys } from '../vault/keyAccess';
 import { listItems, getDownloadUrl, deleteItem } from '../api/items';
 import { decryptMetadata, type FileMetadata } from '../items/metadata';
 import { decryptDownloadedBlob } from '../items/itemCrypto';
+import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
 
 interface Row {
   itemId: string;
@@ -41,16 +42,32 @@ export default function FileList({ refreshKey }: { refreshKey: number }) {
 
   async function onDownload(row: Row) {
     if (!row.meta) return;
-    const { kek } = await getVaultKeys();
-    const url = await getDownloadUrl(row.itemId);
-    const blob = new Uint8Array(await (await fetch(url)).arrayBuffer());
-    const plain = decryptDownloadedBlob(blob, row.meta, kek);
-    const objectUrl = URL.createObjectURL(new Blob([plain as BlobPart], { type: row.meta.contentType }));
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = row.meta.name;
-    a.click();
-    URL.revokeObjectURL(objectUrl);
+    setError('');
+    try {
+      // streamVersion is already known from the decrypted metadata — branch with
+      // no await so the user gesture survives for showSaveFilePicker.
+      if (row.meta.streamVersion === undefined) {
+        // Legacy (pre-2.5c) whole-buffer object.
+        const { kek } = await getVaultKeys();
+        const url = await getDownloadUrl(row.itemId);
+        const blob = new Uint8Array(await (await fetch(url)).arrayBuffer());
+        const plain = decryptDownloadedBlob(blob, row.meta, kek);
+        const objectUrl = URL.createObjectURL(new Blob([plain as BlobPart], { type: row.meta.contentType }));
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = row.meta.name;
+        a.click();
+        URL.revokeObjectURL(objectUrl);
+        return;
+      }
+      // Chunked stream: pick the sink FIRST (preserves the click's user activation).
+      const sink = await pickSink(row.meta.name, row.meta.contentType);
+      const { kek } = await getVaultKeys();
+      await downloadFileStreaming(row.itemId, row.meta, kek, sink);
+    } catch (err) {
+      if ((err as Error)?.name === 'AbortError') return; // user cancelled the save dialog
+      setError(err instanceof Error ? err.message : 'Download failed');
+    }
   }
 
   async function onDelete(itemId: string) {
