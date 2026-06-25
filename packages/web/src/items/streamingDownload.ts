@@ -48,9 +48,34 @@ export function blobSink(name: string, contentType: string): DownloadSink {
   };
 }
 
+// --- tier 1: File System Access API — streams straight to the user's chosen file ---
+type SaveHandle = {
+  createWritable: () => Promise<{
+    write: (b: Uint8Array) => void | Promise<void>;
+    close: () => void | Promise<void>;
+    abort: () => void | Promise<void>;
+  }>;
+};
+type WithPicker = { showSaveFilePicker: (o: { suggestedName: string }) => Promise<SaveHandle> };
+
+async function fsAccessSink(name: string): Promise<DownloadSink> {
+  // Must be reached within the user gesture; the caller awaits pickSink first.
+  const handle = await (globalThis as unknown as WithPicker).showSaveFilePicker({ suggestedName: name });
+  const writable = await handle.createWritable();
+  return {
+    write: (b) => writable.write(b),
+    close: () => writable.close(),
+    abort: () => writable.abort(),
+  };
+}
+
 // Caller picks the sink BEFORE any other await (user-activation for showSaveFilePicker).
-// Task 2 prepends the File System Access tier ahead of the blob fallback.
 export async function pickSink(name: string, contentType: string): Promise<DownloadSink> {
+  // Tier 1: File System Access (true streaming to disk, Chromium desktop).
+  if (typeof (globalThis as { showSaveFilePicker?: unknown }).showSaveFilePicker === 'function') {
+    return fsAccessSink(name);
+  }
+  // Tier 3: in-memory blob fallback. (Tier 2 OPFS-in-Worker deferred — see plan.)
   return blobSink(name, contentType);
 }
 

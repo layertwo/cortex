@@ -7,7 +7,7 @@ import type { FileMetadata } from './metadata';
 const api = vi.hoisted(() => ({ getDownloadUrl: vi.fn(async () => 'https://s3/get') }));
 vi.mock('../api/items', () => api);
 
-import { downloadFileStreaming, type DownloadSink } from './streamingDownload';
+import { downloadFileStreaming, pickSink, type DownloadSink } from './streamingDownload';
 
 const kek = new Uint8Array(32).fill(7);
 
@@ -104,5 +104,33 @@ describe('downloadFileStreaming', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, body: streamOf(object) })));
     const { sink } = fakeSink();
     await expect(downloadFileStreaming('i1', meta('wrong-content-id'), kek, sink)).rejects.toThrow();
+  });
+});
+
+describe('pickSink capability detection', () => {
+  it('uses the File System Access API when available, streaming write→close', async () => {
+    const written: Uint8Array[] = [];
+    const writable = { write: vi.fn((b: Uint8Array) => { written.push(b); }), close: vi.fn(), abort: vi.fn() };
+    const handle = { createWritable: vi.fn(async () => writable) };
+    const showSaveFilePicker = vi.fn(async () => handle);
+    vi.stubGlobal('showSaveFilePicker', showSaveFilePicker);
+
+    const sink = await pickSink('photo.jpg', 'image/jpeg');
+    expect(showSaveFilePicker).toHaveBeenCalledWith({ suggestedName: 'photo.jpg' });
+    await sink.write(new Uint8Array([1, 2]));
+    await sink.close();
+    expect(written).toEqual([new Uint8Array([1, 2])]);
+    expect(writable.close).toHaveBeenCalled();
+  });
+
+  it('falls back to an in-memory blob when the API is absent', async () => {
+    vi.stubGlobal('showSaveFilePicker', undefined);
+    const createObjectURL = vi.fn(() => 'blob:x');
+    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+
+    const sink = await pickSink('a.bin', 'application/octet-stream');
+    sink.write(new Uint8Array([9]));
+    await sink.close(); // blob sink triggers an <a download> via an object URL
+    expect(createObjectURL).toHaveBeenCalled();
   });
 });
