@@ -38,6 +38,8 @@ from src.shared.generated.models import (
     ItemData,
     ItemType,
     ListItemsResponseContent,
+    UpdateItemRequestContent,
+    UpdateItemResponseContent,
 )
 from src.shared.logger import get_logger
 from src.shared.util import _encode_binary
@@ -331,15 +333,28 @@ class UpdateItemRoute(BaseRoute):
         self.item_service = item_service
 
     def register(self, app: APIRouter) -> None:
-        @app.put("/v1/items/{item_id}")
-        def handle(item_id: str):
+        @app.put("/v1/items/{item_id}", response_model=UpdateItemResponseContent)
+        def handle(
+            item_id: str,
+            request: UpdateItemRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
             """
-            Update item.
+            Update an item's encrypted fields (tags / metadata / content).
 
-            This endpoint will be implemented in task 12.1.
+            Authorization is by item ownership. Tag edits reconcile the tag
+            search index best-effort.
+
+            Requirements: 24.2 (edit tags on existing item — Slice 4)
             """
-            logger.info("Update item endpoint called", item_id=item_id)
-            return {"message": "Update item endpoint - to be implemented in task 12.1"}
+            response = self.item_service.update_item(user_id, item_id, request)
+            logger.info(
+                "Item updated successfully",
+                user_id=user_id,
+                item_id=item_id,
+                version=response.version,
+            )
+            return response
 
 
 class DeleteItemRoute(BaseRoute):
