@@ -1127,7 +1127,9 @@ class TestUpdateItem:
     ):
         # old tags {tagA, tagB} -> new {tagB, tagC}: delete tagA row, add tagC row.
         dynamodb_stubber.add_response(
-            "get_item", {"Item": self._existing_item()}, {"TableName": "test-items-table", "Key": ANY}
+            "get_item",
+            {"Item": self._existing_item()},
+            {"TableName": "test-items-table", "Key": ANY},
         )
         dynamodb_stubber.add_response(
             "update_item",
@@ -1154,9 +1156,7 @@ class TestUpdateItem:
         assert response.version == 2
 
     def test_update_not_found(self, item_service, dynamodb_stubber):
-        dynamodb_stubber.add_response(
-            "get_item", {}, {"TableName": "test-items-table", "Key": ANY}
-        )
+        dynamodb_stubber.add_response("get_item", {}, {"TableName": "test-items-table", "Key": ANY})
         request = UpdateItemRequestContent(encrypted_metadata=base64.b64encode(b"x"))
         with pytest.raises(NotFoundError, match="Item not found"):
             item_service.update_item("user-123", "item-1", request)
@@ -1173,7 +1173,9 @@ class TestUpdateItem:
 
     def test_update_optimistic_lock_conflict(self, item_service, dynamodb_stubber):
         dynamodb_stubber.add_response(
-            "get_item", {"Item": self._existing_item(version=5)}, {"TableName": "test-items-table", "Key": ANY}
+            "get_item",
+            {"Item": self._existing_item(version=5)},
+            {"TableName": "test-items-table", "Key": ANY},
         )
         dynamodb_stubber.add_client_error(
             "update_item", service_error_code="ConditionalCheckFailedException"
@@ -1188,7 +1190,9 @@ class TestUpdateItem:
         # No encrypted_tags on the request -> tag reconcile is skipped entirely
         # (no batch_write_item stub is queued, so the test fails if one is called).
         dynamodb_stubber.add_response(
-            "get_item", {"Item": self._existing_item()}, {"TableName": "test-items-table", "Key": ANY}
+            "get_item",
+            {"Item": self._existing_item()},
+            {"TableName": "test-items-table", "Key": ANY},
         )
         dynamodb_stubber.add_response(
             "update_item",
@@ -1211,7 +1215,9 @@ class TestUpdateItem:
         # A throttle (not a version conflict) on the conditional path must propagate
         # as-is, NOT be masked as a 400 "modified on another device".
         dynamodb_stubber.add_response(
-            "get_item", {"Item": self._existing_item(version=5)}, {"TableName": "test-items-table", "Key": ANY}
+            "get_item",
+            {"Item": self._existing_item(version=5)},
+            {"TableName": "test-items-table", "Key": ANY},
         )
         dynamodb_stubber.add_client_error(
             "update_item", service_error_code="ProvisionedThroughputExceededException"
