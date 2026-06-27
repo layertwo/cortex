@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import boto3
+from botocore.exceptions import ClientError
 
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
@@ -723,10 +724,12 @@ class ItemService:
                     condition_expression="version = :expected",
                     expression_attribute_values=values,
                 )
-            except Exception as e:
-                raise BadRequestError(
-                    "Item was modified on another device; reload and retry"
-                ) from e
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                    raise BadRequestError(
+                        "Item was modified on another device; reload and retry"
+                    ) from e
+                raise
         else:
             self.items_repo.update_item(
                 key=key,

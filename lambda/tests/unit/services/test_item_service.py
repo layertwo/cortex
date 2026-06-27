@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from botocore.exceptions import ClientError
 from botocore.stub import ANY
 
 from src.shared.exceptions import BadRequestError, NotFoundError
@@ -1181,4 +1182,42 @@ class TestUpdateItem:
             encrypted_metadata=base64.b64encode(b"x"), expected_version=4
         )
         with pytest.raises(BadRequestError):
+            item_service.update_item("user-123", "item-1", request)
+
+    def test_update_metadata_only_skips_tag_reconcile(self, item_service, dynamodb_stubber):
+        # No encrypted_tags on the request -> tag reconcile is skipped entirely
+        # (no batch_write_item stub is queued, so the test fails if one is called).
+        dynamodb_stubber.add_response(
+            "get_item", {"Item": self._existing_item()}, {"TableName": "test-items-table", "Key": ANY}
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {}},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        request = UpdateItemRequestContent(encrypted_metadata=base64.b64encode(b"only-metadata"))
+        response = item_service.update_item("user-123", "item-1", request)
+        assert response.version == 2
+
+    def test_update_optimistic_path_reraises_non_conditional_error(
+        self, item_service, dynamodb_stubber
+    ):
+        # A throttle (not a version conflict) on the conditional path must propagate
+        # as-is, NOT be masked as a 400 "modified on another device".
+        dynamodb_stubber.add_response(
+            "get_item", {"Item": self._existing_item(version=5)}, {"TableName": "test-items-table", "Key": ANY}
+        )
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ProvisionedThroughputExceededException"
+        )
+        request = UpdateItemRequestContent(
+            encrypted_metadata=base64.b64encode(b"x"), expected_version=5
+        )
+        with pytest.raises(ClientError):
             item_service.update_item("user-123", "item-1", request)
