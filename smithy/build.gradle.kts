@@ -17,7 +17,7 @@ dependencies {
     smithyBuild("software.amazon.smithy:smithy-validation-model:1.71.0")
     smithyBuild("software.amazon.smithy:smithy-openapi:1.71.0")
     smithyBuild("software.amazon.smithy:smithy-aws-apigateway-openapi:1.71.0")
-    smithyBuild("software.amazon.smithy.typescript:smithy-aws-typescript-codegen:0.31.1")
+    smithyBuild("software.amazon.smithy.typescript:smithy-aws-typescript-codegen:0.50.0")
 }
 
 // Stage the generated TS client into the npm workspace so `npm ci` can resolve
