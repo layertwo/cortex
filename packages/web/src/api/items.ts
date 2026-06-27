@@ -92,16 +92,11 @@ export async function deleteItem(itemId: string): Promise<void> {
 
 // Re-encrypt an existing item's tags: metadata holds the readable tags (FileMetadata),
 // encryptedTags are the one-way HMAC search index. Both are rewritten together so the
-// search index never drifts from what the user sees. version/updatedAt come back for
-// optimistic locking on chained edits (op supports expectedVersion).
+// search index never drifts from what the user sees.
 export async function updateItemTags(
   itemId: string,
   encryptedMetadata: Uint8Array,
   encryptedTags: Uint8Array[],
-): Promise<{ version: number; updatedAt: Date }> {
-  const out = await makeClient().send(
-    new UpdateItemCommand({ itemId, encryptedMetadata, encryptedTags }),
-  );
-  if (out.version == null || !out.updatedAt) throw new Error('updateItemTags: incomplete response');
-  return { version: out.version, updatedAt: out.updatedAt };
+): Promise<void> {
+  await makeClient().send(new UpdateItemCommand({ itemId, encryptedMetadata, encryptedTags }));
 }

@@ -162,18 +162,15 @@ function EditTags({
 }) {
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState((meta.tags ?? []).join(', '));
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
   async function save() {
-    setBusy(true);
     setErr('');
     try {
       const { vaultId, metadataKey } = await getVaultKeys();
       const tags = value.split(',').map((t) => t.trim()).filter(Boolean);
-      const updated: FileMetadata = { ...meta };
-      if (tags.length) updated.tags = tags;
-      else delete updated.tags;
+      // tags: undefined drops the key on JSON.stringify (encryptMetadata) when empty.
+      const updated: FileMetadata = { ...meta, tags: tags.length ? tags : undefined };
       const encryptedMetadata = await encryptMetadata(updated, metadataKey);
       const encryptedTags = tags.map((t) => encryptTagForSearch(t, metadataKey, vaultId));
       await updateItemTags(itemId, encryptedMetadata, encryptedTags);
@@ -181,8 +178,6 @@ function EditTags({
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Save failed');
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -195,14 +190,13 @@ function EditTags({
         placeholder="tags, comma separated"
         onChange={(e) => setValue(e.target.value)}
       />
-      <button onClick={save} disabled={busy}>Save</button>
+      <button onClick={save}>Save</button>
       <button
         onClick={() => {
           setValue((meta.tags ?? []).join(', '));
           setErr('');
           setOpen(false);
         }}
-        disabled={busy}
       >
         Cancel
       </button>
