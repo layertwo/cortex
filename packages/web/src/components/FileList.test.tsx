@@ -9,10 +9,13 @@ const h = vi.hoisted(() => ({
   getDownloadUrl: vi.fn(async () => 'https://s3/get'),
   deleteItem: vi.fn(async () => {}),
   searchByTag: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
+  updateItemTags: vi.fn(async () => ({ version: 2, updatedAt: new Date(0) })),
   getCollection: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
   listCollections: vi.fn(async (): Promise<import('@cortex/client').CollectionData[]> => []),
   addItemToCollection: vi.fn(async () => {}),
   decryptMetadata: vi.fn((): FileMetadata => ({ name: 'cat.png', contentType: 'image/png', size: 1234, contentId: 'c1' })),
+  encryptMetadata: vi.fn(async () => new Uint8Array([7])),
+  encryptTagForSearch: vi.fn(() => new Uint8Array([8])),
   decryptDownloadedBlob: vi.fn(() => new Uint8Array([1, 2, 3])),
   decryptCollectionName: vi.fn(() => 'Trip'),
   pickSink: vi.fn(async () => ({ write: vi.fn(), close: vi.fn(), abort: vi.fn() })),
@@ -24,13 +27,15 @@ vi.mock('../api/items', () => ({
   getDownloadUrl: h.getDownloadUrl,
   deleteItem: h.deleteItem,
   searchByTag: h.searchByTag,
+  updateItemTags: h.updateItemTags,
 }));
 vi.mock('../api/collections', () => ({
   getCollection: h.getCollection,
   listCollections: h.listCollections,
   addItemToCollection: h.addItemToCollection,
 }));
-vi.mock('../items/metadata', () => ({ decryptMetadata: h.decryptMetadata }));
+vi.mock('@cortex/encryption', () => ({ encryptTagForSearch: h.encryptTagForSearch }));
+vi.mock('../items/metadata', () => ({ decryptMetadata: h.decryptMetadata, encryptMetadata: h.encryptMetadata }));
 vi.mock('../items/itemCrypto', () => ({ decryptDownloadedBlob: h.decryptDownloadedBlob }));
 vi.mock('../items/collectionMetadata', () => ({ decryptCollectionName: h.decryptCollectionName }));
 vi.mock('../items/streamingDownload', () => ({ pickSink: h.pickSink, downloadFileStreaming: h.downloadFileStreaming }));
@@ -105,5 +110,36 @@ describe('FileList', () => {
     await userEvent.click(screen.getByRole('button', { name: /delete/i }));
     await waitFor(() => expect(h.deleteItem).toHaveBeenCalledWith('i1'));
     expect(h.listItems).toHaveBeenCalledTimes(2); // initial + after delete
+  });
+
+  it('edit tags re-encrypts metadata + index and calls updateItemTags, then reloads', async () => {
+    h.decryptMetadata.mockReturnValue({ name: 'cat.png', contentType: 'image/png', size: 1, contentId: 'c1', tags: ['old'] });
+    render(<FileList view={ALL} refreshKey={0} />);
+    await screen.findByText('cat.png');
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    const input = screen.getByRole('textbox', { name: /edit tags/i });
+    await userEvent.clear(input);
+    await userEvent.type(input, 'beach, trip');
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    // metadata re-encrypted carrying the new readable tags
+    await waitFor(() =>
+      expect(h.encryptMetadata).toHaveBeenCalledWith(expect.objectContaining({ tags: ['beach', 'trip'] }), expect.any(Uint8Array)),
+    );
+    // one HMAC search row per tag, then the op fires with itemId + both blobs
+    expect(h.encryptTagForSearch).toHaveBeenCalledTimes(2);
+    expect(h.updateItemTags).toHaveBeenCalledWith('i1', expect.any(Uint8Array), [expect.any(Uint8Array), expect.any(Uint8Array)]);
+    expect(h.listItems).toHaveBeenCalledTimes(2); // initial + after save
+  });
+
+  it('clearing all tags drops the metadata tags key and sends an empty index list', async () => {
+    h.decryptMetadata.mockReturnValue({ name: 'cat.png', contentType: 'image/png', size: 1, contentId: 'c1', tags: ['old'] });
+    render(<FileList view={ALL} refreshKey={0} />);
+    await screen.findByText('cat.png');
+    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await userEvent.clear(screen.getByRole('textbox', { name: /edit tags/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    await waitFor(() => expect(h.updateItemTags).toHaveBeenCalledWith('i1', expect.any(Uint8Array), []));
+    expect(h.encryptMetadata).toHaveBeenCalledWith(expect.not.objectContaining({ tags: expect.anything() }), expect.any(Uint8Array));
+    expect(h.encryptTagForSearch).not.toHaveBeenCalled();
   });
 });
