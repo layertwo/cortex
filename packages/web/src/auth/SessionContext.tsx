@@ -1,5 +1,13 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
-import { signUp, confirmSignUp, signIn, signOut, getCurrentUser } from 'aws-amplify/auth';
+import {
+  signUp,
+  confirmSignUp,
+  signIn,
+  signOut,
+  getCurrentUser,
+  resetPassword,
+  confirmResetPassword,
+} from 'aws-amplify/auth';
 import {
   deriveVaultMasterKey,
   deriveKeys,
@@ -19,6 +27,10 @@ export interface SessionValue {
   signUpAccount(email: string, password: string): Promise<void>;
   confirmAccount(email: string, code: string): Promise<void>;
   signInAccount(email: string, password: string): Promise<void>;
+  // Cognito *account* password reset (emails a code). NOT the vault password — that
+  // derives the KEK client-side and is unrecoverable except via BIP39 recovery.
+  requestPasswordReset(email: string): Promise<void>;
+  confirmPasswordReset(email: string, code: string, newPassword: string): Promise<void>;
   logout(): Promise<void>;
   // Implemented in Task 5:
   setupVault(vaultPassword: string): Promise<string>; // returns the BIP39 recovery phrase
@@ -48,6 +60,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     await signIn({ username: email, password });
     setStatus('signedInVaultLocked');
   }, []);
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    await resetPassword({ username: email });
+  }, []);
+
+  const confirmPasswordReset = useCallback(
+    async (email: string, code: string, newPassword: string) => {
+      await confirmResetPassword({ username: email, confirmationCode: code, newPassword });
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     const vaultId = localStorage.getItem(VAULT_ID_KEY);
@@ -90,6 +113,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     signUpAccount,
     confirmAccount,
     signInAccount,
+    requestPasswordReset,
+    confirmPasswordReset,
     logout,
     setupVault,
     unlockVault,

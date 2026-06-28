@@ -4,6 +4,7 @@ import { RequireAuth, RequireVault } from './auth/guards';
 import Signup from './components/Signup';
 import VerifyEmail from './components/VerifyEmail';
 import Login from './components/Login';
+import ForgotPassword from './components/ForgotPassword';
 import VaultSetup from './components/VaultSetup';
 import VaultUnlock from './components/VaultUnlock';
 import Dashboard from './components/Dashboard';
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/verify" element={<VerifyEmail />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot" element={<ForgotPassword />} />
           <Route
             path="/vault/setup"
             element={
