@@ -74,6 +74,12 @@ structure ItemData {
     @documentation("S3 key (for MEDIA items)")
     s3Key: String
 
+    @documentation("Wrapped per-file DEK (MEDIA items)")
+    wrappedDek: Blob
+
+    @documentation("KEK version that wrapped the DEK (MEDIA items)")
+    dekVersion: Integer
+
     @required
     @documentation("Creation timestamp")
     createdAt: Timestamp

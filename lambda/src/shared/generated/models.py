@@ -199,6 +199,17 @@ class InitiateItemUploadRequestContent(GeneratedBaseModel):
         list[Base64Bytes] | None,
         Field(alias="encryptedTags", description="List of encrypted tags", max_length=50),
     ] = None
+    wrapped_dek: Annotated[
+        Base64Bytes,
+        Field(
+            alias="wrappedDek",
+            description="Wrapped per-file DEK (97 bytes, HMAC-bound to contentId)",
+        ),
+    ]
+    dek_version: Annotated[
+        int,
+        Field(alias="dekVersion", description="KEK version that wrapped the DEK (1 in Phase 1)"),
+    ]
 
 
 class InitiateItemUploadResponseContent(GeneratedBaseModel):
@@ -426,6 +437,14 @@ class GetItemResponseContent(GeneratedBaseModel):
     s3_key: Annotated[str | None, Field(alias="s3Key", description="S3 key (for MEDIA items)")] = (
         None
     )
+    wrapped_dek: Annotated[
+        Base64Bytes | None,
+        Field(alias="wrappedDek", description="Wrapped per-file DEK (MEDIA items)"),
+    ] = None
+    dek_version: Annotated[
+        int | None,
+        Field(alias="dekVersion", description="KEK version that wrapped the DEK (MEDIA items)"),
+    ] = None
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]
     version: Annotated[int, Field(description="Version number for conflict resolution")]
@@ -463,6 +482,14 @@ class ItemData(GeneratedBaseModel):
     s3_key: Annotated[str | None, Field(alias="s3Key", description="S3 key (for MEDIA items)")] = (
         None
     )
+    wrapped_dek: Annotated[
+        Base64Bytes | None,
+        Field(alias="wrappedDek", description="Wrapped per-file DEK (MEDIA items)"),
+    ] = None
+    dek_version: Annotated[
+        int | None,
+        Field(alias="dekVersion", description="KEK version that wrapped the DEK (MEDIA items)"),
+    ] = None
     created_at: Annotated[float, Field(alias="createdAt", description="Creation timestamp")]
     updated_at: Annotated[float, Field(alias="updatedAt", description="Last modified timestamp")]
     version: Annotated[int, Field(description="Version number for conflict resolution")]
