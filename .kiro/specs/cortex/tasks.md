@@ -122,7 +122,7 @@
   - Export function: deriveVaultMasterKey(password, salt)
   - _Requirements: 14.1, 14.2_
 
-- [ ] 6.2 Implement HKDF for derived key generation
+- [x] 6.2 Implement HKDF for derived key generation
   - Add HKDF functions to packages/encryption/src/lib/key-management.ts
   - Use @noble/hashes for HKDF with SHA-256
   - Derive Key Encryption Key (KEK) (context: "cortex-kek-v1") for wrapping per-file DEKs
@@ -341,8 +341,9 @@
     - **Property 36: Dual-KEK access during rotation**
     - **Validates: Requirements 30.5**
 
-- [ ] 6.14 Implement password-required file sharing with envelope encryption
-  - [ ] 6.14.1 Create share encryption key derivation with salted HMAC
+- [x] 6.14 Implement password-required file sharing with envelope encryption
+  - **Done note:** consolidated into `packages/encryption/src/lib/share-encryption.ts` (`deriveShareKeys`/`computeShareHmac`/`verifyShareHmac`/`encodeShareBlob`/`decodeShareBlob`) rather than the per-function `sharing.ts` layout below; UI in `ShareCreate.tsx`/`ShareAccess.tsx`, backend in `share_service.py`. Requirements met; function/file names differ from subtask text.
+  - [x] 6.14.1 Create share encryption key derivation with salted HMAC
     - Add to packages/encryption/src/lib/sharing.ts
     - Generate unique random share salt (16 bytes) using CSPRNG
     - Derive share encryption key from password + share salt using Argon2id
@@ -350,7 +351,7 @@
     - Export functions: deriveShareKey(password, salt), deriveShareHmacKey(shareKey, salt)
     - _Requirements: 17.2, 17.3, 17.4, 31.2_
 
-  - [ ] 6.14.2 Create share-wrapped DEK generation with timestamp nonce
+  - [x] 6.14.2 Create share-wrapped DEK generation with timestamp nonce
     - Add to packages/encryption/src/lib/sharing.ts
     - Unwrap file's DEK using vault's KEK
     - Wrap DEK with share encryption key
@@ -360,7 +361,7 @@
     - Export function: createShareWrappedDek(wrappedDek, kek, shareKey, shareSalt, timestampNonce)
     - _Requirements: 17.5, 17.6, 17.7, 31.3, 31.4_
 
-  - [ ] 6.14.3 Create share URL generation with nonce
+  - [x] 6.14.3 Create share URL generation with nonce
     - Add to packages/encryption/src/lib/sharing.ts
     - Embed password-wrapped DEK, share salt, HMAC, and timestamp nonce in URL fragment
     - Format: {shareId}#{base64(salt)}:{base64(wrappedDek)}:{base64(hmac)}:{base64(timestampNonce)}
@@ -368,7 +369,7 @@
     - Export function: createShareUrl(shareId, shareWrappedDek, salt, hmac, timestampNonce)
     - _Requirements: 17.4, 17.8, 31.4, 31.5_
 
-  - [ ] 6.14.4 Create share access functions with HMAC verification and replay protection
+  - [x] 6.14.4 Create share access functions with HMAC verification and replay protection
     - Add to packages/encryption/src/lib/sharing.ts
     - Extract wrapped DEK, salt, HMAC, and timestamp nonce from URL fragment
     - Fetch share metadata (shareId, expiration) from server
@@ -479,29 +480,29 @@
     - Verify browser storage is cleared
     - **Validates: Requirements 34.1, 34.2, 34.3, 34.4**
 
-- [ ] 7. Build React web application (@cortex/web)
-- [ ] 7.1 Set up React web app with Vite
+- [x] 7. Build React web application (@cortex/web)
+- [x] 7.1 Set up React web app with Vite
   - Create packages/web/src directory structure
   - Configure Vite build tooling
   - Import @cortex/encryption for all cryptographic operations
   - Set up TypeScript configuration with reference to encryption package
   - _Requirements: 1.1, 2.1, 9.1_
 
-- [ ] 7.2 Create React components for authentication
+- [x] 7.2 Create React components for authentication
   - Build Login component (account password authentication)
   - Build Signup component (account + vault password setup)
   - Build VaultUnlock component (vault password entry for key derivation)
   - Use @cortex/encryption for password validation and key derivation
   - _Requirements: 3.1, 3.2, 14.1, 14.2, 21.1, 21.2_
 
-- [ ] 7.3 Create React components for file management
+- [x] 7.3 Create React components for file management
   - Build FileUpload component (encrypt and upload files)
   - Build FileList component (list and decrypt metadata)
   - Build FileDownload component (download and decrypt files)
   - Use @cortex/encryption for all encryption/decryption operations
   - _Requirements: 1.1, 1.4, 2.1, 2.3, 4.1, 4.2_
 
-- [ ] 7.4 Create React components for collections and tags
+- [x] 7.4 Create React components for collections and tags
   - Build CollectionManager component
   - Build TagSearch component
   - Use @cortex/encryption for tag encryption
