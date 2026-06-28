@@ -37,6 +37,9 @@ vi.mock('@cortex/client', () => ({
   SearchByTagCommand: class {
     constructor(public input: unknown) { commands.push(['SearchByTag', input]); }
   },
+  UpdateItemCommand: class {
+    constructor(public input: unknown) { commands.push(['UpdateItem', input]); }
+  },
 }));
 vi.mock('aws-amplify/auth', () => ({
   fetchAuthSession: vi.fn(async () => ({ tokens: { idToken: { toString: () => 'JWT' } } })),
@@ -53,6 +56,7 @@ import {
   listItems,
   getDownloadUrl,
   deleteItem,
+  updateItemTags,
 } from './items';
 
 beforeEach(() => {
@@ -162,5 +166,16 @@ describe('items api', () => {
     sendMock.mockResolvedValueOnce({ message: 'ok', deletedAt: new Date(0) });
     await deleteItem('i1');
     expect(commands).toContainEqual(['DeleteItem', { itemId: 'i1' }]);
+  });
+
+  it('updateItemTags sends UpdateItem with itemId, metadata and tags', async () => {
+    sendMock.mockResolvedValueOnce({ itemId: 'i1', updatedAt: new Date(0), version: 2 });
+    const meta = new Uint8Array([1, 2]);
+    const tags = [new Uint8Array([3]), new Uint8Array([4])];
+    await updateItemTags('i1', meta, tags);
+    expect(commands).toContainEqual([
+      'UpdateItem',
+      { itemId: 'i1', encryptedMetadata: meta, encryptedTags: tags },
+    ]);
   });
 });

@@ -337,15 +337,53 @@ class TestGetItemRoute:
 class TestUpdateItemRoute:
     """Test suite for UpdateItemRoute through FastAPI test client."""
 
-    def test_update_item_route_handler(self, client):
-        """Test update item route handler returns expected response."""
-        item_id = "test-item-123"
+    def test_update_item_route_handler(self, client, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "ITEM#item-1"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": "item-1"},
+                    "item_type": {"S": "MEDIA"},
+                    "vault_id": {"S": "vault-1"},
+                    "user_id": {"S": "test-user-id"},
+                    "encrypted_metadata": {"B": b"old"},
+                    "encrypted_tags": {"L": [{"B": b"tagA"}]},
+                    "created_at": {"N": "1"},
+                    "updated_at": {"N": "1"},
+                    "version": {"N": "1"},
+                }
+            },
+            {"TableName": "test-items-table", "Key": ANY},
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {}},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        dynamodb_stubber.add_response(
+            "batch_write_item", {"UnprocessedItems": {}}, {"RequestItems": ANY}
+        )
 
-        response = client.put(f"/v1/items/{item_id}", json={})
+        response = client.put(
+            "/v1/items/item-1",
+            json={
+                "encryptedMetadata": "bmV3LW1ldGE=",
+                "encryptedTags": ["dGFnQg=="],
+            },
+        )
 
         assert response.status_code == 200
         body = response.json()
-        assert "Update item endpoint" in body["message"]
+        assert body["itemId"] == "item-1"
+        assert body["version"] == 2
 
 
 class TestDeleteItemRoute:

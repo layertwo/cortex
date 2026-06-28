@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { encryptTagForSearch } from '@cortex/encryption';
 import { getVaultKeys } from '../vault/keyAccess';
-import { listItems, getDownloadUrl, deleteItem, searchByTag } from '../api/items';
+import { listItems, getDownloadUrl, deleteItem, searchByTag, updateItemTags } from '../api/items';
 import { getCollection, listCollections, addItemToCollection } from '../api/collections';
-import { decryptMetadata, type FileMetadata } from '../items/metadata';
+import { decryptMetadata, encryptMetadata, type FileMetadata } from '../items/metadata';
 import { decryptDownloadedBlob } from '../items/itemCrypto';
 import { decryptCollectionName } from '../items/collectionMetadata';
 import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
@@ -100,6 +101,7 @@ export default function FileList({ view, refreshKey }: { view: View; refreshKey:
           <button onClick={() => onDownload(row)} disabled={!row.meta}>Download</button>
           <button onClick={() => onDelete(row.itemId)}>Delete</button>
           {row.meta && <AddToCollection itemId={row.itemId} onChanged={load} />}
+          {row.meta && <EditTags itemId={row.itemId} meta={row.meta} onChanged={load} />}
         </li>
       ))}
     </ul>
@@ -141,6 +143,64 @@ function AddToCollection({ itemId, onChanged }: { itemId: string; onChanged: () 
           ))}
         </ul>
       )}
+    </span>
+  );
+}
+
+// Edit an existing item's tags. Rewrites the readable copy (metadata) and the
+// one-way HMAC search index together — same dual-write as upload, so the index
+// never drifts from the chips. An empty result sends encryptedTags: [], which the
+// backend reads as "clear all tags" (a present-but-empty list, not an absent field).
+function EditTags({
+  itemId,
+  meta,
+  onChanged,
+}: {
+  itemId: string;
+  meta: FileMetadata;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState((meta.tags ?? []).join(', '));
+  const [err, setErr] = useState('');
+
+  async function save() {
+    setErr('');
+    try {
+      const { vaultId, metadataKey } = await getVaultKeys();
+      const tags = value.split(',').map((t) => t.trim()).filter(Boolean);
+      // tags: undefined drops the key on JSON.stringify (encryptMetadata) when empty.
+      const updated: FileMetadata = { ...meta, tags: tags.length ? tags : undefined };
+      const encryptedMetadata = await encryptMetadata(updated, metadataKey);
+      const encryptedTags = tags.map((t) => encryptTagForSearch(t, metadataKey, vaultId));
+      await updateItemTags(itemId, encryptedMetadata, encryptedTags);
+      setOpen(false);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Save failed');
+    }
+  }
+
+  if (!open) return <button onClick={() => setOpen(true)}>Edit tags</button>;
+  return (
+    <span>
+      <input
+        aria-label="edit tags"
+        value={value}
+        placeholder="tags, comma separated"
+        onChange={(e) => setValue(e.target.value)}
+      />
+      <button onClick={save}>Save</button>
+      <button
+        onClick={() => {
+          setValue((meta.tags ?? []).join(', '));
+          setErr('');
+          setOpen(false);
+        }}
+      >
+        Cancel
+      </button>
+      {err && <span role="alert"> {err}</span>}
     </span>
   );
 }

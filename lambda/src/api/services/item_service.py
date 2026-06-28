@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import boto3
+from botocore.exceptions import ClientError
 
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
@@ -26,6 +27,8 @@ from src.shared.generated.models import (
     CreateUploadPartUrlsResponseContent,
     InitiateItemUploadRequestContent,
     InitiateItemUploadResponseContent,
+    UpdateItemRequestContent,
+    UpdateItemResponseContent,
     UploadPartUrl,
 )
 from src.shared.logger import get_logger
@@ -674,6 +677,116 @@ class ItemService:
         )
 
         return item
+
+    def update_item(
+        self, user_id: str, item_id: str, request: UpdateItemRequestContent
+    ) -> UpdateItemResponseContent:
+        """Update an item's encrypted fields (tags/metadata/content/etc.).
+
+        The item row is the source of truth and is updated atomically (optionally
+        guarded by expected_version). When encrypted_tags changes, the denormalized
+        tag-index rows are reconciled best-effort — orphans are harmless, exactly
+        as on the delete path.
+        """
+        key = {"PK": f"ITEM#{item_id}"}
+        item = self.items_repo.get_item(key)
+        if not item or item["user_id"] != user_id:
+            raise NotFoundError("Item not found")
+
+        now = datetime.now(tz=timezone.utc)
+        new_version = int(item.get("version", 1)) + 1
+
+        set_parts = ["updated_at = :updated_at", "version = :version"]
+        values = {":updated_at": int(now.timestamp()), ":version": new_version}
+        if request.encrypted_metadata is not None:
+            set_parts.append("encrypted_metadata = :em")
+            values[":em"] = request.encrypted_metadata
+        if request.encrypted_content is not None:
+            set_parts.append("encrypted_content = :ec")
+            values[":ec"] = request.encrypted_content
+        if request.encrypted_tags is not None:
+            set_parts.append("encrypted_tags = :et")
+            values[":et"] = request.encrypted_tags
+        if request.encrypted_date_bucket is not None:
+            set_parts.append("encrypted_date_bucket = :edb")
+            values[":edb"] = request.encrypted_date_bucket
+        if request.time_bucket is not None:
+            set_parts.append("time_bucket = :tb")
+            values[":tb"] = request.time_bucket
+        update_expression = "SET " + ", ".join(set_parts)
+
+        if request.expected_version is not None:
+            values[":expected"] = request.expected_version
+            try:
+                self.items_repo.update_item_conditional(
+                    key=key,
+                    update_expression=update_expression,
+                    condition_expression="version = :expected",
+                    expression_attribute_values=values,
+                )
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                    raise BadRequestError(
+                        "Item was modified on another device; reload and retry"
+                    ) from e
+                raise
+        else:
+            self.items_repo.update_item(
+                key=key,
+                update_expression=update_expression,
+                expression_attribute_values=values,
+            )
+
+        # Best-effort tag-index reconcile (only when tags were part of the update).
+        if request.encrypted_tags is not None:
+            old_b64 = {
+                b64encode(bytes(t) if hasattr(t, "value") else t).decode("utf-8")
+                for t in (item.get("encrypted_tags") or [])
+            }
+            new_b64 = {b64encode(t).decode("utf-8") for t in request.encrypted_tags}
+            self._reconcile_tag_rows(
+                item["vault_id"], item_id, user_id, old_b64 - new_b64, new_b64 - old_b64
+            )
+
+        logger.info(
+            "Updated item",
+            **{"user_id": user_id, "item_id": item_id, "version": new_version},
+        )
+        return UpdateItemResponseContent(
+            item_id=item_id, updated_at=int(now.timestamp()), version=new_version
+        )
+
+    def _reconcile_tag_rows(self, vault_id, item_id, user_id, delete_b64, add_b64) -> None:
+        """Add/remove tag-index rows for a tags edit. Best-effort (orphans harmless).
+
+        ponytail: best-effort index — a crash mid-reconcile can leave a removed tag
+        still matching this item until cleanup; the item row stays correct. Go
+        transactional (≤100-op TransactWriteItems) only if false-positive search hits
+        ever matter.
+        """
+        if not delete_b64 and not add_b64:
+            return
+        try:
+            with self.items_repo.table.batch_writer() as writer:
+                for tag_b64 in delete_b64:
+                    writer.delete_item(
+                        Key={"PK": f"VAULT#{vault_id}#TAG#{tag_b64}", "SK": f"ITEM#{item_id}"}
+                    )
+                for tag_b64 in add_b64:
+                    writer.put_item(
+                        Item={
+                            "PK": f"VAULT#{vault_id}#TAG#{tag_b64}",
+                            "SK": f"ITEM#{item_id}",
+                            "item_id": item_id,
+                            "vault_id": vault_id,
+                            "user_id": user_id,
+                        }
+                    )
+        except Exception as e:
+            logger.warning(
+                "Failed to reconcile tag index rows",
+                **{"item_id": item_id, "error": str(e)},
+            )
 
     def get_download_url(self, user_id: str, item_id: str) -> tuple[str, datetime, bytes, str]:
         """
