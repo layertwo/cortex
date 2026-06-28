@@ -48,11 +48,16 @@ jobs:
         run: ./gradlew smithyBuild
 
       # Single workspace install — covers @cortex/client, @cortex/encryption, @cortex/web.
+      # NOT `npm ci`: @cortex/client is gitignored and regenerated above by smithyBuild
+      # with floating `^` deps, so a fresh codegen resolves newer patch versions than the
+      # committed lock holds and `npm ci` hard-fails on the mismatch. `npm install`
+      # reconciles the lock against the just-generated client. Re-pin to `npm ci` only if
+      # the client is committed or its codegen emits exact versions.
       - name: Install dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       # Build generated/source packages whose compiled output @cortex/web imports
-      # (dist-*/dist), which a fresh `npm ci` does not produce.
+      # (dist-*/dist), which a fresh install does not produce.
       - name: Build client + encryption packages
         run: |
           npm run build:client
