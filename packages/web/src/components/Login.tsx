@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useSession } from '../auth/SessionContext';
 
 export default function Login() {
@@ -39,6 +39,7 @@ export default function Login() {
       </label>
       {error && <p role="alert">{error}</p>}
       <button type="submit">Log in</button>
+      <Link to="/forgot">Forgot password?</Link>
     </form>
   );
 }
