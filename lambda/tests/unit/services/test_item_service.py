@@ -116,6 +116,8 @@ class TestInitiateUpload:
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             size_bytes=50 * 1024 * 1024,  # 50MB
             encrypted_tags=[base64.b64encode(b"tag1")],
+            wrapped_dek=base64.b64encode(bytes(range(97))),
+            dek_version=1,
         )
 
         dynamodb_stubber.add_response(
@@ -138,6 +140,8 @@ class TestInitiateUpload:
             vault_id="vault-123",
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             size_bytes=150 * 1024 * 1024,  # 150MB
+            wrapped_dek=base64.b64encode(bytes(range(97))),
+            dek_version=1,
         )
 
         s3_stubber.add_response(
@@ -165,6 +169,31 @@ class TestInitiateUpload:
         assert response.item_id is not None
         assert response.upload_url is not None
         assert response.s3_key is not None
+
+
+    def test_initiate_upload_persists_wrapped_dek(self, item_service):
+        """Verify initiate_upload stores wrapped_dek and dek_version on the DynamoDB item."""
+        from unittest.mock import patch
+
+        wrapped = bytes(range(97))
+        captured = {}
+
+        def capture_put(item):
+            captured["item"] = item
+
+        with patch.object(item_service.items_repo, "put_item", side_effect=capture_put):
+            request = InitiateItemUploadRequestContent(
+                vault_id="v1",
+                encrypted_metadata=base64.b64encode(b"meta"),
+                size_bytes=32,
+                wrapped_dek=base64.b64encode(wrapped),
+                dek_version=1,
+            )
+            item_service.initiate_upload("user-1", request)
+
+        stored = captured["item"]
+        assert stored["wrapped_dek"] == wrapped
+        assert stored["dek_version"] == 1
 
 
 class TestCompleteUpload:
@@ -1087,6 +1116,8 @@ class TestInitiateReturnsUploadId:
             vault_id="vault-1",
             encrypted_metadata=base64.b64encode(b"m"),
             size_bytes=200 * 1024 * 1024,
+            wrapped_dek=base64.b64encode(bytes(range(97))),
+            dek_version=1,
         )
         resp = item_service.initiate_upload("user-123", req)
         assert resp.upload_id == "mp-123"
@@ -1096,7 +1127,11 @@ class TestInitiateReturnsUploadId:
     ):
         dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
         req = InitiateItemUploadRequestContent(
-            vault_id="vault-1", encrypted_metadata=base64.b64encode(b"m"), size_bytes=1024
+            vault_id="vault-1",
+            encrypted_metadata=base64.b64encode(b"m"),
+            size_bytes=1024,
+            wrapped_dek=base64.b64encode(bytes(range(97))),
+            dek_version=1,
         )
         resp = item_service.initiate_upload("user-123", req)
         assert resp.upload_id is None
