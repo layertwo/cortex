@@ -9,7 +9,6 @@ import {
   STREAM_HEADER_SIZE,
   STREAM_VERSION,
 } from '@cortex/encryption';
-import { WRAPPED_DEK_SIZE } from './itemBlob';
 import { encryptMetadata, type FileMetadata } from './metadata';
 import {
   initiateUpload,
@@ -56,8 +55,8 @@ async function withRetry<T>(fn: () => Promise<T>, retries = PART_RETRIES): Promi
 /**
  * Encrypt a file as a chunked stream and upload it.
  *
- * The on-disk format is always the 2.5a chunked layout
- * `[wrappedDek(97)][header(13)][chunk0…chunkN]`. Transport branches on whether
+ * The on-disk format is the 2.5a chunked layout `[header(13)][chunk0…chunkN]` — the
+ * wrapped DEK now travels in the InitiateItemUpload call, not the blob. Transport branches on whether
  * the server returned a multipart `uploadId`: absent → one presigned PUT;
  * present → one S3 part per chunk (1-based) with batched part URLs and per-part
  * retry, aborting on fatal failure. Multipart memory stays O(chunkSize).
@@ -72,7 +71,7 @@ export async function uploadFileStreaming(
   const tags = opts?.tags?.map((t) => t.trim()).filter(Boolean) ?? [];
   const plaintextSize = file.size;
   const partCount = Math.max(1, Math.ceil(plaintextSize / chunkSize));
-  const sizeBytes = WRAPPED_DEK_SIZE + STREAM_HEADER_SIZE + plaintextSize + TAG_SIZE * partCount;
+  const sizeBytes = STREAM_HEADER_SIZE + plaintextSize + TAG_SIZE * partCount;
 
   const contentId = crypto.randomUUID();
   const dek = await generateDek();
@@ -99,10 +98,12 @@ export async function uploadFileStreaming(
       vaultId: keys.vaultId,
       encryptedMetadata,
       sizeBytes,
+      wrappedDek,
+      dekVersion: 1,
       ...(encryptedTags.length ? { encryptedTags } : {}),
     });
 
-    // Read + encrypt one chunk lazily; part 1 prepends wrappedDek + header.
+    // Read + encrypt one chunk lazily; part 0 prepends the stream header.
     const encryptPart = async (index: number): Promise<Uint8Array> => {
       const start = index * chunkSize;
       const end = Math.min(start + chunkSize, plaintextSize);
@@ -115,7 +116,7 @@ export async function uploadFileStreaming(
         contentId,
         header,
       });
-      return index === 0 ? concat([wrappedDek, header, ct]) : ct;
+      return index === 0 ? concat([header, ct]) : ct;
     };
 
     let uploaded = 0;

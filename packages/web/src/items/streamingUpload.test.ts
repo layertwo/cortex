@@ -41,15 +41,21 @@ describe('uploadFileStreaming', () => {
     const onProgress = vi.fn();
     await uploadFileStreaming(fakeFile(new Uint8Array([1, 2, 3])), keys, onProgress);
 
-    // sizeBytes = 97 + 13 + 3 + 16 = 129 (1 chunk)
+    // sizeBytes = 13 + 3 + 16 = 32 (1 chunk, no 97-byte DEK prefix)
     expect(api.initiateUpload).toHaveBeenCalledWith(
-      expect.objectContaining({ vaultId: 'v1', sizeBytes: 129 }),
+      expect.objectContaining({
+        vaultId: 'v1',
+        sizeBytes: 32,
+        wrappedDek: expect.any(Uint8Array),
+        dekVersion: 1,
+      }),
     );
+    expect(api.initiateUpload.mock.calls[0][0].wrappedDek.length).toBe(97);
     const meta = decryptMetadata(api.initiateUpload.mock.calls[0][0].encryptedMetadata, keys.metadataKey);
     expect(meta).toMatchObject({ name: 'f.bin', size: 3, streamVersion: 1 });
     expect(api.putToS3).toHaveBeenCalledTimes(1);
     expect(api.putToS3.mock.calls[0][0]).toBe('https://s3/put');
-    expect(api.putToS3.mock.calls[0][1].length).toBe(129);
+    expect(api.putToS3.mock.calls[0][1].length).toBe(32); // header(13)+ct(3+16)
     expect(api.completeUpload).toHaveBeenCalledWith('i1'); // no opts
     expect(onProgress).toHaveBeenLastCalledWith(1);
   });
@@ -75,8 +81,8 @@ describe('uploadFileStreaming', () => {
     expect(api.createUploadPartUrls).toHaveBeenCalledWith('i1', 'mp1', [1, 2, 3]);
     const putUrls = api.putToS3.mock.calls.map((c: unknown[]) => c[0]);
     expect(putUrls).toEqual(['https://s3/p1', 'https://s3/p2', 'https://s3/p3']);
-    // part 1 body = 97 + 13 + (4 + 16) = 130; part 2 = 20; part 3 = (2 + 16) = 18
-    expect(api.putToS3.mock.calls.map((c: { length: number }[]) => c[1].length)).toEqual([130, 20, 18]);
+    // part 1 body = 13 + (4 + 16) = 33; part 2 = 20; part 3 = (2 + 16) = 18
+    expect(api.putToS3.mock.calls.map((c: { length: number }[]) => c[1].length)).toEqual([33, 20, 18]);
     expect(api.completeUpload).toHaveBeenCalledWith('i1', {
       uploadId: 'mp1',
       parts: [

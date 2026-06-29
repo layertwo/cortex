@@ -69,9 +69,10 @@ describe('items api', () => {
   it('initiateUpload sends the command and returns itemId+uploadUrl', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put', expiresAt: new Date(0) });
     const meta = new Uint8Array([1, 2, 3]);
-    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200 });
+    const wrappedDek = new Uint8Array(97);
+    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200, wrappedDek, dekVersion: 1 });
     expect(out).toEqual({ itemId: 'i1', uploadUrl: 'https://s3/put' });
-    expect(commands).toContainEqual(['InitiateItemUpload', { vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200 }]);
+    expect(commands).toContainEqual(['InitiateItemUpload', { vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200, wrappedDek, dekVersion: 1 }]);
   });
 
   it('putToS3 PUTs raw bytes with NO Authorization header and returns the ETag', async () => {
@@ -99,7 +100,7 @@ describe('items api', () => {
 
   it('initiateUpload surfaces uploadId when the server sends one (multipart)', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
-    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), sizeBytes: 999 });
+    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), sizeBytes: 999, wrappedDek: new Uint8Array(97), dekVersion: 1 });
     expect(out).toEqual({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
   });
 
