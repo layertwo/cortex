@@ -5,18 +5,16 @@ import type { FileMetadata } from '../items/metadata';
 
 const h = vi.hoisted(() => ({
   getVaultKeys: vi.fn(async () => ({ vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32) })),
-  listItems: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
-  getDownloadUrl: vi.fn(async () => 'https://s3/get'),
+  listItems: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) }]),
   deleteItem: vi.fn(async () => {}),
-  searchByTag: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
+  searchByTag: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) }]),
   updateItemTags: vi.fn(async () => ({ version: 2, updatedAt: new Date(0) })),
-  getCollection: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000) }]),
+  getCollection: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) }]),
   listCollections: vi.fn(async (): Promise<import('@cortex/client').CollectionData[]> => []),
   addItemToCollection: vi.fn(async () => {}),
   decryptMetadata: vi.fn((): FileMetadata => ({ name: 'cat.png', contentType: 'image/png', size: 1234, contentId: 'c1' })),
   encryptMetadata: vi.fn(async () => new Uint8Array([7])),
   encryptTagForSearch: vi.fn(() => new Uint8Array([8])),
-  decryptDownloadedBlob: vi.fn(() => new Uint8Array([1, 2, 3])),
   decryptCollectionName: vi.fn(() => 'Trip'),
   pickSink: vi.fn(async () => ({ write: vi.fn(), close: vi.fn(), abort: vi.fn() })),
   downloadFileStreaming: vi.fn(async () => {}),
@@ -24,7 +22,6 @@ const h = vi.hoisted(() => ({
 vi.mock('../vault/keyAccess', () => ({ getVaultKeys: h.getVaultKeys }));
 vi.mock('../api/items', () => ({
   listItems: h.listItems,
-  getDownloadUrl: h.getDownloadUrl,
   deleteItem: h.deleteItem,
   searchByTag: h.searchByTag,
   updateItemTags: h.updateItemTags,
@@ -36,7 +33,6 @@ vi.mock('../api/collections', () => ({
 }));
 vi.mock('@cortex/encryption', () => ({ encryptTagForSearch: h.encryptTagForSearch }));
 vi.mock('../items/metadata', () => ({ decryptMetadata: h.decryptMetadata, encryptMetadata: h.encryptMetadata }));
-vi.mock('../items/itemCrypto', () => ({ decryptDownloadedBlob: h.decryptDownloadedBlob }));
 vi.mock('../items/collectionMetadata', () => ({ decryptCollectionName: h.decryptCollectionName }));
 vi.mock('../items/streamingDownload', () => ({ pickSink: h.pickSink, downloadFileStreaming: h.downloadFileStreaming }));
 
@@ -74,23 +70,16 @@ describe('FileList', () => {
     await waitFor(() => expect(h.searchByTag).toHaveBeenCalledWith('v1', 'YWJj'));
   });
 
-  it('legacy download (no streamVersion) fetches the url, decrypts whole-buffer, saves', async () => {
-    render(<FileList view={ALL} refreshKey={0} />);
-    await screen.findByText('cat.png');
-    await userEvent.click(screen.getByRole('button', { name: /^download$/i }));
-    await waitFor(() => expect(h.getDownloadUrl).toHaveBeenCalledWith('i1'));
-    expect(h.decryptDownloadedBlob).toHaveBeenCalled();
-    expect(h.downloadFileStreaming).not.toHaveBeenCalled();
-  });
-
-  it('chunked download (streamVersion present) picks a sink and streams', async () => {
+  it('download picks a sink and streams, passing the item record wrapped DEK', async () => {
     h.decryptMetadata.mockReturnValueOnce({ name: 'big.bin', contentType: 'application/octet-stream', size: 999, contentId: 'c2', streamVersion: 1 });
     render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('big.bin');
     await userEvent.click(screen.getByRole('button', { name: /^download$/i }));
     await waitFor(() => expect(h.pickSink).toHaveBeenCalledWith('big.bin', 'application/octet-stream'));
-    expect(h.downloadFileStreaming).toHaveBeenCalledWith('i1', expect.objectContaining({ streamVersion: 1 }), expect.any(Uint8Array), expect.anything());
-    expect(h.decryptDownloadedBlob).not.toHaveBeenCalled();
+    // (itemId, meta, wrappedDek, kek, sink)
+    expect(h.downloadFileStreaming).toHaveBeenCalledWith(
+      'i1', expect.objectContaining({ streamVersion: 1 }), expect.any(Uint8Array), expect.any(Uint8Array), expect.anything(),
+    );
   });
 
   it('add-to-collection lists collections then adds the item', async () => {
