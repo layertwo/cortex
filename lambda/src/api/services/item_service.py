@@ -258,6 +258,12 @@ class ItemService:
         if request.encrypted_tags:
             item["encrypted_tags"] = request.encrypted_tags
 
+        # Per-file wrapped DEK now lives on the item record (not the S3 blob),
+        # so rotation can re-wrap it without rewriting the object. dek_version
+        # is always 1 in Phase 1.
+        item["wrapped_dek"] = request.wrapped_dek
+        item["dek_version"] = int(request.dek_version)
+
         # Track upload_id for multipart uploads (needed for cleanup)
         if upload_id:
             item["upload_id"] = upload_id

@@ -2,10 +2,10 @@ name: Lambda Tests
 
 on:
   push:
-    paths: ['lambda/**', '.github/workflows/lambda-tests.yml']
+    paths: ['lambda/**', 'smithy/**', '.github/workflows/lambda-tests.yml']
     branches: [ "mainline" ]
   pull_request:
-    paths: ['lambda/**', '.github/workflows/lambda-tests.yml']
+    paths: ['lambda/**', 'smithy/**', '.github/workflows/lambda-tests.yml']
     branches: [ "mainline" ]
 
 jobs:
@@ -27,9 +27,21 @@ jobs:
           enable-cache: true
           cache-dependency-glob: 'lambda/uv.lock'
 
+      # Java is needed for the gradle Smithy build that codegen.sh runs.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: corretto
+          java-version: 17
+          cache: gradle
+
       - name: Install dependencies
         working-directory: lambda
         run: uv sync --group dev --python ${{ matrix.python-version }}
+
+      # models.py is a generated artifact (gitignored); regenerate it from the
+      # Smithy contract before linting/tests so the backend matches the contract.
+      - name: Generate pydantic models from Smithy
+        run: lambda/scripts/codegen.sh
 
       - name: Check code formatting with black
         working-directory: lambda

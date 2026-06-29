@@ -75,6 +75,8 @@ class TestInitiateUploadRoute:
                 "vaultId": vault_id,
                 "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
                 "sizeBytes": 50 * 1024 * 1024,  # 50MB - small file
+                "wrappedDek": base64.b64encode(bytes(range(97))).decode(),
+                "dekVersion": 1,
             },
         )
 
@@ -288,6 +290,68 @@ class TestListItemsRoute:
         assert response.status_code == 404
         body = response.json()
         assert "Vault not found" in body["error"]["message"]
+
+    def test_list_items_returns_wrapped_dek(
+        self, client, dynamodb_stubber, vaults_table_name, items_table_name
+    ):
+        """Verify list items response includes wrapped_dek and dek_version fields."""
+        user_id = "test-user-id"
+        vault_id = "v1"
+        wrapped = bytes(range(97))
+
+        # Stub vault_exists check
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"USER#{user_id}"},
+                    "SK": {"S": f"VAULT#{vault_id}"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": user_id},
+                }
+            },
+            expected_params={
+                "TableName": vaults_table_name,
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+
+        # Stub list_items query with item that has wrapped_dek and dek_version
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "item_id": {"S": "item-1"},
+                        "item_type": {"S": "MEDIA"},
+                        "vault_id": {"S": vault_id},
+                        "user_id": {"S": user_id},
+                        "encrypted_metadata": {"B": b"meta"},
+                        "wrapped_dek": {"B": wrapped},
+                        "dek_version": {"N": "1"},
+                        "created_at": {"N": "1234567890"},
+                        "updated_at": {"N": "1234567890"},
+                        "version": {"N": "1"},
+                    }
+                ],
+                "Count": 1,
+            },
+            expected_params={
+                "TableName": items_table_name,
+                "IndexName": "GSI2",
+                "KeyConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "FilterExpression": ANY,
+                "ScanIndexForward": ANY,
+                "Limit": ANY,
+            },
+        )
+
+        resp = client.get(f"/v1/items?vaultId={vault_id}")
+        assert resp.status_code == 200
+        item = resp.json()["items"][0]
+        assert base64.b64decode(item["wrappedDek"]) == wrapped
+        assert item["dekVersion"] == 1
 
 
 class TestGetItemRoute:

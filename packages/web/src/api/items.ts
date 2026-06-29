@@ -18,6 +18,8 @@ export async function initiateUpload(args: {
   vaultId: string;
   encryptedMetadata: Uint8Array;
   sizeBytes: number;
+  wrappedDek: Uint8Array;
+  dekVersion: number;
   encryptedTags?: Uint8Array[];
 }): Promise<{ itemId: string; uploadUrl: string; uploadId?: string }> {
   const out = await makeClient().send(new InitiateItemUploadCommand(args));

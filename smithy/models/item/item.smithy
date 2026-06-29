@@ -205,6 +205,14 @@ structure InitiateItemUploadInput {
 
     @documentation("List of encrypted tags")
     encryptedTags: EncryptedTagList
+
+    @required
+    @documentation("Wrapped per-file DEK (97 bytes, HMAC-bound to contentId)")
+    wrappedDek: Blob
+
+    @required
+    @documentation("KEK version that wrapped the DEK (1 in Phase 1)")
+    dekVersion: Integer
 }
 
 structure InitiateItemUploadOutput {
@@ -332,6 +340,12 @@ structure GetItemOutput {
 
     @documentation("S3 key (for MEDIA items)")
     s3Key: String
+
+    @documentation("Wrapped per-file DEK (MEDIA items)")
+    wrappedDek: Blob
+
+    @documentation("KEK version that wrapped the DEK (MEDIA items)")
+    dekVersion: Integer
 
     @required
     @documentation("Creation timestamp")

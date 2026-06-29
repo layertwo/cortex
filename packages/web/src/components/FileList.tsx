@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { encryptTagForSearch } from '@cortex/encryption';
 import { getVaultKeys } from '../vault/keyAccess';
-import { listItems, getDownloadUrl, deleteItem, searchByTag, updateItemTags } from '../api/items';
+import { listItems, deleteItem, searchByTag, updateItemTags } from '../api/items';
 import { getCollection, listCollections, addItemToCollection } from '../api/collections';
 import { decryptMetadata, encryptMetadata, type FileMetadata } from '../items/metadata';
-import { decryptDownloadedBlob } from '../items/itemCrypto';
 import { decryptCollectionName } from '../items/collectionMetadata';
 import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
 import type { View } from './CollectionSidebar';
@@ -13,6 +12,7 @@ interface Row {
   itemId: string;
   createdAt?: Date;
   meta: FileMetadata | null; // null = metadata failed to decrypt
+  wrappedDek?: Uint8Array; // per-file wrapped DEK (MEDIA), from the item record
 }
 
 export default function FileList({ view, refreshKey }: { view: View; refreshKey: number }) {
@@ -38,7 +38,7 @@ export default function FileList({ view, refreshKey }: { view: View; refreshKey:
           } catch {
             // metadata won't decrypt → show the row as unreadable
           }
-          return { itemId: it.itemId!, createdAt: it.createdAt, meta };
+          return { itemId: it.itemId!, createdAt: it.createdAt, meta, wrappedDek: it.wrappedDek };
         }),
       );
     } catch (err) {
@@ -51,29 +51,13 @@ export default function FileList({ view, refreshKey }: { view: View; refreshKey:
   }, [load, refreshKey]);
 
   async function onDownload(row: Row) {
-    if (!row.meta) return;
+    if (!row.meta || !row.wrappedDek) return;
     setError('');
     try {
-      // streamVersion is already known from the decrypted metadata — branch with
-      // no await so the user gesture survives for showSaveFilePicker.
-      if (row.meta.streamVersion === undefined) {
-        // Legacy (pre-2.5c) whole-buffer object.
-        const { kek } = await getVaultKeys();
-        const url = await getDownloadUrl(row.itemId);
-        const blob = new Uint8Array(await (await fetch(url)).arrayBuffer());
-        const plain = decryptDownloadedBlob(blob, row.meta, kek);
-        const objectUrl = URL.createObjectURL(new Blob([plain as BlobPart], { type: row.meta.contentType }));
-        const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = row.meta.name;
-        a.click();
-        URL.revokeObjectURL(objectUrl);
-        return;
-      }
-      // Chunked stream: pick the sink FIRST (preserves the click's user activation).
+      // Pick the sink FIRST (preserves the click's user activation for showSaveFilePicker).
       const sink = await pickSink(row.meta.name, row.meta.contentType);
       const { kek } = await getVaultKeys();
-      await downloadFileStreaming(row.itemId, row.meta, kek, sink);
+      await downloadFileStreaming(row.itemId, row.meta, row.wrappedDek, kek, sink);
     } catch (err) {
       if ((err as Error)?.name === 'AbortError') return; // user cancelled the save dialog
       setError(err instanceof Error ? err.message : 'Download failed');

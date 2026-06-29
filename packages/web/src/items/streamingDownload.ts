@@ -5,11 +5,10 @@ import {
   STREAM_HEADER_SIZE,
   TAG_SIZE,
 } from '@cortex/encryption';
-import { WRAPPED_DEK_SIZE } from './itemBlob';
 import { type FileMetadata } from './metadata';
 import { getDownloadUrl } from '../api/items';
 
-const PREFIX_SIZE = WRAPPED_DEK_SIZE + STREAM_HEADER_SIZE; // 97 + 13 = 110
+const PREFIX_SIZE = STREAM_HEADER_SIZE; // 13 — the wrapped DEK now comes from the item record
 
 export interface DownloadSink {
   write(bytes: Uint8Array): void | Promise<void>;
@@ -98,8 +97,9 @@ async function readExactly(
 /**
  * Stream-decrypt a chunked object straight to a sink.
  *
- * Reads the `wrappedDek(97)+header(13)` prefix off the response stream, unwraps
- * the DEK, then frames the rest into `chunkSize+16` blocks. A block is emitted
+ * Reads the `header(13)` prefix off the response stream and unwraps the DEK
+ * (passed in from the item record), then frames the rest into `chunkSize+16`
+ * blocks. A block is emitted
  * non-final only while strictly more than one block is buffered; whatever remains
  * at EOF is decrypted with `isFinal=true` — so a dropped tail makes a non-final
  * chunk read as final and fail authentication. Any decrypt failure discards the
@@ -108,6 +108,7 @@ async function readExactly(
 export async function downloadFileStreaming(
   itemId: string,
   meta: FileMetadata,
+  wrappedDek: Uint8Array,
   kek: Uint8Array,
   sink: DownloadSink,
 ): Promise<void> {
@@ -116,10 +117,8 @@ export async function downloadFileStreaming(
   if (!res.ok || !res.body) throw new Error(`Download failed: ${(res as Response).status ?? 'no body'}`);
   const reader = res.body.getReader();
 
-  // Prefix: wrappedDek(97) + header(13). `rest` is the start of chunk 0.
-  const { head, rest } = await readExactly(reader, PREFIX_SIZE);
-  const wrappedDek = head.slice(0, WRAPPED_DEK_SIZE);
-  const header = head.slice(WRAPPED_DEK_SIZE);
+  // Prefix is just the stream header now; `rest` is the start of chunk 0.
+  const { head: header, rest } = await readExactly(reader, PREFIX_SIZE);
   const { chunkSize, noncePrefix } = parseStreamHeader(header);
   const dek = unwrapDek(wrappedDek, kek, meta.contentId); // throws DekUnwrapError on wrong key/tamper
 

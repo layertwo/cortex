@@ -67,6 +67,8 @@ def _item_fields(item: dict) -> dict:
         "time_bucket": item.get("time_bucket"),
         "size_bytes": int(item["size_bytes"]) if item.get("size_bytes") is not None else None,
         "s3_key": item.get("s3_key"),
+        "wrapped_dek": _encode_binary(item.get("wrapped_dek")),
+        "dek_version": int(item["dek_version"]) if item.get("dek_version") is not None else None,
         "created_at": float(item["created_at"]),
         "updated_at": float(item["updated_at"]),
         "version": int(item.get("version", 1)),
