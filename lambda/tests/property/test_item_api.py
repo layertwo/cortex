@@ -173,6 +173,8 @@ class TestGenericItemApiSupportsAllTypes:
             vault_id="vault-123",
             encrypted_metadata=base64.b64encode(b"opaque-metadata"),
             size_bytes=1024,  # below multipart threshold -> single PUT, no uploadId
+            wrapped_dek=base64.b64encode(bytes(range(97))),
+            dek_version=1,
         )
         dynamodb_stubber.add_response("put_item", {}, {"TableName": TABLE, "Item": ANY})
 

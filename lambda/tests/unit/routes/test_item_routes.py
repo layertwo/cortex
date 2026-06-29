@@ -291,7 +291,6 @@ class TestListItemsRoute:
         body = response.json()
         assert "Vault not found" in body["error"]["message"]
 
-
     def test_list_items_returns_wrapped_dek(
         self, client, dynamodb_stubber, vaults_table_name, items_table_name
     ):

@@ -69,11 +69,14 @@ exclude_lines = [
 line-length = 100
 target-version = ["py314"]
 src = ["src/", "tests/"]
+# Generated artifact (lambda/scripts/codegen.sh) — not hand-edited, not formatted.
+extend-exclude = "src/shared/generated/"
 
 [tool.isort]
 profile = "black"
 src_paths = ["src/", "tests/"]
 line_length = 100
+extend_skip_glob = ["**/generated/**"]
 
 [tool.flake8]
 max-line-length = 100
@@ -86,6 +89,7 @@ extend-ignore = [
 ]
 exclude = [
     ".git",
+    "src/shared/generated",  # generated artifact (codegen.sh), not linted
     "__pycache__",
     "build",
     "dist",

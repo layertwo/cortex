@@ -170,7 +170,6 @@ class TestInitiateUpload:
         assert response.upload_url is not None
         assert response.s3_key is not None
 
-
     def test_initiate_upload_persists_wrapped_dek(self, item_service):
         """Verify initiate_upload stores wrapped_dek and dek_version on the DynamoDB item."""
         from unittest.mock import patch

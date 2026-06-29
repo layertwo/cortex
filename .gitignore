@@ -9,6 +9,9 @@ build/
 # Generated Smithy TypeScript client (produced by `npm run codegen:client`)
 packages/client/
 
+# Generated pydantic models from Smithy/OpenAPI (produced by lambda/scripts/codegen.sh)
+lambda/src/shared/generated/models.py
+
 # Dependencies
 node_modules/
 .pnp
