@@ -8,12 +8,13 @@ Uses botocore Stubber for AWS service testing (not mocking).
 """
 
 import secrets
+import time
 
 import pytest
 from botocore.exceptions import ClientError
 from botocore.stub import ANY
 
-from src.shared.exceptions import BadRequestError, InternalError, NotFoundError
+from src.shared.exceptions import BadRequestError, ConflictError, InternalError, NotFoundError
 
 
 class TestVaultService:
@@ -444,3 +445,77 @@ class TestVaultService:
 
         # Verify salt has sufficient entropy (not all same byte)
         assert len(set(salt)) > 1, "Salt should have sufficient entropy"
+
+    def test_get_vault_returns_vault_with_rotation_fields(self, vault_service, dynamodb_stubber):
+        """Test that get_vault returns the vault record including rotation fields."""
+        user_id = "u1"
+        vault_id = "v1"
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"USER#{user_id}"},
+                    "SK": {"S": f"VAULT#{vault_id}"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": user_id},
+                    "vault_salt": {"B": b"\x00" * 16},
+                    "created_at": {"N": "1700000000"},
+                    "kek_version": {"N": "1"},
+                    "rotation_state": {"S": "IDLE"},
+                }
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": ANY,
+            },
+        )
+        result = vault_service.get_vault(user_id=user_id, vault_id=vault_id)
+        assert result["vault_id"] == vault_id
+        assert result["kek_version"] == 1
+        assert result["rotation_state"] == "IDLE"
+        assert result["rotation_locked_at"] is None
+
+    def test_get_vault_raises_not_found(self, vault_service, dynamodb_stubber):
+        """Test that get_vault raises NotFoundError when vault doesn't exist."""
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {"TableName": "test-vaults-table", "Key": ANY},
+        )
+        with pytest.raises(NotFoundError):
+            vault_service.get_vault(user_id="u1", vault_id="v1")
+
+    def test_update_vault_rotation_acquire(self, vault_service, dynamodb_stubber):
+        """Test that update_vault_rotation acquires the rotation lock."""
+        dynamodb_stubber.add_response(
+            "update_item",
+            {
+                "Attributes": {
+                    "rotation_state": {"S": "IN_PROGRESS"},
+                    "rotation_locked_at": {"N": str(int(time.time()))},
+                }
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        result = vault_service.update_vault_rotation(
+            user_id="u1", vault_id="v1", action="ACQUIRE", expected_state="IDLE"
+        )
+        assert result["rotation_state"] == "IN_PROGRESS"
+
+    def test_update_vault_rotation_acquire_conflict(self, vault_service, dynamodb_stubber):
+        """Test that update_vault_rotation raises ConflictError when the lock is already held."""
+        dynamodb_stubber.add_client_error(
+            "update_item",
+            service_error_code="ConditionalCheckFailedException",
+        )
+        with pytest.raises(ConflictError):
+            vault_service.update_vault_rotation(
+                user_id="u1", vault_id="v1", action="ACQUIRE", expected_state="IDLE"
+            )

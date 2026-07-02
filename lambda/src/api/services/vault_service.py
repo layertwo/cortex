@@ -16,7 +16,7 @@ import boto3
 from boto3.dynamodb.types import Binary
 from botocore.exceptions import ClientError
 
-from src.shared.exceptions import BadRequestError, InternalError, NotFoundError
+from src.shared.exceptions import BadRequestError, ConflictError, InternalError, NotFoundError
 from src.shared.logger import get_logger
 
 logger = get_logger("vault_service")
@@ -249,4 +249,144 @@ class VaultService:
 
         except ClientError as e:
             logger.error("Failed to list user vaults", **{"error": str(e), "user_id": user_id})
+            raise
+
+    def get_vault(self, user_id: str, vault_id: str) -> Dict:
+        """
+        Retrieve the vault record, including vault password rotation state.
+
+        Args:
+            user_id: User identifier
+            vault_id: Vault identifier
+
+        Returns:
+            Dictionary with vault_id, user_id, vault_salt, created_at,
+            updated_at, kek_version, rotation_state, and rotation_locked_at.
+
+        Raises:
+            NotFoundError: If vault not found
+        """
+        response = self.vaults_table.get_item(
+            Key={"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
+        )
+        item = response.get("Item")
+
+        if not item:
+            logger.warning(
+                "Vault not found",
+                **{"vault_id": vault_id, "user_id": user_id, "operation": "get_vault"},
+            )
+            raise NotFoundError(f"Vault {vault_id} not found")
+
+        vault_salt = item.get("vault_salt")
+        if isinstance(vault_salt, Binary):
+            vault_salt = vault_salt.value  # type: ignore[attr-defined]
+
+        return {
+            "vault_id": item["vault_id"],
+            "user_id": item["user_id"],
+            "vault_salt": vault_salt,
+            "created_at": int(item["created_at"]),
+            "updated_at": int(item.get("updated_at", item["created_at"])),
+            "kek_version": int(item["kek_version"]) if item.get("kek_version") is not None else 1,
+            "rotation_state": item.get("rotation_state", "IDLE"),
+            "rotation_locked_at": (
+                int(item["rotation_locked_at"])
+                if item.get("rotation_locked_at") is not None
+                else None
+            ),
+        }
+
+    def update_vault_rotation(
+        self,
+        user_id: str,
+        vault_id: str,
+        action: str,
+        expected_state: str,
+        kek_version: Optional[int] = None,
+        new_verifier: Optional[bytes] = None,
+    ) -> Dict:
+        """
+        Acquire or release the vault password rotation lock with a conditional write.
+
+        ACQUIRE: rotation_state IDLE -> IN_PROGRESS. Also succeeds (steals the
+        lock) if the existing lock is IN_PROGRESS but stale (locked more than
+        7 days ago), to recover from an abandoned rotation.
+        RELEASE: rotation_state IN_PROGRESS -> IDLE; optionally writes the new
+        kek_version and new_verifier produced by the completed rotation.
+
+        Args:
+            user_id: User identifier
+            vault_id: Vault identifier
+            action: "ACQUIRE" or "RELEASE"
+            expected_state: The rotation_state the caller expects to be
+                overwriting (used in the DynamoDB condition expression)
+            kek_version: New KEK version to persist (RELEASE only)
+            new_verifier: New vault password verifier to persist (RELEASE only)
+
+        Returns:
+            Dictionary with rotation_state and rotation_locked_at.
+
+        Raises:
+            ConflictError: If the condition fails, e.g. another rotation is
+                already in progress.
+        """
+        key = {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
+        now = int(time.time())
+
+        if action == "ACQUIRE":
+            stale_threshold = now - 7 * 24 * 3600
+            update_expr = (
+                "SET rotation_state = :new_state, rotation_locked_at = :now, updated_at = :now"
+            )
+            condition = (
+                "rotation_state = :expected OR "
+                "(rotation_state = :in_progress AND rotation_locked_at < :stale)"
+            )
+            values = {
+                ":new_state": "IN_PROGRESS",
+                ":expected": expected_state,
+                ":in_progress": "IN_PROGRESS",
+                ":stale": stale_threshold,
+                ":now": now,
+            }
+        else:  # RELEASE
+            update_expr = "SET rotation_state = :new_state, updated_at = :now"
+            values = {":new_state": "IDLE", ":expected": expected_state, ":now": now}
+            if kek_version is not None:
+                update_expr += ", kek_version = :kv"
+                values[":kv"] = kek_version
+            if new_verifier is not None:
+                update_expr += ", verifier = :ver"
+                values[":ver"] = new_verifier
+            condition = "rotation_state = :expected"
+
+        try:
+            resp = self.vaults_table.update_item(
+                Key=key,
+                UpdateExpression=update_expr,
+                ConditionExpression=condition,
+                ExpressionAttributeValues=values,
+                ReturnValues="ALL_NEW",
+            )
+            attrs = resp.get("Attributes", {})
+            return {
+                "rotation_state": attrs.get("rotation_state", "IDLE"),
+                "rotation_locked_at": (
+                    int(attrs["rotation_locked_at"]) if attrs.get("rotation_locked_at") else None
+                ),
+            }
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                logger.warning(
+                    "Vault rotation conflict",
+                    **{"vault_id": vault_id, "user_id": user_id, "action": action},
+                )
+                raise ConflictError(
+                    "A vault password change is already in progress on another device"
+                ) from e
+            logger.error(
+                "Failed to update vault rotation state",
+                **{"error": str(e), "vault_id": vault_id, "user_id": user_id, "action": action},
+            )
             raise
