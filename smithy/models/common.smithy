@@ -38,6 +38,20 @@ list ValidationErrorList {
     member: ValidationErrorDetail
 }
 
+/// Vault rotation state — tracks whether a password-change rotation is in progress
+enum RotationState {
+    IDLE = "IDLE"
+    IN_PROGRESS = "IN_PROGRESS"
+    PAUSED = "PAUSED"
+    FAILED = "FAILED"
+}
+
+/// Action to take on vault rotation lock
+enum RotationAction {
+    ACQUIRE = "ACQUIRE"
+    RELEASE = "RELEASE"
+}
+
 /// Common item data structure
 structure ItemData {
     @required

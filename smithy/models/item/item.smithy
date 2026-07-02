@@ -383,6 +383,12 @@ structure UpdateItemInput {
 
     @documentation("Expected version for optimistic locking")
     expectedVersion: Integer
+
+    @documentation("Re-wrapped DEK under the new KEK (rotation sweep only)")
+    wrappedDek: Blob
+
+    @documentation("New KEK version that wrapped the DEK (rotation sweep only)")
+    dekVersion: Integer
 }
 
 structure UpdateItemOutput {

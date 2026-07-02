@@ -83,3 +83,10 @@ structure ShareRevokedError {
     @documentation("Revocation timestamp")
     revokedAt: Timestamp
 }
+
+@error("client")
+@httpError(409)
+structure ConflictError {
+    @required
+    message: String
+}

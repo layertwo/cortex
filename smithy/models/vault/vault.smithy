@@ -14,6 +14,7 @@ resource Vault {
     read: GetVault
     operations: [
         GetVaultSalt
+        UpdateVaultRotation
     ]
 }
 
@@ -109,6 +110,15 @@ structure GetVaultOutput {
     @required
     @documentation("Last modified timestamp")
     updatedAt: Timestamp
+
+    @documentation("Current KEK version (increments on each completed rotation)")
+    kekVersion: Integer
+
+    @documentation("Current rotation state")
+    rotationState: RotationState
+
+    @documentation("Timestamp when rotation lock was acquired (epoch seconds)")
+    rotationLockedAt: Long
 }
 
 structure GetVaultSaltInput {
@@ -122,4 +132,48 @@ structure GetVaultSaltOutput {
     @required
     @documentation("Vault salt for key derivation (16 bytes, non-secret)")
     vaultSalt: Blob
+}
+
+@http(method: "POST", uri: "/v1/vaults/{vaultId}/rotation")
+@documentation("Acquire or release the rotation lock on a vault (conditional write)")
+operation UpdateVaultRotation {
+    input: UpdateVaultRotationInput
+    output: UpdateVaultRotationOutput
+    errors: [
+        AuthenticationError
+        AuthorizationError
+        ResourceNotFoundError
+        ConflictError
+        InternalError
+    ]
+}
+
+structure UpdateVaultRotationInput {
+    @required
+    @httpLabel
+    @documentation("Vault identifier")
+    vaultId: String
+
+    @required
+    @documentation("ACQUIRE to lock for rotation; RELEASE to unlock after completion")
+    action: RotationAction
+
+    @required
+    @documentation("Expected current rotation state (conditional write guard)")
+    expectedState: RotationState
+
+    @documentation("New KEK version to write on RELEASE")
+    kekVersion: Integer
+
+    @documentation("Re-encrypted vault verifier to persist on RELEASE")
+    newVerifier: Blob
+}
+
+structure UpdateVaultRotationOutput {
+    @required
+    @documentation("New rotation state")
+    rotationState: RotationState
+
+    @documentation("When the lock was acquired (epoch seconds)")
+    rotationLockedAt: Long
 }
