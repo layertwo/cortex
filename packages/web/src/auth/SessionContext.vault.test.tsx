@@ -7,7 +7,12 @@ import { createVerifier, saveVerifier } from '../vault/verifier';
 const { SALT, MASTER, api } = vi.hoisted(() => ({
   SALT: new Uint8Array(16).fill(9),
   MASTER: new Uint8Array(32).fill(5),
-  api: { createVault: vi.fn(), getVaultSalt: vi.fn() },
+  api: {
+    createVault: vi.fn(),
+    getVaultSalt: vi.fn(),
+    getVault: vi.fn(),
+    updateVaultRotation: vi.fn(),
+  },
 }));
 
 vi.mock('aws-amplify/auth', () => ({
@@ -39,6 +44,10 @@ function Probe() {
   return (
     <div>
       <span data-testid="status">{s.status}</span>
+      <span data-testid="rotation-interrupted">{String(s.rotationInterrupted)}</span>
+      <span data-testid="types">
+        {typeof s.changeVaultPassword},{typeof s.rotationInterrupted}
+      </span>
       <button onClick={() => s.setupVault('vaultpw').then((r) => (document.title = r))}>setup</button>
       <button onClick={() => s.unlockVault('vaultpw').catch((e) => (document.title = e.message))}>
         unlock
@@ -76,6 +85,13 @@ describe('SessionContext vault', () => {
     localStorage.setItem('cortex_vault_id', 'v1');
     saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
     api.getVaultSalt.mockResolvedValue(SALT);
+    api.getVault.mockResolvedValue({
+      vaultId: 'v1',
+      vaultSalt: SALT,
+      kekVersion: 1,
+      rotationState: 'IDLE',
+      rotationLockedAt: null,
+    });
 
     render(
       <SessionProvider>
@@ -87,6 +103,33 @@ describe('SessionContext vault', () => {
       screen.getByText('unlock').click();
     });
     expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
+  });
+
+  it('unlockVault sets rotationInterrupted when GetVault reports a non-IDLE rotation state', async () => {
+    const keys = deriveKeys(MASTER);
+    localStorage.setItem('cortex_vault_id', 'v1');
+    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
+    api.getVaultSalt.mockResolvedValue(SALT);
+    api.getVault.mockResolvedValue({
+      vaultId: 'v1',
+      vaultSalt: SALT,
+      kekVersion: 1,
+      rotationState: 'IN_PROGRESS',
+      rotationLockedAt: 1700000000,
+    });
+
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('unlock');
+    await act(async () => {
+      screen.getByText('unlock').click();
+    });
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('true');
   });
 
   it('unlockVault with the wrong password throws and stays locked', async () => {
@@ -123,5 +166,19 @@ describe('SessionContext vault', () => {
     });
     expect(document.title).toMatch(/verifier missing/i);
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
+  });
+});
+
+describe('changeVaultPassword', () => {
+  it('is exposed on SessionValue as a function, alongside rotationInterrupted as a boolean', async () => {
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    expect(await screen.findByTestId('types')).toHaveTextContent('function,boolean');
+    // Full integration coverage (wrong-password fast-fail, sweep, phrase gate) lives in
+    // ChangeVaultPassword.test.tsx (Task 9) — this is just the wiring smoke test.
+    expect(api.getVault).not.toHaveBeenCalled();
   });
 });
