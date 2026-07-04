@@ -340,6 +340,7 @@ class VaultService:
                 "SET rotation_state = :new_state, rotation_locked_at = :now, updated_at = :now"
             )
             condition = (
+                "attribute_not_exists(rotation_state) OR "
                 "rotation_state = :expected OR "
                 "(rotation_state = :in_progress AND rotation_locked_at < :stale)"
             )

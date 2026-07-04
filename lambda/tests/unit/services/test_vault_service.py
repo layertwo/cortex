@@ -519,3 +519,46 @@ class TestVaultService:
             vault_service.update_vault_rotation(
                 user_id="u1", vault_id="v1", action="ACQUIRE", expected_state="IDLE"
             )
+
+    def test_update_vault_rotation_acquire_when_rotation_state_absent(
+        self, vault_service, dynamodb_stubber
+    ):
+        """Test that ACQUIRE succeeds for pre-existing vaults with no rotation_state attribute.
+
+        Vaults created by create_vault before this feature existed never had a
+        rotation_state attribute written. DynamoDB's `=` comparison against a
+        missing attribute evaluates to false (not an error), so without the
+        attribute_not_exists(rotation_state) clause the ACQUIRE condition would
+        never be satisfiable for these vaults.
+
+        The stub asserts the literal ConditionExpression sent to DynamoDB (rather
+        than using ANY, as most other stubs in this file do) so that this test
+        actually fails if the attribute_not_exists(rotation_state) clause is ever
+        removed from the ACQUIRE branch, since Stubber never evaluates conditional
+        expressions against real item state.
+        """
+        dynamodb_stubber.add_response(
+            "update_item",
+            {
+                "Attributes": {
+                    "rotation_state": {"S": "IN_PROGRESS"},
+                    "rotation_locked_at": {"N": str(int(time.time()))},
+                }
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": (
+                    "attribute_not_exists(rotation_state) OR "
+                    "rotation_state = :expected OR "
+                    "(rotation_state = :in_progress AND rotation_locked_at < :stale)"
+                ),
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        result = vault_service.update_vault_rotation(
+            user_id="u1", vault_id="v1", action="ACQUIRE", expected_state="IDLE"
+        )
+        assert result["rotation_state"] == "IN_PROGRESS"
