@@ -115,3 +115,78 @@ class TestGetVaultSaltRoute:
         assert response.status_code == 404
         body = response.json()
         assert "not found" in body["error"]["message"].lower()
+
+
+class TestGetVaultRoute:
+    def test_get_vault_returns_vault_with_rotation_state(self, client, dynamodb_stubber):
+        # Matches the fixed user_id the `client` fixture overrides
+        # get_current_user to return (see tests/conftest.py).
+        user_id = "test-user-id"
+        vault_id = "test-vault-1"
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"USER#{user_id}"},
+                    "SK": {"S": f"VAULT#{vault_id}"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": user_id},
+                    "vault_salt": {"B": b"\xaa" * 16},
+                    "created_at": {"N": "1700000000"},
+                    "updated_at": {"N": "1700000000"},
+                    "kek_version": {"N": "1"},
+                    "rotation_state": {"S": "IDLE"},
+                }
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"},
+            },
+        )
+        response = client.get(f"/v1/vaults/{vault_id}")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["vaultId"] == vault_id
+        assert body["rotationState"] == "IDLE"
+        assert body["kekVersion"] == 1
+
+
+class TestUpdateVaultRotationRoute:
+    def test_acquire_rotation_lock(self, client, dynamodb_stubber):
+        import time
+
+        vault_id = "test-vault-1"
+        dynamodb_stubber.add_response(
+            "update_item",
+            {
+                "Attributes": {
+                    "rotation_state": {"S": "IN_PROGRESS"},
+                    "rotation_locked_at": {"N": str(int(time.time()))},
+                }
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        response = client.post(
+            f"/v1/vaults/{vault_id}/rotation",
+            json={"action": "ACQUIRE", "expectedState": "IDLE"},
+        )
+        assert response.status_code == 200
+        assert response.json()["rotationState"] == "IN_PROGRESS"
+
+    def test_conflict_returns_409(self, client, dynamodb_stubber):
+        vault_id = "test-vault-1"
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        response = client.post(
+            f"/v1/vaults/{vault_id}/rotation",
+            json={"action": "ACQUIRE", "expectedState": "IDLE"},
+        )
+        assert response.status_code == 409
