@@ -1,4 +1,11 @@
-import { CortexClient, CreateVaultCommand, GetVaultSaltCommand } from '@cortex/client';
+import {
+  CortexClient,
+  CreateVaultCommand,
+  GetVaultSaltCommand,
+  GetVaultCommand,
+  UpdateVaultRotationCommand,
+  type RotationState,
+} from '@cortex/client';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { getConfig } from '../config';
 
@@ -36,4 +43,38 @@ export async function getVaultSalt(vaultId: string): Promise<Uint8Array> {
   const out = await makeClient().send(new GetVaultSaltCommand({ vaultId }));
   if (!out.vaultSalt) throw new Error('getVaultSalt: missing salt');
   return out.vaultSalt;
+}
+
+export interface VaultRecord {
+  vaultId: string;
+  vaultSalt: Uint8Array;
+  kekVersion: number;
+  rotationState: RotationState;
+  rotationLockedAt: number | null;
+}
+
+export async function getVault(vaultId: string): Promise<VaultRecord> {
+  const out = await makeClient().send(new GetVaultCommand({ vaultId }));
+  if (!out.vaultId || !out.vaultSalt) throw new Error('getVault: incomplete response');
+  return {
+    vaultId: out.vaultId,
+    vaultSalt: out.vaultSalt,
+    kekVersion: out.kekVersion ?? 1,
+    rotationState: out.rotationState ?? 'IDLE',
+    rotationLockedAt: out.rotationLockedAt ?? null,
+  };
+}
+
+export async function updateVaultRotation(args: {
+  vaultId: string;
+  action: 'ACQUIRE' | 'RELEASE';
+  expectedState: RotationState;
+  kekVersion?: number;
+  newVerifier?: Uint8Array;
+}): Promise<{ rotationState: string; rotationLockedAt: number | null }> {
+  const out = await makeClient().send(new UpdateVaultRotationCommand(args));
+  return {
+    rotationState: out.rotationState ?? 'IDLE',
+    rotationLockedAt: out.rotationLockedAt ?? null,
+  };
 }

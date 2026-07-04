@@ -44,7 +44,12 @@ from src.api.routes.items import (
 )
 from src.api.routes.shares import CreateShareRoute, GetShareRoute, RevokeShareRoute
 from src.api.routes.tags import SearchTagsRoute
-from src.api.routes.vaults import CreateVaultRoute, GetVaultSaltRoute
+from src.api.routes.vaults import (
+    CreateVaultRoute,
+    GetVaultRoute,
+    GetVaultSaltRoute,
+    UpdateVaultRotationRoute,
+)
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
@@ -243,6 +248,8 @@ class ServiceProvider:
         routes = [
             CreateVaultRoute(vault_service=self.vault_service),
             GetVaultSaltRoute(vault_service=self.vault_service),
+            GetVaultRoute(vault_service=self.vault_service),
+            UpdateVaultRotationRoute(vault_service=self.vault_service),
             CreateItemRoute(item_service=self.item_service),
             InitiateUploadRoute(item_service=self.item_service),
             CompleteUploadRoute(item_service=self.item_service),

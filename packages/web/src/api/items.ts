@@ -77,6 +77,19 @@ export async function listItems(vaultId: string): Promise<ItemData[]> {
   return out.items ?? [];
 }
 
+// Paginate through all items (for rotation sweep). Uses the same ListItemsCommand
+// with nextToken chaining. Returns all items in vault order — may be many pages.
+export async function listAllItems(vaultId: string): Promise<ItemData[]> {
+  const all: ItemData[] = [];
+  let nextToken: string | undefined;
+  do {
+    const out = await makeClient().send(new ListItemsCommand({ vaultId, pageSize: 100, nextToken }));
+    all.push(...(out.items ?? []));
+    nextToken = out.nextToken ?? undefined;
+  } while (nextToken);
+  return all;
+}
+
 export async function searchByTag(vaultId: string, encryptedTag: string): Promise<ItemData[]> {
   const out = await makeClient().send(new SearchByTagCommand({ vaultId, encryptedTag }));
   return out.items ?? [];
@@ -101,4 +114,19 @@ export async function updateItemTags(
   encryptedTags: Uint8Array[],
 ): Promise<void> {
   await makeClient().send(new UpdateItemCommand({ itemId, encryptedMetadata, encryptedTags }));
+}
+
+// Write a re-wrapped DEK + re-encrypted metadata/tags during the rotation sweep.
+// Uses UpdateItemCommand with the new rotation fields added in Task 1.
+export async function updateItemRotation(
+  itemId: string,
+  wrappedDek: Uint8Array,
+  dekVersion: number,
+  encryptedMetadata: Uint8Array,
+  encryptedTags: Uint8Array[],
+  expectedVersion: number,
+): Promise<void> {
+  await makeClient().send(
+    new UpdateItemCommand({ itemId, wrappedDek, dekVersion, encryptedMetadata, encryptedTags, expectedVersion }),
+  );
 }

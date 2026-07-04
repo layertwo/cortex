@@ -23,7 +23,10 @@ from src.shared.auth import get_current_user
 from src.shared.generated.models import (
     CreateVaultRequestContent,
     CreateVaultResponseContent,
+    GetVaultResponseContent,
     GetVaultSaltResponseContent,
+    UpdateVaultRotationRequestContent,
+    UpdateVaultRotationResponseContent,
 )
 from src.shared.logger import get_logger
 
@@ -126,3 +129,97 @@ class GetVaultSaltRoute(BaseRoute):
             )
 
             return GetVaultSaltResponseContent(vault_salt=base64.b64encode(vault_salt))
+
+
+class GetVaultRoute(BaseRoute):
+    """Handle vault retrieval including rotation state."""
+
+    def __init__(self, vault_service: VaultService):
+        """
+        Initialize get vault route.
+
+        Args:
+            vault_service: VaultService instance for dependency injection
+        """
+        self.vault_service = vault_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/vaults/{vault_id}", response_model=GetVaultResponseContent)
+        def handle(vault_id: str, user_id: str = Depends(get_current_user)):
+            """
+            Retrieve the vault record, including vault password rotation state.
+
+            Path Parameters:
+                vault_id: Vault identifier
+
+            Returns:
+                Vault metadata plus KEK version and rotation state/lock timestamp.
+            """
+            logger.info("Retrieving vault", user_id=user_id, vault_id=vault_id)
+
+            vault = self.vault_service.get_vault(user_id=user_id, vault_id=vault_id)
+
+            return GetVaultResponseContent(
+                vault_id=vault["vault_id"],
+                vault_salt=base64.b64encode(vault["vault_salt"]),
+                created_at=vault["created_at"],
+                updated_at=vault["updated_at"],
+                kek_version=vault.get("kek_version"),
+                rotation_state=vault.get("rotation_state"),
+                rotation_locked_at=vault.get("rotation_locked_at"),
+            )
+
+
+class UpdateVaultRotationRoute(BaseRoute):
+    """Handle rotation lock acquire/release (conditional write)."""
+
+    def __init__(self, vault_service: VaultService):
+        """
+        Initialize update vault rotation route.
+
+        Args:
+            vault_service: VaultService instance for dependency injection
+        """
+        self.vault_service = vault_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.post(
+            "/v1/vaults/{vault_id}/rotation", response_model=UpdateVaultRotationResponseContent
+        )
+        def handle(
+            vault_id: str,
+            request: UpdateVaultRotationRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
+            """
+            Acquire or release the vault password rotation lock.
+
+            Path Parameters:
+                vault_id: Vault identifier
+
+            Returns:
+                The resulting rotation state and lock timestamp (if any).
+
+            Raises:
+                ConflictError: If the conditional write fails (409)
+            """
+            logger.info(
+                "Updating vault rotation state",
+                user_id=user_id,
+                vault_id=vault_id,
+                action=request.action,
+            )
+
+            result = self.vault_service.update_vault_rotation(
+                user_id=user_id,
+                vault_id=vault_id,
+                action=request.action,
+                expected_state=request.expected_state,
+                kek_version=request.kek_version,
+                new_verifier=bytes(request.new_verifier) if request.new_verifier else None,
+            )
+
+            return UpdateVaultRotationResponseContent(
+                rotation_state=result["rotation_state"],
+                rotation_locked_at=result.get("rotation_locked_at"),
+            )

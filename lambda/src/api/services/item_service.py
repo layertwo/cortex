@@ -719,6 +719,12 @@ class ItemService:
         if request.time_bucket is not None:
             set_parts.append("time_bucket = :tb")
             values[":tb"] = request.time_bucket
+        if request.wrapped_dek is not None:
+            set_parts.append("wrapped_dek = :wd")
+            values[":wd"] = bytes(request.wrapped_dek)
+        if request.dek_version is not None:
+            set_parts.append("dek_version = :dv")
+            values[":dv"] = int(request.dek_version)
         update_expression = "SET " + ", ".join(set_parts)
 
         if request.expected_version is not None:

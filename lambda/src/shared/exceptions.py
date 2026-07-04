@@ -58,6 +58,16 @@ class ShareExpiredError(CortexError):
         super().__init__(message)
 
 
+class ConflictError(CortexError):
+    """Raised when a request conflicts with the current state of a resource."""
+
+    status_code = 409
+    code = "CONFLICT"
+
+    def __init__(self, message: str = "Conflict"):
+        super().__init__(message)
+
+
 class RateLimitExceededError(CortexError):
     """Raised when a rate limit is exceeded."""
 
