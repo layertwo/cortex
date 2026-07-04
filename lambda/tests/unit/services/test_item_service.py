@@ -1243,6 +1243,36 @@ class TestUpdateItem:
         response = item_service.update_item("user-123", "item-1", request)
         assert response.version == 2
 
+    def test_update_item_with_rotation_fields_writes_dek(self, item_service, dynamodb_stubber):
+        # wrappedDek/dekVersion are optional rotation-sweep fields; when present they
+        # get written alongside the normal SET expression, guarded by expected_version
+        # like any other update_item call.
+        wrapped_dek = b"\xbb" * 97
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": self._existing_item(tags=())},
+            {"TableName": "test-items-table", "Key": ANY},
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {}},
+            {
+                "TableName": "test-items-table",
+                "Key": ANY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        request = UpdateItemRequestContent(
+            wrapped_dek=wrapped_dek,
+            dek_version=2,
+            expected_version=1,
+        )
+        result = item_service.update_item(user_id="user-123", item_id="item-1", request=request)
+        assert result.item_id == "item-1"
+
     def test_update_optimistic_path_reraises_non_conditional_error(
         self, item_service, dynamodb_stubber
     ):
