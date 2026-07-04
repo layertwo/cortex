@@ -4,6 +4,7 @@ import {
   GetVaultSaltCommand,
   GetVaultCommand,
   UpdateVaultRotationCommand,
+  type RotationState,
 } from '@cortex/client';
 import { fetchAuthSession } from 'aws-amplify/auth';
 import { getConfig } from '../config';
@@ -48,7 +49,7 @@ export interface VaultRecord {
   vaultId: string;
   vaultSalt: Uint8Array;
   kekVersion: number;
-  rotationState: 'IDLE' | 'IN_PROGRESS' | 'PAUSED' | 'FAILED';
+  rotationState: RotationState;
   rotationLockedAt: number | null;
 }
 
@@ -59,7 +60,7 @@ export async function getVault(vaultId: string): Promise<VaultRecord> {
     vaultId: out.vaultId,
     vaultSalt: out.vaultSalt,
     kekVersion: out.kekVersion ?? 1,
-    rotationState: (out.rotationState as VaultRecord['rotationState']) ?? 'IDLE',
+    rotationState: out.rotationState ?? 'IDLE',
     rotationLockedAt: out.rotationLockedAt ?? null,
   };
 }
@@ -67,7 +68,7 @@ export async function getVault(vaultId: string): Promise<VaultRecord> {
 export async function updateVaultRotation(args: {
   vaultId: string;
   action: 'ACQUIRE' | 'RELEASE';
-  expectedState: 'IDLE' | 'IN_PROGRESS' | 'PAUSED' | 'FAILED';
+  expectedState: RotationState;
   kekVersion?: number;
   newVerifier?: Uint8Array;
 }): Promise<{ rotationState: string; rotationLockedAt: number | null }> {

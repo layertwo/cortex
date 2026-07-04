@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useSession } from '../auth/SessionContext';
 
-type Stage = 'form' | 'sweep' | 'phrase' | 'done';
+type Stage = 'form' | 'sweep' | 'phrase';
 
 export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) {
   const { changeVaultPassword } = useSession();
@@ -39,7 +39,6 @@ export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) 
       setError('Recovery phrase does not match — copy it exactly');
       return;
     }
-    setStage('done');
     onDone();
   }
 
