@@ -163,10 +163,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       );
 
       // 4. Acquire rotation lock (conditional — fails if another tab holds it).
+      //    Use the vault's actual rotationState rather than hardcoding 'IDLE': when
+      //    resuming after a crashed mid-sweep attempt (rotationState === 'IN_PROGRESS'),
+      //    this lets the backend's `rotation_state = :expected` clause match immediately
+      //    instead of requiring the 7-day staleness window to elapse.
       await updateVaultRotation({
         vaultId,
         action: 'ACQUIRE',
-        expectedState: 'IDLE',
+        expectedState: vault.rotationState,
       });
 
       try {
@@ -192,15 +196,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           vaultId,
         );
 
-        // 7. Recompute verifier + persist.
+        // 7. Recompute verifier (don't persist yet — server RELEASE is the commit point).
         const newVerifierStr = await createVerifier(keysNew.metadataEncryptionKey);
-        saveVerifier(vaultId, newVerifierStr);
         const newVerifierBytes = new TextEncoder().encode(newVerifierStr);
 
         // 8. Generate the new recovery phrase (caller MUST show this before continuing).
         const newPhrase = generateRecoveryKey(masterNew);
 
-        // 9. Release lock: write new kekVersion + verifier.
+        // 9. Release lock: write new kekVersion + verifier. This is the durability commit
+        //    point — only after this succeeds do we update local state to match the new
+        //    keys, so a transient failure here can't leave the local verifier pointing at
+        //    the new password while the server and in-memory keys are still on the old one.
         await updateVaultRotation({
           vaultId,
           action: 'RELEASE',
@@ -209,7 +215,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           newVerifier: newVerifierBytes,
         });
 
-        // 10. Delete bridge; update in-memory keys; clear interrupted flag.
+        // 10. Now safe to commit locally: persist verifier, delete bridge, update
+        //     in-memory keys, clear interrupted flag.
+        saveVerifier(vaultId, newVerifierStr);
         clearBridge(vaultId);
         await storeKeys(vaultId, keysNew);
         setRotationInterrupted(false);

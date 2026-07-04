@@ -52,6 +52,9 @@ function Probe() {
       <button onClick={() => s.unlockVault('vaultpw').catch((e) => (document.title = e.message))}>
         unlock
       </button>
+      <button onClick={() => s.changeVaultPassword('vaultpw', 'newvaultpw').catch(() => {})}>
+        change
+      </button>
     </div>
   );
 }
@@ -180,5 +183,38 @@ describe('changeVaultPassword', () => {
     // Full integration coverage (wrong-password fast-fail, sweep, phrase gate) lives in
     // ChangeVaultPassword.test.tsx (Task 9) — this is just the wiring smoke test.
     expect(api.getVault).not.toHaveBeenCalled();
+  });
+
+  it('resuming an interrupted rotation ACQUIREs with the vault\'s actual rotationState, not a hardcoded IDLE', async () => {
+    // Regression test: GetVault reporting IN_PROGRESS (a crashed mid-sweep attempt)
+    // must NOT cause the ACQUIRE call to assert expectedState: 'IDLE' — the backend's
+    // conditional write would then always throw ConflictError, since the vault is
+    // genuinely IN_PROGRESS and the 7-day staleness window hasn't elapsed. The resume
+    // path must ACQUIRE using the vault's own current state.
+    const keys = deriveKeys(MASTER);
+    localStorage.setItem('cortex_vault_id', 'v1');
+    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
+    api.getVault.mockResolvedValue({
+      vaultId: 'v1',
+      vaultSalt: SALT,
+      kekVersion: 1,
+      rotationState: 'IN_PROGRESS',
+      rotationLockedAt: 1700000000,
+    });
+    api.updateVaultRotation.mockResolvedValue({ rotationState: 'IN_PROGRESS', rotationLockedAt: Date.now() });
+
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('change');
+    await act(async () => {
+      screen.getByText('change').click();
+    });
+
+    expect(api.updateVaultRotation).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'ACQUIRE', expectedState: 'IN_PROGRESS' }),
+    );
   });
 });
