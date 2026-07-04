@@ -77,4 +77,32 @@ describe('ChangeVaultPassword', () => {
     fireEvent.click(screen.getByRole('button', { name: /complete password change/i }));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
+
+  it('shows error and returns to form when changeVaultPassword rejects (wrong password)', async () => {
+    mockChangeVaultPassword.mockRejectedValueOnce(new Error('Incorrect vault password'));
+    render(<ChangeVaultPassword onDone={onDone} />);
+    fireEvent.change(screen.getByLabelText(/current vault password/i), { target: { value: 'wrong' } });
+    fireEvent.change(screen.getByLabelText(/^new vault password$/i), { target: { value: 'New$ecure1' } });
+    fireEvent.change(screen.getByLabelText(/confirm new/i), { target: { value: 'New$ecure1' } });
+    fireEvent.click(screen.getByRole('button', { name: /change password/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/incorrect vault password/i);
+    // returned to the form stage, not stuck on the sweep-progress view
+    expect(screen.getByRole('button', { name: /change password/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/current vault password/i)).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('shows error and returns to form for a message-only rejection (no error code, e.g. rotation conflict)', async () => {
+    // Simulates the backend's ConflictError shape: a plain Error with a message,
+    // no `code` field — the component must not pattern-match on `code`.
+    mockChangeVaultPassword.mockRejectedValueOnce(new Error('Another vault password change is already in progress'));
+    render(<ChangeVaultPassword onDone={onDone} />);
+    fireEvent.change(screen.getByLabelText(/current vault password/i), { target: { value: 'old' } });
+    fireEvent.change(screen.getByLabelText(/^new vault password$/i), { target: { value: 'New$ecure1' } });
+    fireEvent.change(screen.getByLabelText(/confirm new/i), { target: { value: 'New$ecure1' } });
+    fireEvent.click(screen.getByRole('button', { name: /change password/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/another vault password change is already in progress/i);
+    expect(screen.getByRole('button', { name: /change password/i })).toBeInTheDocument();
+    expect(onDone).not.toHaveBeenCalled();
+  });
 });
