@@ -928,13 +928,13 @@
   - Enable X-Ray tracing for request analysis
   - _Requirements: 16.5_
 
-- [ ] 22.2 Implement log sanitization
+- [x] 22.2 Implement log sanitization
   - Ensure no plaintext data in logs
   - Exclude encrypted payloads from logs
-  - Log only user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
+  - Log only vault IDs, item IDs, timestamps, operation types, error codes, performance metrics (never user_id)
   - Never log vault keys, passwords, recovery keys, or share keys
-  - Configure CloudWatch log retention
-  - Add log sanitization to all Lambda functions
+  - ~~Configure CloudWatch log retention~~ — infra (CDK `LogGroup` retention) not in this issue's scope; tracked separately
+  - Add log sanitization to all Lambda functions — done via `scripts/check_banned_log_fields.py` pre-commit hook, `lambda/tests/property/test_log_sanitization.py` (static AST scan + runtime capture), and removal of all `user_id`/`s3_key`/`request_context`/`key` fields from `logger.*` calls across routes, services, repository, auth, and service_provider
   - _Requirements: 16.5_
 
 - [ ]* 22.3 Write property test for administrator cannot access plaintext data

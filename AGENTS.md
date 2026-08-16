@@ -153,7 +153,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - `/health` endpoint for service health checks
 - Return service status, version, and dependency health
 - Monitor DynamoDB, S3, and Cognito availability
-- User-aware logging with user_id context (never log sensitive data)
+- Zero-knowledge logging with vault_id/item_id correlation (never log user_id/PII)
 - CloudWatch metrics for: API latency, error rates, storage usage
 - X-Ray tracing for request flow analysis
 
@@ -734,8 +734,9 @@ def handle():
 ## Security Requirements
 
 - Never log sensitive data (keys, passwords, PII, encrypted payloads)
-- Log with user context: user IDs, vault IDs, timestamps, operation types, error codes, performance metrics
-- Never log: vault password, vault keys, 24-word vault recovery keys, share keys, account recovery codes
+- **Zero-knowledge logging: NEVER log `user_id` (Cognito sub), S3 object keys, or full request context.** Use `vault_id`, `item_id`, `collection_id`, `share_id` (random UUIDs) for correlation instead.
+- Log with operational context: vault IDs, item IDs, timestamps, operation types, error codes, performance metrics
+- Never log: vault password, vault keys, 24-word vault recovery keys, share keys, account recovery codes, user_id (Cognito sub), S3 object keys, request_context
 - Use AWS Secrets Manager or Parameter Store for secrets
 - Implement least-privilege IAM policies for Lambda execution roles
 - No per-user IAM policies (use scoped presigned URLs instead)
@@ -751,7 +752,7 @@ All endpoints that accept `vault_id` as a parameter MUST verify vault ownership 
 if not self.vault_service.vault_exists(user_id, vault_id):
     logger.warning(
         "Vault access denied - user does not own vault",
-        extra={"user_id": user_id, "vault_id": vault_id, "operation": "operation_name"}
+        extra={"vault_id": vault_id, "operation": "operation_name"}
     )
     return Response(
         status_code=403,
@@ -775,7 +776,7 @@ When authorization checks fail at the service layer (user doesn't own the reques
 if item["user_id"] != user_id:
     logger.warning(
         "User does not own item",
-        extra={"user_id": user_id, "item_id": item_id, "item_user_id": item["user_id"]},
+        extra={"item_id": item_id},
     )
     raise NotFoundError("Item not found")  # NOT ForbiddenError
 
@@ -791,14 +792,20 @@ if collection["user_id"] != user_id:
 - Log the actual authorization failure for debugging (never expose in response)
 - This pattern applies to service layer checks, not route layer vault ownership checks
 
-**User-Aware Logging Pattern:**
+**Zero-Knowledge Logging Pattern (issue #47):**
 ```python
+# GOOD: log random UUIDs and operational metadata only
 logger.info("File uploaded", extra={
-    "user_id": user_id,
     "vault_id": vault_id,
+    "item_id": item_id,
     "file_size": size_bytes,
     "operation": "file_upload"
 })
+
+# BAD: never log user_id (Cognito sub), s3_key, or request_context
+# logger.info("...", extra={"user_id": user_id})       # PII - Cognito sub
+# logger.info("...", extra={"s3_key": s3_key})         # reveals vault/file structure
+# logger.info("...", request_context=str(ctx))         # contains authorizer claims
 ```
 
 **Password Security:**

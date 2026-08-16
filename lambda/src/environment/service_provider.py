@@ -237,7 +237,13 @@ class ServiceProvider:
 
         @app.exception_handler(Exception)
         async def unhandled_error_handler(request: Request, exc: Exception):
-            _logger.exception("Unhandled exception")
+            # Log only the exception type -- not the full traceback, which can
+            # embed user-supplied strings (filenames, metadata, request bodies)
+            # and violate the zero-knowledge logging policy (issue #47).
+            _logger.error(
+                "Unhandled exception",
+                error_type=type(exc).__name__,
+            )
             return JSONResponse(
                 status_code=500,
                 content=_error_body(request, "INTERNAL_ERROR", "Internal server error"),

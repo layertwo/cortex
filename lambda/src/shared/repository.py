@@ -56,7 +56,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB get_item failed",
-                **{"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name},
             )
             raise
 
@@ -131,7 +131,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB update_item failed",
-                **{"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name},
             )
             raise
 
@@ -183,13 +183,13 @@ class DynamoDBRepository:
             if error_code == "ConditionalCheckFailedException":
                 logger.warning(
                     "DynamoDB conditional update failed - condition not met",
-                    **{"table": self.table_name, "key": key},
+                    **{"table": self.table_name},
                 )
                 raise
 
             logger.error(
                 "DynamoDB update_item_conditional failed",
-                **{"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name},
             )
             raise
 
@@ -209,7 +209,7 @@ class DynamoDBRepository:
         except ClientError as e:
             logger.error(
                 "DynamoDB delete_item failed",
-                **{"error": str(e), "table": self.table_name, "key": key},
+                **{"error": str(e), "table": self.table_name},
             )
             raise
 
@@ -384,16 +384,14 @@ class S3Repository:
                 ExpiresIn=expiration,
             )
 
-            logger.debug(
-                "Generated upload URL", **{"object_key": object_key, "expiration": expiration}
-            )
+            logger.debug("Generated upload URL", **{"expiration": expiration})
 
             return url
 
         except ClientError as e:
             logger.error(
                 "Failed to generate upload URL",
-                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name},
             )
             raise
 
@@ -421,16 +419,14 @@ class S3Repository:
                 ExpiresIn=expiration,
             )
 
-            logger.debug(
-                "Generated download URL", **{"object_key": object_key, "expiration": expiration}
-            )
+            logger.debug("Generated download URL", **{"expiration": expiration})
 
             return url
 
         except ClientError as e:
             logger.error(
                 "Failed to generate download URL",
-                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name},
             )
             raise
 
@@ -478,7 +474,6 @@ class S3Repository:
                 **{
                     "error": str(e),
                     "bucket": self.bucket_name,
-                    "key": object_key,
                     "part_number": part_number,
                 },
             )
@@ -508,17 +503,14 @@ class S3Repository:
 
             upload_id = response["UploadId"]
 
-            logger.info(
-                "Initiated multipart upload",
-                **{"object_key": object_key, "upload_id": upload_id},
-            )
+            logger.info("Initiated multipart upload", **{"upload_id": upload_id})
 
             return upload_id
 
         except ClientError as e:
             logger.error(
                 "Failed to initiate multipart upload",
-                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name},
             )
             raise
 
@@ -540,10 +532,7 @@ class S3Repository:
                 UploadId=upload_id,
             )
 
-            logger.info(
-                "Aborted multipart upload",
-                **{"object_key": object_key, "upload_id": upload_id},
-            )
+            logger.info("Aborted multipart upload", **{"upload_id": upload_id})
 
         except ClientError as e:
             logger.error(
@@ -551,7 +540,6 @@ class S3Repository:
                 **{
                     "error": str(e),
                     "bucket": self.bucket_name,
-                    "key": object_key,
                     "upload_id": upload_id,
                 },
             )
@@ -578,7 +566,7 @@ class S3Repository:
             )
             logger.info(
                 "Completed multipart upload",
-                **{"object_key": object_key, "upload_id": upload_id, "part_count": len(parts)},
+                **{"upload_id": upload_id, "part_count": len(parts)},
             )
         except ClientError as e:
             logger.error(
@@ -586,7 +574,6 @@ class S3Repository:
                 **{
                     "error": str(e),
                     "bucket": self.bucket_name,
-                    "key": object_key,
                     "upload_id": upload_id,
                 },
             )
@@ -605,12 +592,12 @@ class S3Repository:
         try:
             self._client.delete_object(Bucket=self.bucket_name, Key=object_key)
 
-            logger.info("Deleted S3 object", **{"object_key": object_key})
+            logger.info("Deleted S3 object")
 
         except ClientError as e:
             logger.error(
                 "Failed to delete S3 object",
-                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name},
             )
             raise
 
@@ -634,7 +621,7 @@ class S3Repository:
 
             logger.error(
                 "Failed to check object existence",
-                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name},
             )
             raise
 
@@ -676,7 +663,7 @@ class S3Repository:
 
             logger.error(
                 "Failed to get object metadata",
-                **{"error": str(e), "bucket": self.bucket_name, "key": object_key},
+                **{"error": str(e), "bucket": self.bucket_name},
             )
             raise
 

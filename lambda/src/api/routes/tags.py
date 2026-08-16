@@ -82,7 +82,6 @@ class SearchTagsRoute(BaseRoute):
             if not self.vault_service.vault_exists(user_id, vault_id):
                 logger.warning(
                     "Vault access denied - user does not own vault",
-                    user_id=user_id,
                     vault_id=vault_id,
                     operation="tag_search",
                 )
@@ -97,7 +96,6 @@ class SearchTagsRoute(BaseRoute):
 
             logger.info(
                 "Tag search completed",
-                user_id=user_id,
                 vault_id=vault_id,
                 result_count=len(response.items),
             )
