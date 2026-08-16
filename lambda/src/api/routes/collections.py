@@ -78,7 +78,6 @@ class CreateCollectionRoute(BaseRoute):
 
             logger.info(
                 "Collection created successfully",
-                user_id=user_id,
                 vault_id=request.vault_id,
                 collection_id=response.collection_id,
             )
@@ -121,7 +120,6 @@ class ListCollectionsRoute(BaseRoute):
 
             logger.info(
                 "Listed collections successfully",
-                user_id=user_id,
                 vault_id=vault_id,
                 count=len(collection_models),
             )
@@ -160,14 +158,12 @@ class GetCollectionRoute(BaseRoute):
             if not collection:
                 logger.warning(
                     "Collection not found",
-                    user_id=user_id,
                     collection_id=collection_id,
                 )
                 raise NotFoundError("Collection not found")
 
             logger.info(
                 "Retrieved collection successfully",
-                user_id=user_id,
                 collection_id=collection_id,
             )
 
@@ -207,7 +203,6 @@ class UpdateCollectionRoute(BaseRoute):
 
             logger.info(
                 "Collection updated successfully",
-                user_id=user_id,
                 collection_id=collection_id,
             )
 
@@ -243,7 +238,6 @@ class DeleteCollectionRoute(BaseRoute):
 
             logger.info(
                 "Collection deleted successfully",
-                user_id=user_id,
                 vault_id=vault_id,
                 collection_id=collection_id,
             )
@@ -290,7 +284,6 @@ class AddItemToCollectionRoute(BaseRoute):
 
             logger.info(
                 "Item added to collection successfully",
-                user_id=user_id,
                 collection_id=collection_id,
                 item_id=body.item_id,
             )
@@ -331,7 +324,6 @@ class RemoveItemFromCollectionRoute(BaseRoute):
 
             logger.info(
                 "Item removed from collection successfully",
-                user_id=user_id,
                 vault_id=vault_id,
                 collection_id=collection_id,
                 item_id=item_id,

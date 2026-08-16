@@ -64,7 +64,7 @@ class CreateVaultRoute(BaseRoute):
 
             Requirements: 14.4, 22.1, 22.2, 22.3
             """
-            logger.info("Creating vault", user_id=user_id)
+            logger.info("Creating vault")
 
             # ponytail: encryptedName is in the contract but vault naming isn't
             # built yet — wire request.encrypted_name through when it ships.
@@ -78,7 +78,6 @@ class CreateVaultRoute(BaseRoute):
 
             logger.info(
                 "Vault created successfully",
-                user_id=user_id,
                 vault_id=result["vault_id"],
             )
 
@@ -118,13 +117,12 @@ class GetVaultSaltRoute(BaseRoute):
 
             Requirements: 14.4, 22.3, 22.5
             """
-            logger.info("Retrieving vault salt", user_id=user_id, vault_id=vault_id)
+            logger.info("Retrieving vault salt", vault_id=vault_id)
 
             vault_salt = self.vault_service.get_vault_salt(user_id=user_id, vault_id=vault_id)
 
             logger.info(
                 "Vault salt retrieved successfully",
-                user_id=user_id,
                 vault_id=vault_id,
             )
 
@@ -155,7 +153,7 @@ class GetVaultRoute(BaseRoute):
             Returns:
                 Vault metadata plus KEK version and rotation state/lock timestamp.
             """
-            logger.info("Retrieving vault", user_id=user_id, vault_id=vault_id)
+            logger.info("Retrieving vault", vault_id=vault_id)
 
             vault = self.vault_service.get_vault(user_id=user_id, vault_id=vault_id)
 
@@ -205,7 +203,6 @@ class UpdateVaultRotationRoute(BaseRoute):
             """
             logger.info(
                 "Updating vault rotation state",
-                user_id=user_id,
                 vault_id=vault_id,
                 action=request.action,
             )

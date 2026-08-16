@@ -49,7 +49,8 @@ def extract_user_id(event: Dict[str, Any]) -> str:
         user_id = authorizer.get("principalId")
 
     if not user_id:
-        logger.warning("user_id_not_found", request_context=str(request_context))
+        has_authorizer = bool(authorizer)
+        logger.warning("user_id_not_found", has_authorizer=has_authorizer)
         raise UnauthorizedError("User identity not found in request")
 
     return user_id

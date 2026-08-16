@@ -53,7 +53,6 @@ class CreateShareRoute(BaseRoute):
 
             logger.info(
                 "Share created successfully",
-                user_id=user_id,
                 share_id=response.share_id,
                 item_id=request.item_id,
             )
@@ -135,7 +134,6 @@ class RevokeShareRoute(BaseRoute):
 
             logger.info(
                 "Share revoked successfully",
-                user_id=user_id,
                 share_id=share_id,
             )
 

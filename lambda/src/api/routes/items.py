@@ -100,7 +100,6 @@ class CreateItemRoute(BaseRoute):
 
             logger.info(
                 "Item created successfully",
-                user_id=user_id,
                 item_id=response.item_id,
                 item_type=response.item_type,
             )
@@ -134,7 +133,6 @@ class InitiateUploadRoute(BaseRoute):
 
             logger.info(
                 "Upload initiated successfully",
-                user_id=user_id,
                 item_id=response.item_id,
                 size_bytes=request.size_bytes,
             )
@@ -175,7 +173,6 @@ class CompleteUploadRoute(BaseRoute):
 
             logger.info(
                 "Upload completed successfully",
-                user_id=user_id,
                 item_id=response.item_id,
             )
 
@@ -260,7 +257,6 @@ class ListItemsRoute(BaseRoute):
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 logger.warning(
                     "Vault access denied - user does not own vault",
-                    user_id=user_id,
                     vault_id=vault_id,
                     operation="list_items",
                 )
@@ -279,7 +275,6 @@ class ListItemsRoute(BaseRoute):
 
             logger.info(
                 "Listed items successfully",
-                user_id=user_id,
                 vault_id=vault_id,
                 item_type=item_type,
                 count=len(item_models),
@@ -320,7 +315,6 @@ class GetItemRoute(BaseRoute):
 
             logger.info(
                 "Retrieved item successfully",
-                user_id=user_id,
                 item_id=item_id,
                 item_type=item["item_type"],
             )
@@ -352,7 +346,6 @@ class UpdateItemRoute(BaseRoute):
             response = self.item_service.update_item(user_id, item_id, request)
             logger.info(
                 "Item updated successfully",
-                user_id=user_id,
                 item_id=item_id,
                 version=response.version,
             )
@@ -385,7 +378,6 @@ class DeleteItemRoute(BaseRoute):
 
             logger.info(
                 "Item deleted successfully",
-                user_id=user_id,
                 item_id=item_id,
             )
 
@@ -423,7 +415,6 @@ class DownloadItemRoute(BaseRoute):
 
             logger.info(
                 "Generated download URL successfully",
-                user_id=user_id,
                 item_id=item_id,
             )
 

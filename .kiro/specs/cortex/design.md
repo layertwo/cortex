@@ -1318,7 +1318,7 @@ This property (and its test) covered the Cortex 10-code account-recovery system,
 - Application logs all data access operations (without plaintext data)
 - Log retention: minimum 90 days, configurable up to 7 years
 - Log sanitization: no passwords, keys, or encrypted payloads in logs
-- Logged data: user IDs, vault IDs, timestamps, operation types, error codes
+- Logged data: vault IDs, item IDs, timestamps, operation types, error codes (never user_id)
 
 ## Error Handling
 

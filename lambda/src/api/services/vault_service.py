@@ -63,7 +63,7 @@ class VaultService:
         if vault_salt is None:
             # Generate 16-byte cryptographically secure random salt
             vault_salt = secrets.token_bytes(16)
-            logger.info("Generated vault salt", **{"vault_id": vault_id, "user_id": user_id})
+            logger.info("Generated vault salt", **{"vault_id": vault_id})
         else:
             # Validate provided salt
             if not isinstance(vault_salt, bytes) or len(vault_salt) != 16:
@@ -92,7 +92,7 @@ class VaultService:
 
             logger.info(
                 "Vault created successfully",
-                **{"vault_id": vault_id, "user_id": user_id, "salt_length": len(vault_salt)},
+                **{"vault_id": vault_id, "salt_length": len(vault_salt)},
             )
 
             return {"vault_id": vault_id, "vault_salt": vault_salt, "created_at": created_at}
@@ -104,14 +104,14 @@ class VaultService:
                 # Extremely unlikely UUID collision - retry with new ID
                 logger.warning(
                     "Vault ID collision detected, retrying",
-                    **{"vault_id": vault_id, "user_id": user_id},
+                    **{"vault_id": vault_id},
                 )
                 # Recursive retry (UUID collision is astronomically unlikely)
                 return self.create_vault(user_id, vault_salt)
 
             logger.error(
                 "Failed to create vault",
-                **{"error": str(e), "vault_id": vault_id, "user_id": user_id},
+                **{"error": str(e), "vault_id": vault_id},
             )
             raise
 
@@ -147,7 +147,7 @@ class VaultService:
             if not item:
                 logger.warning(
                     "Vault not found",
-                    **{"vault_id": vault_id, "user_id": user_id, "operation": "get_salt"},
+                    **{"vault_id": vault_id, "operation": "get_salt"},
                 )
                 raise NotFoundError(f"Vault {vault_id} not found")
 
@@ -156,11 +156,11 @@ class VaultService:
             if not vault_salt:
                 logger.error(
                     "Vault salt missing from vault item",
-                    **{"vault_id": vault_id, "user_id": user_id},
+                    **{"vault_id": vault_id},
                 )
                 raise InternalError("Vault data integrity error: missing salt")
 
-            # Convert Binary type to bytes if necessary
+            # Convert Binary-type to bytes if necessary
             if isinstance(vault_salt, Binary):
                 vault_salt = vault_salt.value  # type: ignore[attr-defined]
 
@@ -170,7 +170,6 @@ class VaultService:
                     "Invalid vault salt format",
                     **{
                         "vault_id": vault_id,
-                        "user_id": user_id,
                         "salt_type": type(vault_salt).__name__,
                         "salt_length": len(vault_salt) if isinstance(vault_salt, bytes) else None,
                     },
@@ -179,7 +178,7 @@ class VaultService:
 
             logger.info(
                 "Vault salt retrieved successfully",
-                **{"vault_id": vault_id, "user_id": user_id, "salt_length": len(vault_salt)},
+                **{"vault_id": vault_id, "salt_length": len(vault_salt)},
             )
 
             return vault_salt
@@ -187,7 +186,7 @@ class VaultService:
         except ClientError as e:
             logger.error(
                 "Failed to retrieve vault salt",
-                **{"error": str(e), "vault_id": vault_id, "user_id": user_id},
+                **{"error": str(e), "vault_id": vault_id},
             )
             raise
 
@@ -210,7 +209,7 @@ class VaultService:
         except ClientError as e:
             logger.error(
                 "Failed to check vault existence",
-                **{"error": str(e), "vault_id": vault_id, "user_id": user_id},
+                **{"error": str(e), "vault_id": vault_id},
             )
             raise NotFoundError("Vault not found")
 
@@ -244,11 +243,11 @@ class VaultService:
                     }
                 )
 
-            logger.info("Listed user vaults", **{"user_id": user_id, "count": len(vaults)})
+            logger.info("Listed user vaults", **{"count": len(vaults)})
             return vaults
 
         except ClientError as e:
-            logger.error("Failed to list user vaults", **{"error": str(e), "user_id": user_id})
+            logger.error("Failed to list user vaults", **{"error": str(e)})
             raise
 
     def get_vault(self, user_id: str, vault_id: str) -> Dict:
@@ -274,7 +273,7 @@ class VaultService:
         if not item:
             logger.warning(
                 "Vault not found",
-                **{"vault_id": vault_id, "user_id": user_id, "operation": "get_vault"},
+                **{"vault_id": vault_id, "operation": "get_vault"},
             )
             raise NotFoundError(f"Vault {vault_id} not found")
 
@@ -381,13 +380,13 @@ class VaultService:
             if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
                 logger.warning(
                     "Vault rotation conflict",
-                    **{"vault_id": vault_id, "user_id": user_id, "action": action},
+                    **{"vault_id": vault_id, "action": action},
                 )
                 raise ConflictError(
                     "A vault password change is already in progress on another device"
                 ) from e
             logger.error(
                 "Failed to update vault rotation state",
-                **{"error": str(e), "vault_id": vault_id, "user_id": user_id, "action": action},
+                **{"error": str(e), "vault_id": vault_id, "action": action},
             )
             raise

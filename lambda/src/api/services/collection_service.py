@@ -92,7 +92,6 @@ class CollectionService:
         logger.info(
             "Created collection",
             **{
-                "user_id": user_id,
                 "vault_id": request.vault_id,
                 "collection_id": collection_id,
             },
@@ -156,7 +155,6 @@ class CollectionService:
         logger.info(
             "Listed collections",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "count": len(collections),
                 "has_more": next_page_token is not None,
@@ -194,7 +192,7 @@ class CollectionService:
         if not collection:
             logger.info(
                 "Collection not found",
-                **{"user_id": user_id, "vault_id": vault_id, "collection_id": collection_id},
+                **{"vault_id": vault_id, "collection_id": collection_id},
             )
             return None
 
@@ -203,9 +201,7 @@ class CollectionService:
             logger.warning(
                 "User does not own collection",
                 **{
-                    "user_id": user_id,
                     "collection_id": collection_id,
-                    "collection_user_id": collection["user_id"],
                 },
             )
             raise NotFoundError("Collection not found")
@@ -213,7 +209,6 @@ class CollectionService:
         logger.info(
             "Retrieved collection",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
             },
@@ -272,7 +267,6 @@ class CollectionService:
         logger.info(
             "Updated collection",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
             },
@@ -355,7 +349,6 @@ class CollectionService:
         logger.info(
             "Deleted item-collection associations",
             **{
-                "user_id": user_id,
                 "collection_id": collection_id,
                 "count": total_deleted,
             },
@@ -372,7 +365,6 @@ class CollectionService:
         logger.info(
             "Deleted collection",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
             },
@@ -418,9 +410,7 @@ class CollectionService:
             logger.warning(
                 "User does not own item",
                 **{
-                    "user_id": user_id,
                     "item_id": item_id,
-                    "item_user_id": item["user_id"],
                 },
             )
             raise NotFoundError("Item not found")
@@ -476,7 +466,6 @@ class CollectionService:
             logger.info(
                 "Item already in collection (idempotent operation)",
                 **{
-                    "user_id": user_id,
                     "vault_id": vault_id,
                     "collection_id": collection_id,
                     "item_id": item_id,
@@ -491,7 +480,6 @@ class CollectionService:
         logger.info(
             "Added item to collection",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
                 "item_id": item_id,
@@ -564,7 +552,6 @@ class CollectionService:
         logger.info(
             "Removed item from collection",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
                 "item_id": item_id,
@@ -632,7 +619,6 @@ class CollectionService:
         logger.info(
             "Listed items in collection",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "collection_id": collection_id,
                 "count": len(associations),
@@ -696,7 +682,6 @@ class CollectionService:
         logger.info(
             "Listed collections for item",
             **{
-                "user_id": user_id,
                 "vault_id": vault_id,
                 "item_id": item_id,
                 "count": len(associations),

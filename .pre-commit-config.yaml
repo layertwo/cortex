@@ -1,0 +1,11 @@
+repos:
+  - repo: local
+    hooks:
+      - id: banned-log-fields
+        name: banned log fields (issue #47 zero-knowledge logging)
+        description: Reject logger.* calls that pass banned PII fields (user_id, s3_key, etc.)
+        entry: python scripts/check_banned_log_fields.py
+        language: system
+        types: [python]
+        pass_filenames: true
+        always_run: true

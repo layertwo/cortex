@@ -123,7 +123,6 @@ class ShareService:
         logger.info(
             "Created share",
             **{
-                "user_id": user_id,
                 "share_id": share_id,
                 "item_id": request.item_id,
                 "expires_at": request.expires_at,
@@ -268,7 +267,6 @@ class ShareService:
         logger.info(
             "Share revoked",
             **{
-                "user_id": user_id,
                 "share_id": share_id,
             },
         )
