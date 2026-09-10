@@ -1,45 +1,62 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Link } from '@astryxdesign/core/Link';
+import { VStack } from '@astryxdesign/core/VStack';
+import { HStack } from '@astryxdesign/core/HStack';
 import { useSession } from '../auth/SessionContext';
+import AuthFrame from './common/AuthFrame';
+import SubmitButton from './common/SubmitButton';
+import { useAsyncAction } from './common/useAsyncAction';
 
 export default function Login() {
   const { signInAccount } = useSession();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const { pending, error, run } = useAsyncAction();
 
-  async function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError('');
-    try {
+    void run(async () => {
       await signInAccount(email, password);
       // Land on '/'; the RequireAuth + RequireVault guards forward to vault unlock/setup.
       navigate('/');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
-    }
+    }, 'Login failed');
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <h1>Log in</h1>
-      <label>
-        Email
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-      </label>
-      <label>
-        Password
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-      </label>
-      {error && <p role="alert">{error}</p>}
-      <button type="submit">Log in</button>
-      <Link to="/forgot">Forgot password?</Link>
-    </form>
+    <AuthFrame title="Log in">
+      <form onSubmit={onSubmit}>
+        <VStack gap={3}>
+          <TextInput
+            label="Email"
+            type="email"
+            autoComplete="email"
+            hasAutoFocus
+            value={email}
+            onChange={setEmail}
+          />
+          <TextInput
+            label="Password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={setPassword}
+          />
+          {error && <Banner status="error" title={error} />}
+          <SubmitButton label="Log in" isLoading={pending} isDisabled={!email || !password} />
+        </VStack>
+      </form>
+      <HStack gap={3} hAlign="between">
+        <Link href="/forgot" isStandalone>
+          Forgot password?
+        </Link>
+        <Link href="/signup" isStandalone>
+          Create account
+        </Link>
+      </HStack>
+    </AuthFrame>
   );
 }

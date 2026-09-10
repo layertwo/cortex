@@ -7,6 +7,13 @@ import {
   DekUnwrapError,
 } from '@cortex/encryption';
 import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Button } from '@astryxdesign/core/Button';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Spinner } from '@astryxdesign/core/Spinner';
+import { VStack } from '@astryxdesign/core/VStack';
+import AuthFrame from './common/AuthFrame';
+import SubmitButton from './common/SubmitButton';
 
 const NONCE_SIZE = 12;
 const MAX_FAILURES_BEFORE_BACKOFF = 3;
@@ -254,77 +261,72 @@ export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
 
   if (state.step === 'loading') {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <p>Loading share...</p>
-      </div>
+      <AuthFrame title="Shared file">
+        <Spinner label="Loading share" />
+      </AuthFrame>
     );
   }
 
   if (state.step === 'done') {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <h2>Download Complete</h2>
-        <p>
-          <strong>{state.fileName}</strong> has been decrypted and downloaded.
-        </p>
-      </div>
+      <AuthFrame title="Download complete">
+        <Banner
+          status="success"
+          title="File decrypted and downloaded"
+          description={state.fileName}
+        />
+      </AuthFrame>
     );
   }
 
   if (state.step === 'error') {
     return (
-      <div style={{ padding: '2rem' }}>
-        <h2>Share Access</h2>
-        <p style={{ color: 'red' }}>{state.message}</p>
+      <AuthFrame title="Shared file access">
+        <Banner status="error" title="Could not open this share" description={state.message} />
         {shareIdRef.current && (
-          <button type="button" onClick={handleRetry}>
-            Try Again
-          </button>
+          <Button label="Try again" variant="primary" width="100%" onClick={handleRetry} />
         )}
-      </div>
+      </AuthFrame>
     );
   }
 
   if (state.step === 'decrypting') {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <h2>Decrypting...</h2>
-        <p>Deriving keys and decrypting file. This may take a moment.</p>
-      </div>
+      <AuthFrame
+        title="Decrypting…"
+        description="Deriving keys and decrypting file. This may take a moment."
+      >
+        <Spinner label="Decrypting" />
+      </AuthFrame>
     );
   }
 
   // step === 'password'
   return (
-    <div style={{ padding: '2rem' }}>
-      <h2>Shared File Access</h2>
-      <p>Enter the password to decrypt and download this shared file.</p>
-
+    <AuthFrame
+      title="Shared file access"
+      description="Enter the password to decrypt and download this shared file."
+    >
       <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: '1rem' }}>
-          <label htmlFor="access-password">Password</label>
-          <input
-            id="access-password"
+        <VStack gap={3}>
+          <TextInput
+            label="Password"
             type="password"
+            hasAutoFocus
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            autoFocus
-            style={{ display: 'block', width: '100%', marginTop: '0.25rem' }}
+            onChange={setPassword}
           />
-        </div>
-
-        {backoffUntil && Date.now() < backoffUntil && (
-          <p style={{ color: '#996600', fontSize: '0.85rem' }}>
-            Rate limited. Please wait before trying again.
-          </p>
-        )}
-
-        <button type="submit" disabled={!password}>
-          Decrypt &amp; Download
-        </button>
+          {backoffUntil && Date.now() < backoffUntil && (
+            <Banner
+              status="warning"
+              title="Rate limited"
+              description="Please wait before trying again."
+            />
+          )}
+          <SubmitButton label="Decrypt & Download" isDisabled={!password} />
+        </VStack>
       </form>
-    </div>
+    </AuthFrame>
   );
 }
 

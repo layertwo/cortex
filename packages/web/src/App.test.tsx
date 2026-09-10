@@ -20,12 +20,13 @@ describe('App routing', () => {
     window.history.pushState({}, '', '/login');
     render(<App />);
     expect(screen.getByRole('heading', { name: /log in/i })).toBeInTheDocument();
+    expect(document.querySelector('[data-astryx-theme="neutral"]')).not.toBeNull();
   });
 
   it('shows the Dashboard at / when unlocked', () => {
     state.status = 'unlocked';
     window.history.pushState({}, '', '/');
     render(<App />);
-    expect(screen.getByRole('heading', { name: /dashboard/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /all files/i })).toBeInTheDocument();
   });
 });

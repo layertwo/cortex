@@ -82,4 +82,23 @@ describe('auth screens', () => {
     expect(session.confirmPasswordReset).toHaveBeenCalledWith('a@b.com', '123456', 'Newpass1!2345');
     expect(navigate).toHaveBeenCalledWith('/login');
   });
+
+  it('Login links to account creation and password reset', () => {
+    render(
+      <MemoryRouter>
+        <Login />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: /create account/i })).toHaveAttribute('href', '/signup');
+    expect(screen.getByRole('link', { name: /forgot password/i })).toHaveAttribute('href', '/forgot');
+  });
+
+  it('Signup links back to login', () => {
+    render(
+      <MemoryRouter>
+        <Signup />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: /log in/i })).toHaveAttribute('href', '/login');
+  });
 });

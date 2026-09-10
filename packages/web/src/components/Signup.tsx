@@ -1,44 +1,57 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Link } from '@astryxdesign/core/Link';
+import { VStack } from '@astryxdesign/core/VStack';
+import { Text } from '@astryxdesign/core/Text';
 import { useSession } from '../auth/SessionContext';
+import AuthFrame from './common/AuthFrame';
+import SubmitButton from './common/SubmitButton';
+import { useAsyncAction } from './common/useAsyncAction';
 
 export default function Signup() {
   const { signUpAccount } = useSession();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const { pending, error, run } = useAsyncAction();
 
-  async function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError('');
-    try {
+    void run(async () => {
       await signUpAccount(email, password);
       // The vault password is chosen later, during vault setup — not here.
       navigate('/verify', { state: { email } });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign up failed');
-    }
+    }, 'Sign up failed');
   }
 
   return (
-    <form onSubmit={onSubmit}>
-      <h1>Create your Cortex account</h1>
-      <label>
-        Email
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-      </label>
-      <label>
-        Password
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-      </label>
-      {error && <p role="alert">{error}</p>}
-      <button type="submit">Sign up</button>
-    </form>
+    <AuthFrame title="Create your Cortex account">
+      <form onSubmit={onSubmit}>
+        <VStack gap={3}>
+          <TextInput
+            label="Email"
+            type="email"
+            autoComplete="email"
+            hasAutoFocus
+            value={email}
+            onChange={setEmail}
+          />
+          <TextInput
+            label="Password"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={setPassword}
+          />
+          {error && <Banner status="error" title={error} />}
+          <SubmitButton label="Sign up" isLoading={pending} isDisabled={!email || !password} />
+        </VStack>
+      </form>
+      <Text as="p" color="secondary">
+        Already have an account? <Link href="/login">Log in</Link>
+      </Text>
+    </AuthFrame>
   );
 }
