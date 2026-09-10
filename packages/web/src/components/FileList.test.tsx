@@ -40,6 +40,10 @@ import FileList from './FileList';
 
 const ALL = { kind: 'all' as const };
 
+async function openRowMenu() {
+  await userEvent.click(screen.getByRole('button', { name: /actions for/i }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([9]).buffer)));
@@ -74,7 +78,8 @@ describe('FileList', () => {
     h.decryptMetadata.mockReturnValueOnce({ name: 'big.bin', contentType: 'application/octet-stream', size: 999, contentId: 'c2', streamVersion: 1 });
     render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('big.bin');
-    await userEvent.click(screen.getByRole('button', { name: /^download$/i }));
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /^download$/i }));
     await waitFor(() => expect(h.pickSink).toHaveBeenCalledWith('big.bin', 'application/octet-stream'));
     // (itemId, meta, wrappedDek, kek, sink)
     expect(h.downloadFileStreaming).toHaveBeenCalledWith(
@@ -88,15 +93,19 @@ describe('FileList', () => {
     ]);
     render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('cat.png');
-    await userEvent.click(screen.getByRole('button', { name: /add to collection/i }));
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /add to collection/i }));
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Trip' }));
     await waitFor(() => expect(h.addItemToCollection).toHaveBeenCalledWith('c9', 'v1', 'i1'));
   });
 
-  it('delete calls the API then reloads the list', async () => {
+  it('delete asks for confirmation, then calls the API and reloads the list', async () => {
     render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('cat.png');
-    await userEvent.click(screen.getByRole('button', { name: /delete/i }));
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /delete/i }));
+    expect(h.deleteItem).not.toHaveBeenCalled();
+    await userEvent.click(await screen.findByRole('button', { name: /delete file/i }));
     await waitFor(() => expect(h.deleteItem).toHaveBeenCalledWith('i1'));
     expect(h.listItems).toHaveBeenCalledTimes(2); // initial + after delete
   });
@@ -105,7 +114,8 @@ describe('FileList', () => {
     h.decryptMetadata.mockReturnValue({ name: 'cat.png', contentType: 'image/png', size: 1, contentId: 'c1', tags: ['old'] });
     render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('cat.png');
-    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /edit tags/i }));
     const input = screen.getByRole('textbox', { name: /edit tags/i });
     await userEvent.clear(input);
     await userEvent.type(input, 'beach, trip');
@@ -120,11 +130,30 @@ describe('FileList', () => {
     expect(h.listItems).toHaveBeenCalledTimes(2); // initial + after save
   });
 
+  it('a collections failure does not hide the file table', async () => {
+    h.listCollections.mockRejectedValueOnce(new Error('nope'));
+    render(<FileList view={ALL} refreshKey={0} />);
+    expect(await screen.findByText('cat.png')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('a failed delete shows the error above the table, not instead of it', async () => {
+    h.deleteItem.mockRejectedValueOnce(new Error('server down'));
+    render(<FileList view={ALL} refreshKey={0} />);
+    await screen.findByText('cat.png');
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /delete/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /delete file/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/server down/i);
+    expect(screen.getByText('cat.png')).toBeInTheDocument();
+  });
+
   it('clearing all tags drops the metadata tags key and sends an empty index list', async () => {
     h.decryptMetadata.mockReturnValue({ name: 'cat.png', contentType: 'image/png', size: 1, contentId: 'c1', tags: ['old'] });
     render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('cat.png');
-    await userEvent.click(screen.getByRole('button', { name: /edit tags/i }));
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /edit tags/i }));
     await userEvent.clear(screen.getByRole('textbox', { name: /edit tags/i }));
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }));
     await waitFor(() => expect(h.updateItemTags).toHaveBeenCalledWith('i1', expect.any(Uint8Array), []));

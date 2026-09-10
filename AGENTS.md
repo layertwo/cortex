@@ -308,10 +308,20 @@ cortex/
 - `@cortex/web` - React web application (imports encryption library)
 
 **Technology Stack:**
-- React 18+ with TypeScript (strict mode)
-- Vite for build tooling and dev server
-- Tailwind CSS for styling (to be added)
+- React 19 with TypeScript (strict mode)
+- Vite 8 for build tooling and dev server
+- Meta Astryx design system (`@astryxdesign/core` 0.6.0, `@astryxdesign/theme-neutral`) for all UI
 - `@cortex/encryption` library for all cryptographic operations
+
+**Astryx rules (packages/web):**
+- Consume the prebuilt dist only. There is no StyleX compiler: never call `stylex.create` or pass `xstyle` from app code; it renders unstyled without warning.
+- Layout with Astryx primitives (`AppShell`, `Layout`, `Section`, `Center`, `Card`, `VStack`, `HStack`, `Grid`), not raw `<div>` + inline styles.
+- Any residual CSS uses tokens (`var(--spacing-4)`, `var(--color-text-secondary)`), never hex or px literals.
+- Import from per-component subpaths: `import {Button} from '@astryxdesign/core/Button'`.
+- Look up props before using a component: `cd packages/web && npm run astryx -- component <Name>`.
+- Tests query by role and label (`getByRole`, `getByLabelText`, `findByRole('alert')`), never by class name. Do not use `isRequired` on inputs whose labels tests match exactly.
+- jsdom needs `matchMedia`, `HTMLDialogElement` methods, and `window.scrollTo` polyfills; they live in `packages/web/src/test-setup.ts`.
+- Async submit handlers in auth and vault screens use the shared `useAsyncAction` hook in `components/common`; `ChangeVaultPassword` keeps its staged flow.
 
 **Encryption Library (@cortex/encryption):**
 ```
@@ -332,26 +342,18 @@ packages/encryption/src/
 **Web Application (@cortex/web):**
 ```
 packages/web/src/
-├── components/        # Reusable UI components
-│   ├── auth/         # Login, signup, recovery
-│   ├── vault/        # Vault management
-│   ├── files/        # File upload, list, preview
-│   ├── collections/  # Collection management
-│   └── common/       # Buttons, modals, etc.
-├── hooks/            # Custom React hooks
-│   ├── useAuth.ts
-│   ├── useVault.ts
-│   ├── useUsage.ts
-│   └── useFeatureFlag.ts
-├── api/              # API client
-│   └── client.ts
-├── pages/            # Page components
-│   ├── Login.tsx
-│   ├── Dashboard.tsx
-│   ├── Files.tsx
-│   └── Settings.tsx
-├── App.tsx
-└── main.tsx
+├── components/        # Screens + feature components (flat)
+│   ├── common/        # AuthFrame, RecoveryPhrase, RouterLink, formatBytes, useAsyncAction
+│   ├── Login.tsx Signup.tsx VerifyEmail.tsx ForgotPassword.tsx
+│   ├── VaultSetup.tsx VaultUnlock.tsx ChangeVaultPassword.tsx
+│   ├── Dashboard.tsx CollectionSidebar.tsx FileList.tsx FileUpload.tsx TagSearch.tsx
+│   └── ShareAccess.tsx ShareCreate.tsx (ShareCreate is unwired; see design doc follow-ups)
+├── auth/              # SessionContext (Cognito + vault keys), route guards
+├── api/               # Smithy client wrappers (client, items, collections)
+├── items/             # metadata, streaming upload/download, key rotation
+├── vault/             # key access, verifier, rotation bridge
+├── App.tsx            # Theme > SessionProvider > BrowserRouter > LinkProvider > Routes
+└── main.tsx           # Amplify config + Astryx CSS imports
 ```
 
 **Encryption Flow:**
@@ -424,17 +426,25 @@ pytest-cov>=4.0
 ```json
 {
   "dependencies": {
-    "@cortex/encryption": "workspace:*",  // Local workspace dependency
-    "react": "^18.x.x",
-    "react-dom": "^18.x.x"
+    "@astryxdesign/core": "0.6.0",
+    "@astryxdesign/theme-neutral": "0.6.0",
+    "@stylexjs/stylex": "0.19.0",
+    "@cortex/client": "*",
+    "@cortex/encryption": "*",
+    "aws-amplify": "^6.x",
+    "react": "^19.x",
+    "react-dom": "^19.x",
+    "react-router-dom": "^7.x"
   },
   "devDependencies": {
-    "@types/react": "^18.x.x",
-    "@types/react-dom": "^18.x.x",
-    "@vitejs/plugin-react": "^4.x.x",
-    "typescript": "^5.x.x",
-    "vite": "^5.x.x",
-    "vitest": "^1.x.x"
+    "@astryxdesign/cli": "0.6.0",
+    "@testing-library/react": "^16.x",
+    "@testing-library/user-event": "^14.x",
+    "@vitejs/plugin-react": "^6.x",
+    "jsdom": "^30.x",
+    "typescript": "~5.9",
+    "vite": "^8.x",
+    "vitest": "^4.x"
   }
 }
 ```
@@ -1328,3 +1338,33 @@ Specs are a structured way of building and documenting features with Kiro. They 
 - Use specs for new Lambda routes (reference API Gateway integration)
 - Include references to relevant DynamoDB schema patterns
 - Reference property-based testing requirements in implementation tasks
+
+<!-- ASTRYX:START -->
+Astryx v0.6.0 · 163 components
+CLI: run every command as `npx astryx <cmd>` (shown below as `astryx ...`).
+
+SETUP (once, in your app entry e.g. main.tsx) — without these, components render unstyled:
+  import "@astryxdesign/core/reset.css";
+  import "@astryxdesign/core/astryx.css";
+
+WORKFLOW — discover, don't guess. Before writing UI:
+1. `astryx build "<idea>"` — START HERE: returns a kit (closest [page] + [block]s + [component]s). No args = full playbook.
+2. `astryx template <name> [--skeleton]` — scaffold the [page]/[block]s it named, or study their layout. Templates are reference code.
+3. `astryx component <Name>` — props + examples for every component you use.
+
+RULES:
+- No <div> — components do all layout/spacing, page frame included.
+- Frame first: read `astryx docs layout` before writing any page or screen — page frame, region widths, breakpoint behavior.
+- Dense data = rows (Table, List/Item), never Card-wrapped list items; Card is for standalone widgets. Status = StatusDot/Token; Badge = counts only.
+- Custom styling: component props first; else style/className with tokens — var(--color-*|--spacing-*|--radius-*). No raw hex/px. (No StyleX/Tailwind compiler here — don't use xstyle/utility classes.)
+- Tokens for every value (`astryx docs tokens`). Brand/accent belongs in the theme (`astryx theme list` / `theme add <slug>`, or `astryx theme template` for a custom one) — never override --color-* in :root.
+- SELF-CHECK before you finish: re-read the file and replace any raw <div>/<span> layout, imported .css/@apply, or hardcoded value (#hex, 16px) with the component or a token (var(--color-*|--spacing-*|…)). If unsure a component/prop exists, run `astryx component <Name>` / `astryx search "<thing>"`; don't hand-roll CSS.
+
+MORE CLI:
+  search "<query>"   find any component / hook / doc / template / block
+  component --list   163 components by category
+  template --list    page + block recipes
+  docs <topic>       browser-support, cli-integrations, color, elevation, getting-started, icons, illustrations, internationalization, layout, migration, motion, principles, shadcn-compatibility, shape, spacing, styling-libraries, styling, theme, tokens, typography, working-with-ai
+  swizzle <Name>     eject component source for deep customization
+  upgrade --apply    run after any Astryx or integration dependency bump
+<!-- ASTRYX:END -->

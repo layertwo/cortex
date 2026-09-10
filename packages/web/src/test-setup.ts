@@ -30,3 +30,32 @@ Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   writable: true,
 });
+
+// Astryx needs two browser APIs jsdom lacks: matchMedia (AppShell's responsive hook)
+// and the <dialog> element's modal methods (Dialog / AlertDialog).
+if (typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}
+if (typeof HTMLDialogElement.prototype.showModal !== 'function') {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+}
+
+// jsdom defines scrollTo but only logs "Not implemented" to stderr; Dialog focus
+// management calls it, so replace it with a no-op to keep test output pristine.
+window.scrollTo = () => {};

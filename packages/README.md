@@ -35,7 +35,8 @@ import { encrypt, decrypt, deriveVaultMasterKey } from '@cortex/encryption';
 React web application for Cortex. This is the main user interface that imports and uses the `@cortex/encryption` library.
 
 **Features:**
-- React 18+ with TypeScript
+- React 19 with TypeScript
+- Meta Astryx design system for all UI (prebuilt dist, no StyleX compiler)
 - Vite for build tooling
 - Imports `@cortex/encryption` for all crypto operations
 - Zero-knowledge architecture
