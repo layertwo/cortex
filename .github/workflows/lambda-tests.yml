@@ -28,7 +28,7 @@ jobs:
           cache-dependency-glob: 'lambda/uv.lock'
 
       # Java is needed for the gradle Smithy build that codegen.sh runs.
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           distribution: corretto
           java-version: 17
