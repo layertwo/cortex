@@ -4,6 +4,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Link } from '@astryxdesign/core/Link';
 import { VStack } from '@astryxdesign/core/VStack';
+import { Text } from '@astryxdesign/core/Text';
 import { useSession } from '../auth/SessionContext';
 import AuthFrame from './common/AuthFrame';
 import SubmitButton from './common/SubmitButton';
@@ -38,8 +39,8 @@ export default function ForgotPassword() {
 
   return (
     <AuthFrame
-      title="Reset account password"
-      description="This resets your account login only. Your vault password is separate."
+      title="Reset your account password"
+      description="We'll email you a reset code."
     >
       <form onSubmit={sent ? onConfirm : onRequest}>
         <VStack gap={3}>
@@ -81,6 +82,11 @@ export default function ForgotPassword() {
       <Link href="/login" isStandalone>
         Back to log in
       </Link>
+      <Text as="p" type="supporting">
+        This is your <b>account</b> password, the one you log in with. Your <b>vault</b> password is
+        different and we can't reset it. If that's the one you forgot, log in and choose “Forgot your
+        vault password?” to use your 24 words.
+      </Text>
     </AuthFrame>
   );
 }

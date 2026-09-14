@@ -6,7 +6,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **B2C Single-User Architecture:**
 - Individual users, not organizations or teams
-- One user = one vault (personal backup)
+- One user may have several named vaults. The frontend keeps a device-local registry (`localStorage.cortex_vaults`, active pointer `cortex_vault_id`) until the backend gains ListVaults and vault-name persistence (see docs/plans/2026-09-11-cortex-brand-experience-design.md, Follow-ups).
 - No multi-tenancy or team collaboration features
 - Simplified security model focused on personal data protection
 - Usage tracking and quotas per individual user
@@ -322,6 +322,9 @@ cortex/
 - Tests query by role and label (`getByRole`, `getByLabelText`, `findByRole('alert')`), never by class name. Do not use `isRequired` on inputs whose labels tests match exactly.
 - jsdom needs `matchMedia`, `HTMLDialogElement` methods, and `window.scrollTo` polyfills; they live in `packages/web/src/test-setup.ts`.
 - Async submit handlers in auth and vault screens use the shared `useAsyncAction` hook in `components/common`; `ChangeVaultPassword` keeps its staged flow.
+- Theme: `packages/web/src/theme/cortex.theme.ts` (Astryx `defineTheme`, extends neutral). After editing run `npm run theme:build` from `packages/web` and commit the regenerated `cortex.css/js/d.ts`. Fonts are self-hosted via `@fontsource-variable/inter` (family "Inter Variable"); never add third-party font requests.
+- Brand: `src/components/brand/Mark.tsx` (hex-fold SVG) and `Wordmark.tsx`. App-level CSS lives only in `src/app.css` and uses theme tokens.
+- Recovery: `src/vault/recovery.ts` + `recoveryKit.ts`; phrase entry never validates words or shows per-word feedback (see PHRASE_ERROR).
 
 **Encryption Library (@cortex/encryption):**
 ```

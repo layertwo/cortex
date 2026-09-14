@@ -94,7 +94,7 @@ npm test
 - **Storage**: AWS S3 (encrypted files) + DynamoDB (encrypted metadata)
 - **Authentication**: AWS Cognito
 - **Client Encryption**: ChaCha20-Poly1305 via @noble/ciphers
-- **Web UI**: React 19 + Meta Astryx design system (`@astryxdesign/core`), Vite
+- **Web UI**: React 19 + Astryx design system with a custom Cortex theme; multiple vaults per account (device-local registry); recovery from the 24-word phrase with a downloadable recovery kit.
 - **Key Derivation**: Argon2id + HKDF
 
 ### Security Model

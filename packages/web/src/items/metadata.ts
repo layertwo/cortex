@@ -11,6 +11,9 @@ export interface FileMetadata {
   // Readable tags (chips). The searchable form is the one-way HMAC encryptedTags
   // on the item; this plaintext copy lives here so the UI can display them.
   tags?: string[];
+  // Small JPEG data URL (≤ 24 KB) made in the browser at upload time. Travels inside this
+  // encrypted blob, so the server never sees it. Absent for non-media and older items.
+  thumb?: string;
 }
 
 // Adapted for #208: the Smithy `encryptedMetadata` field is a Blob (Uint8Array)

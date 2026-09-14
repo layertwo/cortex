@@ -65,7 +65,7 @@ export async function uploadFileStreaming(
   file: File,
   keys: VaultKeys,
   onProgress?: (fraction: number) => void,
-  opts?: { chunkSize?: number; tags?: string[] }, // chunkSize override is test-only
+  opts?: { chunkSize?: number; tags?: string[]; thumb?: string }, // chunkSize override is test-only
 ): Promise<void> {
   const chunkSize = opts?.chunkSize ?? DEFAULT_CHUNK_SIZE;
   const tags = opts?.tags?.map((t) => t.trim()).filter(Boolean) ?? [];
@@ -87,6 +87,7 @@ export async function uploadFileStreaming(
       contentId,
       streamVersion: STREAM_VERSION,
       ...(tags.length ? { tags } : {}),
+      ...(opts?.thumb ? { thumb: opts.thumb } : {}),
     };
     const encryptedMetadata = await encryptMetadata(metadata, keys.metadataKey);
 

@@ -1,18 +1,23 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Link } from '@astryxdesign/core/Link';
 import { VStack } from '@astryxdesign/core/VStack';
 import { Text } from '@astryxdesign/core/Text';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { useSession } from '../auth/SessionContext';
 import AuthFrame from './common/AuthFrame';
+import { SETUP_STEPS } from './common/SetupRail';
 import SubmitButton from './common/SubmitButton';
 import { useAsyncAction } from './common/useAsyncAction';
+import SignupProof from './SignupProof';
 
 export default function Signup() {
   const { signUpAccount } = useSession();
   const navigate = useNavigate();
+  const fromLanding = !!(useLocation().state as { fromLanding?: boolean } | null)?.fromLanding;
+  const wide = useMediaQuery('(min-width: 900px)');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { pending, error, run } = useAsyncAction();
@@ -27,7 +32,13 @@ export default function Signup() {
   }
 
   return (
-    <AuthFrame title="Create your Cortex account">
+    <AuthFrame
+      title="Create your account"
+      description="This password logs you in. Your vault gets its own, next."
+      rail={{ steps: SETUP_STEPS, active: 0 }}
+      aside={wide ? <SignupProof /> : undefined}
+      enter={fromLanding}
+    >
       <form onSubmit={onSubmit}>
         <VStack gap={3}>
           <TextInput
@@ -46,7 +57,7 @@ export default function Signup() {
             onChange={setPassword}
           />
           {error && <Banner status="error" title={error} />}
-          <SubmitButton label="Sign up" isLoading={pending} isDisabled={!email || !password} />
+          <SubmitButton label="Continue" isLoading={pending} isDisabled={!email || !password} />
         </VStack>
       </form>
       <Text as="p" color="secondary">

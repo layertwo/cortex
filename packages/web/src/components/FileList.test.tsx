@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { FileMetadata } from '../items/metadata';
 
@@ -159,5 +159,35 @@ describe('FileList', () => {
     await waitFor(() => expect(h.updateItemTags).toHaveBeenCalledWith('i1', expect.any(Uint8Array), []));
     expect(h.encryptMetadata).toHaveBeenCalledWith(expect.not.objectContaining({ tags: expect.anything() }), expect.any(Uint8Array));
     expect(h.encryptTagForSearch).not.toHaveBeenCalled();
+  });
+
+  it('shows the thumbnail when metadata carries one, else a type glyph', async () => {
+    h.decryptMetadata
+      .mockReturnValueOnce({ name: 'cat.png', contentType: 'image/png', size: 1, contentId: 'c1', thumb: 'data:image/jpeg;base64,AAAA' })
+      .mockReturnValueOnce({ name: 'notes.pdf', contentType: 'application/pdf', size: 1, contentId: 'c2' });
+    h.listItems.mockResolvedValueOnce([
+      { itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) },
+      { itemId: 'i2', encryptedMetadata: new Uint8Array([2]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) },
+    ]);
+    const { container } = render(<FileList view={ALL} refreshKey={0} />);
+    await screen.findByText('notes.pdf');
+    expect(container.querySelector('img[src^="data:image/jpeg"]')).not.toBeNull();
+    expect(screen.getByText('PDF')).toBeInTheDocument();
+  });
+
+  it('a new onLoaded identity does not refetch', async () => {
+    const { rerender } = render(<FileList view={ALL} refreshKey={0} onLoaded={() => {}} />);
+    await waitFor(() => expect(h.listItems).toHaveBeenCalledTimes(1));
+
+    // Same refreshKey, brand-new inline callback instance — must NOT trigger a refetch.
+    rerender(<FileList view={ALL} refreshKey={0} onLoaded={() => {}} />);
+    await act(async () => {});
+    expect(h.listItems).toHaveBeenCalledTimes(1);
+
+    // A real refreshKey bump still refetches, and the CURRENT callback is the one invoked.
+    const onLoaded = vi.fn();
+    rerender(<FileList view={ALL} refreshKey={1} onLoaded={onLoaded} />);
+    await waitFor(() => expect(h.listItems).toHaveBeenCalledTimes(2));
+    expect(onLoaded).toHaveBeenCalledWith(1);
   });
 });

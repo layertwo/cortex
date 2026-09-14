@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const h = vi.hoisted(() => ({
@@ -78,5 +78,31 @@ describe('CollectionSidebar', () => {
     await userEvent.click(screen.getByRole('button', { name: /delete collection/i }));
     expect(await screen.findByRole('alert')).toHaveTextContent(/server down/i);
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('a new onLoaded identity does not refetch', async () => {
+    const { rerender } = render(
+      <CollectionSidebar selected={{ kind: 'all' }} onSelect={vi.fn()} refreshKey={0} onLoaded={() => {}} />,
+    );
+    await waitFor(() => expect(h.listCollections).toHaveBeenCalledTimes(1));
+
+    // Same refreshKey, brand-new inline callback instance — must NOT trigger a refetch.
+    rerender(
+      <CollectionSidebar selected={{ kind: 'all' }} onSelect={vi.fn()} refreshKey={0} onLoaded={() => {}} />,
+    );
+    await act(async () => {});
+    expect(h.listCollections).toHaveBeenCalledTimes(1);
+
+    // A real refreshKey bump still refetches, and the CURRENT callback is the one invoked.
+    h.listCollections.mockResolvedValueOnce([
+      { collectionId: 'c1', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 2, createdAt: new Date(0), updatedAt: new Date(0) },
+      { collectionId: 'c2', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ]);
+    const onLoaded = vi.fn();
+    rerender(
+      <CollectionSidebar selected={{ kind: 'all' }} onSelect={vi.fn()} refreshKey={1} onLoaded={onLoaded} />,
+    );
+    await waitFor(() => expect(h.listCollections).toHaveBeenCalledTimes(2));
+    expect(onLoaded).toHaveBeenCalledWith(2);
   });
 });

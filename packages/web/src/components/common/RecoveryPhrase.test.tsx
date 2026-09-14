@@ -25,4 +25,19 @@ describe('RecoveryPhrase', () => {
     await userEvent.click(screen.getByRole('button', { name: /copy/i }));
     expect(writeText).toHaveBeenCalledWith(PHRASE);
   });
+
+  it('offers a recovery kit download when the vault is known', async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:kit'), revokeObjectURL: vi.fn() });
+    render(<RecoveryPhrase phrase={PHRASE} kit={{ name: 'Personal', vaultId: 'v1' }} />);
+    await userEvent.click(screen.getByRole('button', { name: /download recovery kit/i }));
+    expect(click).toHaveBeenCalled();
+    click.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it('has no download button without kit details', () => {
+    render(<RecoveryPhrase phrase={PHRASE} />);
+    expect(screen.queryByRole('button', { name: /download/i })).toBeNull();
+  });
 });

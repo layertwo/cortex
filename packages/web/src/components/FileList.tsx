@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { encryptTagForSearch } from '@cortex/encryption';
 import { Table, proportional, pixel, type TableColumn } from '@astryxdesign/core/Table';
 import { MoreMenu } from '@astryxdesign/core/MoreMenu';
@@ -20,6 +20,7 @@ import { decryptMetadata, encryptMetadata, type FileMetadata } from '../items/me
 import { decryptCollectionName } from '../items/collectionMetadata';
 import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
 import { formatBytes } from './common/formatBytes';
+import FileTypeGlyph from './common/FileTypeGlyph';
 import { useAsyncAction } from './common/useAsyncAction';
 import type { View } from './CollectionSidebar';
 
@@ -35,12 +36,24 @@ type Collection = { id: string; name: string };
 
 const UNREADABLE = '(unreadable)';
 
-export default function FileList({ view, refreshKey }: { view: View; refreshKey: number }) {
+export default function FileList({
+  view,
+  refreshKey,
+  onLoaded,
+}: {
+  view: View;
+  refreshKey: number;
+  onLoaded?: (count: number) => void;
+}) {
   const [rows, setRows] = useState<Row[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Row | null>(null);
   const [deleting, setDeleting] = useState<Row | null>(null);
+
+  // Callers may pass an inline callback; keep its identity out of `load`'s deps.
+  const onLoadedRef = useRef(onLoaded);
+  onLoadedRef.current = onLoaded;
 
   const load = useCallback(async () => {
     setError('');
@@ -73,6 +86,7 @@ export default function FileList({ view, refreshKey }: { view: View; refreshKey:
           name: c.encryptedMetadata ? tryName(c.encryptedMetadata, metadataKey) : UNREADABLE,
         })),
       );
+      onLoadedRef.current?.(items.length);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load files');
     }
@@ -120,6 +134,23 @@ export default function FileList({ view, refreshKey }: { view: View; refreshKey:
   const nameOf = (row: Row) => row.meta?.name ?? UNREADABLE;
 
   const columns: TableColumn<Row>[] = [
+    {
+      key: 'thumb',
+      header: '',
+      width: pixel(56),
+      renderCell: (row) =>
+        row.meta?.thumb ? (
+          <img
+            src={row.meta.thumb}
+            alt=""
+            width={40}
+            height={40}
+            style={{ display: 'block', objectFit: 'cover', borderRadius: 'var(--radius-element)' }}
+          />
+        ) : (
+          <FileTypeGlyph name={row.meta?.name} contentType={row.meta?.contentType} />
+        ),
+    },
     {
       key: 'name',
       header: 'Name',

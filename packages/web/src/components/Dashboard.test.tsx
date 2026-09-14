@@ -2,14 +2,23 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 const { mockSession } = vi.hoisted(() => ({
-  mockSession: { logout: vi.fn(), rotationInterrupted: false },
+  mockSession: {
+    logout: vi.fn(),
+    rotationInterrupted: false,
+    activeVault: { vaultId: 'v1', name: 'Personal' },
+    vaultVersion: 0,
+    vaults: [{ vaultId: 'v1', name: 'Personal' }],
+    switchVault: vi.fn(),
+  },
 }));
 vi.mock('../auth/SessionContext', () => ({ useSession: () => mockSession }));
-vi.mock('./FileUpload', () => ({ default: () => <div>file-upload</div>, MAX_FILE_SIZE_BYTES: 1 }));
+vi.mock('./UploadQueue', () => ({ default: () => <div>upload-queue</div>, MAX_FILE_SIZE_BYTES: 1 }));
 vi.mock('./FileList', () => ({ default: ({ refreshKey }: { refreshKey: number }) => <div>file-list:{refreshKey}</div> }));
 vi.mock('./CollectionSidebar', () => ({ default: () => <div>sidebar</div> }));
 vi.mock('./TagSearch', () => ({ default: () => <div>tag-search</div> }));
 vi.mock('./ChangeVaultPassword', () => ({ default: () => <div>change-vault-password</div> }));
+vi.mock('./VaultSwitcher', () => ({ default: () => <div>vault-switcher</div> }));
+vi.mock('./WelcomeCard', () => ({ default: () => <div>welcome-card</div> }));
 
 import Dashboard from './Dashboard';
 
@@ -21,9 +30,15 @@ describe('Dashboard', () => {
   it('shows the sidebar, upload control, tag search, and file list', () => {
     render(<Dashboard />);
     expect(screen.getByText('sidebar')).toBeInTheDocument();
-    expect(screen.getByText('file-upload')).toBeInTheDocument();
+    expect(screen.getByText('upload-queue')).toBeInTheDocument();
     expect(screen.getByText('tag-search')).toBeInTheDocument();
     expect(screen.getByText(/file-list:/)).toBeInTheDocument();
+    expect(screen.getByText('welcome-card')).toBeInTheDocument();
+  });
+
+  it('does not bump refreshKey on initial mount', () => {
+    render(<Dashboard />);
+    expect(screen.getByText('file-list:0')).toBeInTheDocument();
   });
 
   it('shows "Change vault password" button when unlocked', () => {
@@ -35,5 +50,10 @@ describe('Dashboard', () => {
     mockSession.rotationInterrupted = true;
     render(<Dashboard />);
     expect(screen.getByText(/password change was interrupted/i)).toBeInTheDocument();
+  });
+
+  it('shows the active vault name beside the title', () => {
+    render(<Dashboard />);
+    expect(screen.getByText('Personal')).toBeInTheDocument();
   });
 });

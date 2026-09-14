@@ -4,16 +4,22 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { Button } from '@astryxdesign/core/Button';
 import { Banner } from '@astryxdesign/core/Banner';
+import { Link } from '@astryxdesign/core/Link';
+import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { useSession } from '../auth/SessionContext';
+import { DEFAULT_VAULT_NAME } from '../vault/registry';
 import AuthFrame from './common/AuthFrame';
+import { SETUP_STEPS } from './common/SetupRail';
+import PasswordStrength from './common/PasswordStrength';
 import RecoveryPhrase from './common/RecoveryPhrase';
 import SubmitButton from './common/SubmitButton';
 import { useAsyncAction } from './common/useAsyncAction';
 
 export default function VaultSetup() {
-  const { setupVault } = useSession();
+  const { setupVault, activeVault } = useSession();
   const navigate = useNavigate();
+  const [name, setName] = useState(DEFAULT_VAULT_NAME);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [recovery, setRecovery] = useState<string | null>(null);
@@ -27,20 +33,21 @@ export default function VaultSetup() {
       return;
     }
     void run(async () => {
-      setRecovery(await setupVault(password));
+      setRecovery(await setupVault(password, name));
     }, 'Vault setup failed');
   }
 
   if (recovery) {
     return (
       <AuthFrame
-        title="Save your recovery phrase"
-        description="This 24-word phrase is the only way to recover your vault if you forget your vault password. Store it offline. It will not be shown again."
+        title="Write these 24 words down"
+        description="They are the only way back in if you forget your vault password. Store them offline; they will not be shown again."
+        rail={{ steps: SETUP_STEPS, active: 3 }}
       >
-        <RecoveryPhrase phrase={recovery} />
+        <RecoveryPhrase phrase={recovery} kit={activeVault ?? undefined} />
         <CheckboxInput label="I have saved my recovery phrase" value={saved} onChange={setSaved} />
         <Button
-          label="Continue"
+          label="Open my vault"
           variant="primary"
           width="100%"
           isDisabled={!saved}
@@ -51,9 +58,14 @@ export default function VaultSetup() {
   }
 
   return (
-    <AuthFrame title="Set up your vault" description="Use a different password than your account password.">
+    <AuthFrame
+      title="Set up your vault"
+      description="This password encrypts everything and can't be reset, only recovered with your phrase. You can add more vaults later."
+      rail={{ steps: SETUP_STEPS, active: 2 }}
+    >
       <form onSubmit={onCreate}>
         <VStack gap={3}>
+          <TextInput label="Vault name" value={name} onChange={setName} />
           <TextInput
             label="Vault password"
             type="password"
@@ -62,6 +74,7 @@ export default function VaultSetup() {
             value={password}
             onChange={setPassword}
           />
+          <PasswordStrength password={password} />
           <TextInput
             label="Confirm vault password"
             type="password"
@@ -74,6 +87,9 @@ export default function VaultSetup() {
           <SubmitButton label="Create vault" isLoading={pending} isDisabled={!password || !confirm} />
         </VStack>
       </form>
+      <Text as="p" type="supporting">
+        Already have a vault on another device? <Link href="/vault/recover">Restore it from your recovery kit</Link>.
+      </Text>
     </AuthFrame>
   );
 }
