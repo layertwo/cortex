@@ -1,7 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
-import { deriveKeys } from '@cortex/encryption';
+import { deriveKeys, retrieveKeys } from '@cortex/encryption';
 import { createVerifier, saveVerifier } from '../vault/verifier';
+import { listItems } from '../api/items';
+import { listCollections } from '../api/collections';
+import { encryptMetadata } from '../items/metadata';
 
 // Hoisted so the vi.mock factories below can reference these without a TDZ error.
 const { SALT, MASTER, api } = vi.hoisted(() => ({
@@ -25,6 +28,9 @@ vi.mock('aws-amplify/auth', () => ({
 
 vi.mock('../api/client', () => api);
 
+vi.mock('../api/items', () => ({ listAllItems: vi.fn(async () => []), listItems: vi.fn(async () => []) }));
+vi.mock('../api/collections', () => ({ listCollections: vi.fn(async () => []) }));
+
 // Real verifier + real deriveKeys/encrypt/decrypt; mock only the slow Argon2id step.
 vi.mock('@cortex/encryption', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@cortex/encryption')>();
@@ -34,6 +40,7 @@ vi.mock('@cortex/encryption', async (importOriginal) => {
     generateRecoveryKey: vi.fn(() => 'word '.repeat(24).trim()),
     storeKeys: vi.fn(async () => {}),
     clearKeys: vi.fn(async () => {}),
+    retrieveKeys: vi.fn(async () => null),
   };
 });
 
@@ -54,6 +61,29 @@ function Probe() {
       </button>
       <button onClick={() => s.changeVaultPassword('vaultpw', 'newvaultpw').catch(() => {})}>
         change
+      </button>
+      <span data-testid="vaults">{s.vaults.map((v) => v.name).join(',')}</span>
+      <span data-testid="active">{s.activeVault?.name ?? ''}</span>
+      <span data-testid="version">{s.vaultVersion}</span>
+      <button onClick={() => s.setupVault('vaultpw', 'Family').then((r) => (document.title = r))}>setup-family</button>
+      <button onClick={() => s.switchVault('v9').then((r) => (document.title = r))}>switch-v9</button>
+      <button
+        onClick={() =>
+          s.recoverVault(document.body.dataset.phrase ?? '', 'newpw')
+            .then((r) => (document.title = 'recovered:' + r.vaultId + ':' + r.phrase.split(' ').length))
+            .catch((e) => (document.title = e.message))
+        }
+      >
+        recover
+      </button>
+      <button
+        onClick={() =>
+          s.recoverVault(document.body.dataset.phrase ?? '', 'newpw', undefined, { vaultId: 'v1' })
+            .then((r) => (document.title = 'recovered:' + r.vaultId))
+            .catch((e) => (document.title = e.message))
+        }
+      >
+        recover-kit
       </button>
     </div>
   );
@@ -216,5 +246,205 @@ describe('changeVaultPassword', () => {
     expect(api.updateVaultRotation).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'ACQUIRE', expectedState: 'IN_PROGRESS' }),
     );
+  });
+});
+
+describe('vault registry integration', () => {
+  it('setupVault registers the vault under its name and makes it active', async () => {
+    api.createVault.mockResolvedValue({ vaultId: 'v2', vaultSalt: SALT });
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('setup-family');
+    await act(async () => {
+      screen.getByText('setup-family').click();
+    });
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Family');
+    expect(screen.getByTestId('active')).toHaveTextContent('Family');
+    expect(localStorage.getItem('cortex_vault_id')).toBe('v2');
+  });
+
+  it('switchVault reports locked when that vault has no keys on this device', async () => {
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }, { vaultId: 'v9', name: 'Work' }]));
+    localStorage.setItem('cortex_vault_id', 'v1');
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('switch-v9');
+    await act(async () => {
+      screen.getByText('switch-v9').click();
+    });
+    expect(document.title).toBe('locked');
+    expect(localStorage.getItem('cortex_vault_id')).toBe('v1');
+  });
+
+  it('switchVault unlocks and activates when keys exist on this device', async () => {
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }, { vaultId: 'v9', name: 'Work' }]));
+    localStorage.setItem('cortex_vault_id', 'v1');
+    (retrieveKeys as Mock).mockResolvedValueOnce({
+      keyEncryptionKey: new Uint8Array(32),
+      metadataEncryptionKey: new Uint8Array(32),
+    } as never);
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('switch-v9');
+    const versionBefore = Number(screen.getByTestId('version').textContent);
+    await act(async () => {
+      screen.getByText('switch-v9').click();
+    });
+    expect(document.title).toBe('unlocked');
+    expect(localStorage.getItem('cortex_vault_id')).toBe('v9');
+    expect(screen.getByTestId('active')).toHaveTextContent('Work');
+    expect(Number(screen.getByTestId('version').textContent)).toBe(versionBefore + 1);
+  });
+
+  it('switchVault resolves locked (not a throw) when retrieveKeys rejects on a storage error', async () => {
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }, { vaultId: 'v9', name: 'Work' }]));
+    localStorage.setItem('cortex_vault_id', 'v1');
+    (retrieveKeys as Mock).mockRejectedValueOnce(new Error('Failed to retrieve keys: IndexedDB unavailable'));
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('switch-v9');
+    await act(async () => {
+      screen.getByText('switch-v9').click();
+    });
+    expect(document.title).toBe('locked');
+    expect(localStorage.getItem('cortex_vault_id')).toBe('v1');
+  });
+});
+
+describe('recoverVault', () => {
+  it('re-secures the vault the phrase opens and unlocks it', async () => {
+    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
+    document.body.dataset.phrase = real.generateRecoveryKey(MASTER);
+    const keys = deriveKeys(MASTER);
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
+    api.getVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', rotationLockedAt: null });
+    api.updateVaultRotation.mockResolvedValue({ rotationState: 'IDLE', rotationLockedAt: null });
+
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('recover');
+    await act(async () => {
+      screen.getByText('recover').click();
+    });
+    expect(document.title).toBe('recovered:v1:24');
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(api.updateVaultRotation).toHaveBeenCalledWith(expect.objectContaining({ action: 'RELEASE', kekVersion: 2 }));
+    expect(localStorage.getItem('cortex_vault_id')).toBe('v1');
+  });
+
+  it('rejects with the generic message when the phrase opens nothing here', async () => {
+    document.body.dataset.phrase = 'alpha bravo charlie';
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('recover');
+    await act(async () => {
+      screen.getByText('recover').click();
+    });
+    expect(document.title).toMatch(/don't open a vault on this device/);
+    expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
+  });
+
+  it("new device: a wrong phrase against a vault with a collection throws PHRASE_ERROR before any rotation write", async () => {
+    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
+    document.body.dataset.phrase = real.generateRecoveryKey(new Uint8Array(32).fill(7));
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    // No verifier saved for v1 — simulates a new device that has never opened this vault.
+    vi.mocked(listItems).mockResolvedValueOnce([]);
+    vi.mocked(listCollections).mockResolvedValueOnce([
+      {
+        collectionId: 'c1',
+        vaultId: 'v1',
+        encryptedMetadata: new Uint8Array([1, 2, 3]),
+        itemCount: 0,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+    ]);
+    api.getVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', rotationLockedAt: null });
+
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('recover-kit');
+    await act(async () => {
+      screen.getByText('recover-kit').click();
+    });
+    expect(document.title).toMatch(/don't open a vault on this device/);
+    expect(vi.mocked(listCollections)).toHaveBeenCalledWith('v1');
+    expect(api.updateVaultRotation).not.toHaveBeenCalled();
+  });
+
+  it('new device: proof succeeds against an old-key item even when a partial sweep left a newer-key item unreadable', async () => {
+    // Regression for Important #1: a retry after a sweep that died partway through must not
+    // reject the correct phrase just because the first item happens to already be under the
+    // new metadata key.
+    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
+    const phrase = real.generateRecoveryKey(MASTER);
+    document.body.dataset.phrase = phrase;
+    const keys = deriveKeys(MASTER);
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    // No verifier saved for v1 — simulates a new device.
+    const oldKeyMetadata = await encryptMetadata(
+      { name: 'a.jpg', contentType: 'image/jpeg', size: 1, contentId: 'c1' },
+      keys.metadataEncryptionKey,
+    );
+    vi.mocked(listItems).mockResolvedValueOnce([
+      {
+        itemId: 'already-rotated',
+        vaultId: 'v1',
+        itemType: 'MEDIA',
+        encryptedMetadata: new Uint8Array([9, 9, 9]), // already re-keyed by a prior partial sweep
+        dekVersion: 2, // kekVersion + 1 — under the NEW key, not readable with these keys
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        version: 1,
+      },
+      {
+        itemId: 'still-old-key',
+        vaultId: 'v1',
+        itemType: 'MEDIA',
+        encryptedMetadata: oldKeyMetadata,
+        dekVersion: 1, // == kekVersion — still under the OLD key, the real proof candidate
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        version: 1,
+      },
+    ]);
+    api.getVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', rotationLockedAt: null });
+    api.updateVaultRotation.mockResolvedValue({ rotationState: 'IDLE', rotationLockedAt: null });
+
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('recover-kit');
+    await act(async () => {
+      screen.getByText('recover-kit').click();
+    });
+    expect(document.title).toMatch(/^recovered:v1/);
+    expect(api.updateVaultRotation).toHaveBeenCalledWith(expect.objectContaining({ action: 'ACQUIRE' }));
   });
 });

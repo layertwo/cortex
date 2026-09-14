@@ -36,7 +36,7 @@ describe('auth screens', () => {
     );
     await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
     await userEvent.type(screen.getByLabelText(/password/i), 'Abcdefg1!2345');
-    await userEvent.click(screen.getByRole('button', { name: /sign up/i }));
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(session.signUpAccount).toHaveBeenCalledWith('a@b.com', 'Abcdefg1!2345');
     expect(navigate).toHaveBeenCalledWith('/verify', { state: { email: 'a@b.com' } });
   });
@@ -100,5 +100,49 @@ describe('auth screens', () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole('link', { name: /log in/i })).toHaveAttribute('href', '/login');
+  });
+
+  it('Login shows the welcome heading and slides in when arriving from the landing hero', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={[{ pathname: '/login', state: { fromLanding: true } }]}>
+        <Login />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('heading', { level: 1, name: /welcome back/i })).toBeInTheDocument();
+    expect(container.querySelector('.auth-enter')).not.toBeNull();
+  });
+
+  it('ForgotPassword explains that the vault password is separate', () => {
+    render(
+      <MemoryRouter>
+        <ForgotPassword />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/forgot your vault password\?/i)).toBeInTheDocument();
+  });
+
+  it('Signup shows the proof aside on wide viewports', () => {
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) =>
+      ({
+        matches: true,
+        media: query,
+        onchange: null,
+        addListener() {},
+        removeListener() {},
+        addEventListener() {},
+        removeEventListener() {},
+        dispatchEvent: () => false,
+      }) as MediaQueryList;
+    try {
+      render(
+        <MemoryRouter>
+          <Signup />
+        </MemoryRouter>,
+      );
+      expect(screen.getByText('0 bytes')).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
   });
 });

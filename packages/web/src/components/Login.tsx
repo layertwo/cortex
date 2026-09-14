@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Link } from '@astryxdesign/core/Link';
@@ -13,6 +13,7 @@ import { useAsyncAction } from './common/useAsyncAction';
 export default function Login() {
   const { signInAccount } = useSession();
   const navigate = useNavigate();
+  const fromLanding = !!(useLocation().state as { fromLanding?: boolean } | null)?.fromLanding;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { pending, error, run } = useAsyncAction();
@@ -27,7 +28,7 @@ export default function Login() {
   }
 
   return (
-    <AuthFrame title="Log in">
+    <AuthFrame title="Welcome back" description="Log in to open your vault." enter={fromLanding}>
       <form onSubmit={onSubmit}>
         <VStack gap={3}>
           <TextInput

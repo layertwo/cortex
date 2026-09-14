@@ -1,0 +1,56 @@
+/* Cortex app styles. Only what Astryx components cannot express; every value is a theme token. */
+
+/* Mesh background for every screen outside the dashboard (auth, landing, recovery). */
+.auth-page {
+  background:
+    radial-gradient(60% 45% at 12% 18%, var(--color-background-purple), transparent 70%),
+    radial-gradient(55% 50% at 88% 85%, var(--color-accent-muted), transparent 70%),
+    radial-gradient(45% 40% at 70% 8%, var(--color-background-pink), transparent 70%),
+    var(--color-background-body);
+}
+
+/* Glass card: translucent card surface over the mesh. */
+/* !important: Astryx ships its component CSS inside @layer astryx-base, and this file is
+   unlayered, so our declarations already win the cascade; the !important is belt-and-braces
+   against a future layered app stylesheet. */
+.auth-glass {
+  background: color-mix(in srgb, var(--color-background-card) 62%, transparent) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, var(--color-background-card));
+  box-shadow: var(--shadow-low) !important;
+}
+
+/* Card slides in from the right when arriving from the landing hero. */
+.auth-enter {
+  animation: auth-slide var(--duration-medium) var(--ease-standard) both;
+}
+@keyframes auth-slide {
+  from { opacity: 0; transform: translateX(32px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes auth-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-enter { animation-name: auth-fade; }
+}
+
+/* Dashboard drop zone lights up while files are dragged anywhere over the window. */
+.drop-active {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: 2px;
+  background: var(--color-accent-muted);
+  border-radius: var(--radius-container);
+}
+
+/* 24-word entry grid: 1fr tracks default to a min of the native input's intrinsic width
+   (~180px), which overflows the 400px auth card. Let items and inputs shrink to the track. */
+.phrase-grid > * {
+  min-width: 0;
+}
+.phrase-grid input {
+  width: 100%;
+  min-width: 0;
+}

@@ -1,7 +1,9 @@
 import { CodeBlock } from '@astryxdesign/core/CodeBlock';
 import { VStack } from '@astryxdesign/core/VStack';
+import { HStack } from '@astryxdesign/core/HStack';
 import { Button } from '@astryxdesign/core/Button';
 import { useClipboard } from '@astryxdesign/core/hooks';
+import { buildRecoveryKit, downloadRecoveryKit } from '../../vault/recoveryKit';
 
 // Three words per line: 24 BIP39 words read as eight short rows instead of one wall of
 // text. The existing tests assert on whole rows ('word1 word2 word3').
@@ -13,9 +15,15 @@ export function phraseRows(phrase: string): string {
 }
 
 // CodeBlock renders each line as its own element; its own "Copy code" button would copy
-// just the multi-line display text, not the single-line phrase, so it's disabled here in
-// favor of our own button that copies the original `phrase`.
-export default function RecoveryPhrase({ phrase }: { phrase: string }) {
+// the multi-line display text, so copying is done here with the original single-line phrase.
+// `kit` enables "Download recovery kit" (words + vault name + vault ID as a .txt file).
+export default function RecoveryPhrase({
+  phrase,
+  kit,
+}: {
+  phrase: string;
+  kit?: { name: string; vaultId: string };
+}) {
   const { copy, isCopied } = useClipboard();
   return (
     <VStack gap={2}>
@@ -26,11 +34,18 @@ export default function RecoveryPhrase({ phrase }: { phrase: string }) {
         isWrapped
         width="100%"
       />
-      <Button
-        label={isCopied ? 'Copied' : 'Copy recovery phrase'}
-        size="sm"
-        onClick={() => void copy(phrase)}
-      />
+      <HStack gap={2} wrap="wrap">
+        <Button label={isCopied ? 'Copied' : 'Copy words'} size="sm" onClick={() => void copy(phrase)} />
+        {kit && (
+          <Button
+            label="Download recovery kit"
+            size="sm"
+            onClick={() =>
+              downloadRecoveryKit(buildRecoveryKit({ ...kit, phrase, createdAt: new Date() }), kit.name)
+            }
+          />
+        )}
+      </HStack>
     </VStack>
   );
 }

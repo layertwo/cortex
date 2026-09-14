@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Icon } from '@astryxdesign/core/Icon';
@@ -27,11 +28,15 @@ export default function CollectionSidebar({
   onSelect,
   refreshKey,
   onChanged,
+  header,
+  onLoaded,
 }: {
   selected: View;
   onSelect: (v: View) => void;
   refreshKey: number;
   onChanged?: () => void;
+  header?: ReactNode;
+  onLoaded?: (count: number) => void;
 }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState('');
@@ -40,6 +45,10 @@ export default function CollectionSidebar({
   const create = useAsyncAction();
   const [deleting, setDeleting] = useState<Row | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Callers may pass an inline callback; keep its identity out of `load`'s deps.
+  const onLoadedRef = useRef(onLoaded);
+  onLoadedRef.current = onLoaded;
 
   const load = useCallback(async () => {
     setError('');
@@ -52,6 +61,7 @@ export default function CollectionSidebar({
           name: c.encryptedMetadata ? safeName(c.encryptedMetadata, metadataKey) : '(unreadable)',
         })),
       );
+      onLoadedRef.current?.(cols.length);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load collections');
     }
@@ -98,7 +108,7 @@ export default function CollectionSidebar({
 
   return (
     <SideNav
-      header={<SideNavHeading heading="Cortex" />}
+      header={header}
       topContent={
         <Button label="New collection" size="sm" width="100%" onClick={() => setCreating(true)} />
       }
