@@ -36,6 +36,10 @@ export default function Dashboard() {
   const [vaultDialog, setVaultDialog] = useState<'new' | 'manage' | null>(null);
   const [counts, setCounts] = useState({ files: 0, collections: 0 });
   const bump = () => setRefreshKey((k) => k + 1);
+  // The server's rotation state (synced into the registry) is authoritative; the local flag
+  // covers the moments between a failure and the next sync.
+  const rotationPending =
+    rotationInterrupted || (activeVault?.rotationState !== undefined && activeVault.rotationState !== 'IDLE');
 
   // Skip the first run: this effect exists to reset the view and force a
   // reload when the vault changes, not on initial mount (FileList already
@@ -53,7 +57,7 @@ export default function Dashboard() {
   return (
     <AppShell
       banner={
-        rotationInterrupted ? (
+        rotationPending ? (
           <Banner
             status="warning"
             container="section"

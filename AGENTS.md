@@ -6,7 +6,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **B2C Single-User Architecture:**
 - Individual users, not organizations or teams
-- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name and password verifier) and a resumable `DeleteVault` (see docs/plans/2026-09-14-multivault-backend-design.md). The frontend's device-local registry (`localStorage.cortex_vaults`, active pointer `cortex_vault_id`) becomes a per-account cache of `ListVaults` in the frontend adoption PR.
+- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name and password verifier), `UpdateVaultRotation` with a staged salt/verifier pair (`ACQUIRE`, `PAUSE`, `RELEASE`, `ABANDON`) and a resumable `DeleteVault` (see docs/plans/2026-09-14-multivault-backend-design.md, docs/plans/2026-09-15-rotation-abandon-design.md and docs/plans/2026-09-15-multivault-frontend-design.md). The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the Cognito sub, `cortex_vaults:<sub>` the entries (name, `encryptedName`, `kekVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, salts and verifiers stay in memory, and `cortex_vault_verifier_<vaultId>` is written only after a successful unlock.
 - No multi-tenancy or team collaboration features
 - Simplified security model focused on personal data protection
 - Usage tracking and quotas per individual user
@@ -322,6 +322,7 @@ cortex/
 - Tests query by role and label (`getByRole`, `getByLabelText`, `findByRole('alert')`), never by class name. Do not use `isRequired` on inputs whose labels tests match exactly.
 - jsdom needs `matchMedia`, `HTMLDialogElement` methods, and `window.scrollTo` polyfills; they live in `packages/web/src/test-setup.ts`.
 - Async submit handlers in auth and vault screens use the shared `useAsyncAction` hook in `components/common`; `ChangeVaultPassword` keeps its staged flow.
+- Dialogs compose `Dialog > Layout(header=<DialogHeader/>, content=<LayoutContent/>, footer=<LayoutFooter/>)` (Dialog has no title/footer props) and `AlertDialog.onAction` never closes the dialog by itself. Vault dialogs: `StagedRotationDialog` (finish, start over or cancel an interrupted password change; opened by `ChangeVaultPassword` and `RecoverVault` through `onStagedMismatch`) and `DeleteVaultDialog` (password-confirmed, loops `DeleteVault` until `DELETED`; opened from `ManageVaultsDialog`). Astryx live regions live on `<body>`, so tests scope `role="status"`/`"alert"` with `within()`.
 - Theme: `packages/web/src/theme/cortex.theme.ts` (Astryx `defineTheme`, extends neutral). After editing run `npm run theme:build` from `packages/web` and commit the regenerated `cortex.css/js/d.ts`. Fonts are self-hosted via `@fontsource-variable/inter` (family "Inter Variable"); never add third-party font requests.
 - Brand: `src/components/brand/Mark.tsx` (hex-fold SVG) and `Wordmark.tsx`. App-level CSS lives only in `src/app.css` and uses theme tokens.
 - Recovery: `src/vault/recovery.ts` + `recoveryKit.ts`; phrase entry never validates words or shows per-word feedback (see PHRASE_ERROR).

@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   searchByTag: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) }]),
   updateItemTags: vi.fn(async () => ({ version: 2, updatedAt: new Date(0) })),
   getCollection: vi.fn(async () => [{ itemId: 'i1', encryptedMetadata: new Uint8Array([1]), createdAt: new Date(1000), wrappedDek: new Uint8Array(97) }]),
-  listCollections: vi.fn(async (): Promise<import('@cortex/client').CollectionData[]> => []),
+  listAllCollections: vi.fn(async (): Promise<import('@cortex/client').CollectionData[]> => []),
   addItemToCollection: vi.fn(async () => {}),
   decryptMetadata: vi.fn((): FileMetadata => ({ name: 'cat.png', contentType: 'image/png', size: 1234, contentId: 'c1' })),
   encryptMetadata: vi.fn(async () => new Uint8Array([7])),
@@ -28,7 +28,7 @@ vi.mock('../api/items', () => ({
 }));
 vi.mock('../api/collections', () => ({
   getCollection: h.getCollection,
-  listCollections: h.listCollections,
+  listAllCollections: h.listAllCollections,
   addItemToCollection: h.addItemToCollection,
 }));
 vi.mock('@cortex/encryption', () => ({ encryptTagForSearch: h.encryptTagForSearch }));
@@ -88,7 +88,7 @@ describe('FileList', () => {
   });
 
   it('add-to-collection lists collections then adds the item', async () => {
-    h.listCollections.mockResolvedValueOnce([
+    h.listAllCollections.mockResolvedValueOnce([
       { collectionId: 'c9', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
     ]);
     render(<FileList view={ALL} refreshKey={0} />);
@@ -131,7 +131,7 @@ describe('FileList', () => {
   });
 
   it('a collections failure does not hide the file table', async () => {
-    h.listCollections.mockRejectedValueOnce(new Error('nope'));
+    h.listAllCollections.mockRejectedValueOnce(new Error('nope'));
     render(<FileList view={ALL} refreshKey={0} />);
     expect(await screen.findByText('cat.png')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).toBeNull();

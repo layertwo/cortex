@@ -15,7 +15,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
 import { getVaultKeys } from '../vault/keyAccess';
 import { listItems, deleteItem, searchByTag, updateItemTags } from '../api/items';
-import { getCollection, listCollections, addItemToCollection } from '../api/collections';
+import { getCollection, listAllCollections, addItemToCollection } from '../api/collections';
 import { decryptMetadata, encryptMetadata, type FileMetadata } from '../items/metadata';
 import { decryptCollectionName } from '../items/collectionMetadata';
 import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
@@ -67,7 +67,7 @@ export default function FileList({
           : view.kind === 'tag'
             ? searchByTag(vaultId, view.encryptedTag)
             : listItems(vaultId),
-        listCollections(vaultId).catch(() => []),
+        listAllCollections(vaultId).catch(() => []),
       ]);
       setRows(
         items.map((it) => {
