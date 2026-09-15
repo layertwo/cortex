@@ -517,6 +517,140 @@ class TestUpdateVaultRotationRoute:
         assert response.json()["error"]["code"] == "BAD_REQUEST"
 
 
+class TestAbandonRotationRoute:
+    """ABANDON dispatches to RotationAbandonService, not VaultService (spec 5)."""
+
+    VAULT_ID = "test-vault-1"
+    KEY = {"PK": "USER#test-user-id", "SK": "VAULT#test-vault-1"}
+
+    def _stub_paused_vault(self, dynamodb_stubber, kek_version=1):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": vault_row(
+                    "test-user-id",
+                    self.VAULT_ID,
+                    rotation_state={"S": "PAUSED"},
+                    pending_vault_salt={"B": b"\x01" * 16},
+                    pending_verifier={"B": b"\x02" * 32},
+                    kek_version={"N": str(kek_version)},
+                )
+            },
+            {"TableName": "test-vaults-table", "Key": self.KEY},
+        )
+
+    def _stub_empty_item_page(self, dynamodb_stubber, kek_version=1):
+        dynamodb_stubber.add_response(
+            "query",
+            {"Items": []},
+            {
+                "TableName": "test-items-table",
+                "IndexName": "GSI2",
+                "KeyConditionExpression": "GSI2PK = :pk",
+                "FilterExpression": "dek_version > :kek",
+                "ExpressionAttributeValues": {
+                    ":pk": f"VAULT#{self.VAULT_ID}",
+                    ":kek": kek_version,
+                },
+                "Limit": 100,
+                "ScanIndexForward": True,
+            },
+        )
+
+    def _stub_empty_collections_page(self, dynamodb_stubber, kek_version=1):
+        dynamodb_stubber.add_response(
+            "query",
+            {"Items": []},
+            {
+                "TableName": "test-collections-table",
+                "KeyConditionExpression": "PK = :pk AND begins_with(SK, :sk_prefix)",
+                "FilterExpression": "metadata_version > :kek",
+                "ExpressionAttributeValues": {
+                    ":pk": f"VAULT#{self.VAULT_ID}",
+                    ":sk_prefix": "COLLECTION#",
+                    ":kek": kek_version,
+                },
+                "Limit": 100,
+                "ScanIndexForward": True,
+            },
+        )
+
+    def _stub_abandon_write(self, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"rotation_state": {"S": "IDLE"}}},
+            {
+                "TableName": "test-vaults-table",
+                "Key": self.KEY,
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
+    def test_abandon_returns_200_with_pending_fields_absent(self, client, dynamodb_stubber):
+        self._stub_paused_vault(dynamodb_stubber)
+        self._stub_empty_item_page(dynamodb_stubber)
+        self._stub_empty_collections_page(dynamodb_stubber)
+        self._stub_abandon_write(dynamodb_stubber)
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT_ID}/rotation",
+            json={"action": "ABANDON", "expectedState": "PAUSED"},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["rotationState"] == "IDLE"
+        assert body.get("pendingVaultSalt") is None
+        assert body.get("pendingVerifier") is None
+
+    def test_abandon_wrong_expected_state_returns_400_with_no_stubs(self, client, dynamodb_stubber):
+        # No DynamoDB stub: the route rejects before any I/O.
+        response = client.post(
+            f"/v1/vaults/{self.VAULT_ID}/rotation",
+            json={"action": "ABANDON", "expectedState": "IN_PROGRESS"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "ABANDON requires expectedState PAUSED"
+
+    def test_abandon_conflict_propagates_409(self, client, dynamodb_stubber):
+        self._stub_paused_vault(dynamodb_stubber)
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "PK": {"S": "ITEM#i1"},
+                        "SK": {"S": "METADATA"},
+                        "item_id": {"S": "i1"},
+                        "vault_id": {"S": self.VAULT_ID},
+                        "dek_version": {"N": "2"},
+                    }
+                ]
+            },
+            {
+                "TableName": "test-items-table",
+                "IndexName": "GSI2",
+                "KeyConditionExpression": "GSI2PK = :pk",
+                "FilterExpression": "dek_version > :kek",
+                "ExpressionAttributeValues": {":pk": f"VAULT#{self.VAULT_ID}", ":kek": 1},
+                "Limit": 100,
+                "ScanIndexForward": True,
+            },
+        )
+        # No collections query and no update_item are stubbed.
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT_ID}/rotation",
+            json={"action": "ABANDON", "expectedState": "PAUSED"},
+        )
+
+        assert response.status_code == 409
+
+
 class TestListVaultsRoute:
     """Test suite for ListVaultsRoute through FastAPI test client."""
 

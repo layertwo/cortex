@@ -280,7 +280,7 @@ structure UpdateVaultRotationInput {
     vaultId: String
 
     @required
-    @documentation("ACQUIRE to lock; PAUSE to record an interrupted sweep; RELEASE to commit")
+    @documentation("ACQUIRE to lock; PAUSE to record an interrupted sweep; RELEASE to commit; ABANDON to discard a staged salt and verifier when no row has been re-keyed")
     action: RotationAction
 
     @required

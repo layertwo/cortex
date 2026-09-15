@@ -850,7 +850,7 @@ logger.info("File uploaded", extra={
 - `PUT /v1/vaults/{id}` - Store the encrypted vault name and/or the password verifier (at least one required; 409 while deleting)
 - `DELETE /v1/vaults/{id}` - Delete a vault and everything in it. Resumable: each call does a bounded batch and returns deletionState; call until it is DELETED, and treat a later 404 as done. 409 while a rotation lock is live
 - `GET /v1/vaults/{id}/salt` - Retrieve vault salt for key derivation
-- `POST /v1/vaults/{id}/rotation` - KEK rotation lock: ACQUIRE (stages newVaultSalt + newVerifier), PAUSE (records an interrupted sweep), RELEASE (commits kekVersion, newEncryptedName, and promotes the staged pair)
+- `POST /v1/vaults/{id}/rotation` - KEK rotation lock: ACQUIRE (stages newVaultSalt + newVerifier), PAUSE (records an interrupted sweep), RELEASE (commits kekVersion, newEncryptedName, and promotes the staged pair), ABANDON (discards a staged pair when expectedState is PAUSED and nothing has been re-keyed)
 
 **Item Operations (Generic for all types: MEDIA, NOTE, TASK, EVENT):**
 - `POST /v1/items` - Create item (NOTE, TASK, EVENT with inline content)

@@ -1359,3 +1359,109 @@ class TestVaultRotation:
         )
         with pytest.raises(ConflictError, match="already in progress"):
             self._rotate(vault_service, "RELEASE", "IN_PROGRESS", kek_version=2)
+
+
+ABANDON_UPDATE = (
+    "SET rotation_state = :idle, updated_at = :now"
+    " REMOVE pending_vault_salt, pending_verifier, rotation_locked_at"
+)
+ABANDON_CONDITION = (
+    "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
+    "rotation_state = :paused OR "
+    "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
+)
+ABANDON_VALUES = {
+    ":idle": "IDLE",
+    ":now": NOW,
+    ":paused": "PAUSED",
+    ":in_progress": "IN_PROGRESS",
+    ":stale": STALE,
+}
+
+
+class TestAbandonRotation:
+    """VaultService.abandon_rotation (spec 4): discard a staged pair, no re-keyed rows."""
+
+    @pytest.fixture
+    def frozen_time(self, monkeypatch):
+        monkeypatch.setattr(time, "time", lambda: NOW)
+        return NOW
+
+    def test_abandon_from_paused_pins_expressions(
+        self, vault_service, dynamodb_stubber, frozen_time
+    ):
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"rotation_state": {"S": "IDLE"}}},
+            {
+                "TableName": "test-vaults-table",
+                "Key": ROTATION_KEY,
+                "UpdateExpression": ABANDON_UPDATE,
+                "ConditionExpression": ABANDON_CONDITION + " AND rotation_locked_at = :seen",
+                "ExpressionAttributeValues": {**ABANDON_VALUES, ":seen": 1699999000},
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+        result = vault_service.abandon_rotation(
+            user_id="u1", vault_id="v1", expected_locked_at=1699999000
+        )
+        assert result == {
+            "rotation_state": "IDLE",
+            "rotation_locked_at": None,
+            "pending_vault_salt": None,
+            "pending_verifier": None,
+        }
+
+    def test_abandon_conflict_when_locked_at_changed(
+        self, vault_service, dynamodb_stubber, frozen_time
+    ):
+        """A rotation_locked_at that moved since get_vault (interleaved ACQUIRE/PAUSE) 409s."""
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        dynamodb_stubber.add_response(
+            "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
+        )
+        with pytest.raises(ConflictError, match="already in progress"):
+            vault_service.abandon_rotation(
+                user_id="u1", vault_id="v1", expected_locked_at=1699999000
+            )
+
+    def test_abandon_live_lock_raises_conflict(self, vault_service, dynamodb_stubber, frozen_time):
+        """A live (non-stale) IN_PROGRESS lock fails the condition: a real conflict, not a 404."""
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        dynamodb_stubber.add_response(
+            "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
+        )
+        with pytest.raises(ConflictError, match="already in progress"):
+            vault_service.abandon_rotation(user_id="u1", vault_id="v1")
+
+    def test_abandon_deleting_vault_is_conflict(self, vault_service, dynamodb_stubber, frozen_time):
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": "USER#u1"},
+                    "SK": {"S": "VAULT#v1"},
+                    "deletion_state": {"S": "DELETING"},
+                }
+            },
+            {"TableName": "test-vaults-table", "Key": ROTATION_KEY},
+        )
+        with pytest.raises(ConflictError, match="Vault is being deleted"):
+            vault_service.abandon_rotation(user_id="u1", vault_id="v1")
+
+    def test_abandon_missing_vault_is_not_found(self, vault_service, dynamodb_stubber, frozen_time):
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        dynamodb_stubber.add_response(
+            "get_item", {}, {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
+        )
+        with pytest.raises(NotFoundError, match="Vault not found"):
+            vault_service.abandon_rotation(user_id="u1", vault_id="v1")

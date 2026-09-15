@@ -56,6 +56,7 @@ enum RotationAction {
     ACQUIRE = "ACQUIRE"
     RELEASE = "RELEASE"
     PAUSE = "PAUSE"
+    ABANDON = "ABANDON"
 }
 
 /// Vault deletion progress
