@@ -134,6 +134,14 @@ export class ServiceStack extends Stack {
                     enabled: true,
                     abortIncompleteMultipartUploadAfter: Duration.days(7),
                 },
+                {
+                    // Deletes only write a delete marker on this versioned bucket; expire the old
+                    // versions and the marker so item and vault deletes actually free storage.
+                    id: "expire-noncurrent-versions",
+                    enabled: true,
+                    noncurrentVersionExpiration: Duration.days(7),
+                    expiredObjectDeleteMarker: true,
+                },
             ],
             transferAcceleration: true,
             enforceSSL: true,

@@ -340,6 +340,60 @@ class TestDynamoDBRepository:
             exclusive_start_key=start_key,
         )
 
+    def test_scan_passes_filter_and_limit(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should scan with FilterExpression and Limit and surface LastEvaluatedKey."""
+        dynamodb_stubber.add_response(
+            "scan",
+            {
+                "Items": [{"PK": {"S": "SHARE#s1"}, "SK": {"S": "METADATA"}}],
+                "LastEvaluatedKey": {"PK": {"S": "SHARE#s1"}, "SK": {"S": "METADATA"}},
+            },
+            {
+                "TableName": dynamodb_table_name,
+                "FilterExpression": "vault_id = :v AND user_id = :u",
+                "ExpressionAttributeValues": {":v": "vault-1", ":u": "user-1"},
+                "Limit": 100,
+            },
+        )
+
+        result = dynamodb_repository.scan(
+            filter_expression="vault_id = :v AND user_id = :u",
+            expression_attribute_values={":v": "vault-1", ":u": "user-1"},
+            limit=100,
+        )
+
+        assert result["Items"] == [{"PK": "SHARE#s1", "SK": "METADATA"}]
+        assert result["LastEvaluatedKey"] == {"PK": "SHARE#s1", "SK": "METADATA"}
+
+    def test_scan_passes_exclusive_start_key(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """Should forward ExclusiveStartKey and return no LastEvaluatedKey on the last page."""
+        start_key = {"PK": "SHARE#s1", "SK": "METADATA"}
+        dynamodb_stubber.add_response(
+            "scan",
+            {"Items": []},
+            {
+                "TableName": dynamodb_table_name,
+                "FilterExpression": "vault_id = :v AND user_id = :u",
+                "ExpressionAttributeValues": {":v": "vault-1", ":u": "user-1"},
+                "Limit": 100,
+                "ExclusiveStartKey": start_key,
+            },
+        )
+
+        result = dynamodb_repository.scan(
+            filter_expression="vault_id = :v AND user_id = :u",
+            expression_attribute_values={":v": "vault-1", ":u": "user-1"},
+            limit=100,
+            exclusive_start_key=start_key,
+        )
+
+        assert result["Items"] == []
+        assert result["LastEvaluatedKey"] is None
+
     def test_transact_write_items(self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name):
         """Should write multiple items atomically."""
         items = [

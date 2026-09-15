@@ -6,7 +6,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **B2C Single-User Architecture:**
 - Individual users, not organizations or teams
-- One user may have several named vaults. The frontend keeps a device-local registry (`localStorage.cortex_vaults`, active pointer `cortex_vault_id`) until the backend gains ListVaults and vault-name persistence (see docs/plans/2026-09-11-cortex-brand-experience-design.md, Follow-ups).
+- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name and password verifier) and a resumable `DeleteVault` (see docs/plans/2026-09-14-multivault-backend-design.md). The frontend's device-local registry (`localStorage.cortex_vaults`, active pointer `cortex_vault_id`) becomes a per-account cache of `ListVaults` in the frontend adoption PR.
 - No multi-tenancy or team collaboration features
 - Simplified security model focused on personal data protection
 - Usage tracking and quotas per individual user
@@ -264,7 +264,7 @@ cortex/
 **Naming conventions:**
 - TypeScript: kebab-case files, PascalCase classes (`storage-stack.ts` → `StorageStack`)
 - Python: snake_case for files and functions
-- Smithy: kebab-case with namespace `com.cortex.{service}`
+- Smithy: kebab-case files, single namespace `layertwo.cortex` (`smithy/models/**`)
 - React components: PascalCase files and components (`Button.tsx` → `Button`)
 
 ## Code Organization Patterns
@@ -476,7 +476,8 @@ Environments: `dev`, `staging`, `prod`
 
 **Vaults Table:**
 - PK: `USER#{userId}`, SK: `VAULT#{vaultId}`
-- Stores: vaultId, userId, vaultSalt (binary, non-secret), timestamps
+- Stores: vaultId, userId, vaultSalt (binary, non-secret), createdAt, updatedAt, kekVersion (absent means 1), rotationState (IDLE/IN_PROGRESS/PAUSED), rotationLockedAt, verifier (binary, returned to the owner only), encryptedName (binary), pendingVaultSalt and pendingVerifier (binary, staged together by rotation ACQUIRE, promoted and removed by RELEASE, kept by PAUSE), deletionState (`DELETING` while a DeleteVault sweep is in progress; the row is removed when the sweep finishes), deletionStartedAt
+- A row with deletionState reads as not found everywhere (`vault_exists`, `get_vault`, ListVaults filter `attribute_not_exists(deletion_state)`); UpdateVault and rotation return 409 for it
 
 **Items Table (single-table design within Data Table):**
 - PK: `ITEM#{itemId}`, SK: `METADATA` (constant)
@@ -488,12 +489,12 @@ Environments: `dev`, `staging`, `prod`
 
 **Collections Table:**
 - PK: `VAULT#{vaultId}`, SK: `COLLECTION#{collectionId}`
-- Stores: collectionId, vaultId, userId, encryptedMetadata (binary), timestamps, itemCount
+- Stores: collectionId, vaultId, userId, encryptedMetadata (binary), metadataVersion (KEK version whose metadata key encrypts encryptedMetadata; absent means 1; UpdateCollection with expectedMetadataVersion is a conditional write, 409 on mismatch), timestamps, itemCount
 
-**File-Collection Association Table:**
-- PK: `COLLECTION#{collectionId}`, SK: `FILE#{fileId}`
-- GSI1: PK: `FILE#{fileId}`, SK: `COLLECTION#{collectionId}` (reverse lookup)
-- Stores: collectionId, fileId, vaultId, userId, addedAt
+**Item-Collection Association Table:**
+- PK: `COLLECTION#{collectionId}`, SK: `ITEM#{itemId}`
+- GSI1: PK: `ITEM#{itemId}`, SK: `COLLECTION#{collectionId}` (reverse lookup)
+- Stores: collectionId, itemId, itemType, vaultId, userId, addedAt
 
 **Shares Table:**
 - PK: `SHARE#{shareId}`, SK: `METADATA`
@@ -843,8 +844,13 @@ logger.info("File uploaded", extra={
 - `POST /v1/auth/login` - Authenticate with account password
 - `POST /v1/auth/refresh` - Refresh credentials
 - `POST /v1/auth/recover` - Account recovery with recovery code
-- `POST /v1/vaults` - Create vault with vault salt
+- `POST /v1/vaults` - Create vault (empty body; the server generates the 16-byte vault salt)
+- `GET /v1/vaults` - List the caller's vaults (pageSize 10-100, nextToken; vaults being deleted are omitted, so a page may be empty while nextToken is present)
+- `GET /v1/vaults/{id}` - Get vault: vaultSalt, kekVersion, rotationState, verifier, encryptedName, and pendingVaultSalt/pendingVerifier while a rotation is open
+- `PUT /v1/vaults/{id}` - Store the encrypted vault name and/or the password verifier (at least one required; 409 while deleting)
+- `DELETE /v1/vaults/{id}` - Delete a vault and everything in it. Resumable: each call does a bounded batch and returns deletionState; call until it is DELETED, and treat a later 404 as done. 409 while a rotation lock is live
 - `GET /v1/vaults/{id}/salt` - Retrieve vault salt for key derivation
+- `POST /v1/vaults/{id}/rotation` - KEK rotation lock: ACQUIRE (stages newVaultSalt + newVerifier), PAUSE (records an interrupted sweep), RELEASE (commits kekVersion, newEncryptedName, and promotes the staged pair)
 
 **Item Operations (Generic for all types: MEDIA, NOTE, TASK, EVENT):**
 - `POST /v1/items` - Create item (NOTE, TASK, EVENT with inline content)

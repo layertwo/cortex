@@ -19,6 +19,9 @@ class TestAppConfiguration:
         paths = app.openapi()["paths"]
         assert "/v1/items" in paths
         assert "/v1/vaults" in paths
+        assert {"get", "post"} <= set(paths["/v1/vaults"])
+        assert "/v1/vaults/{vault_id}" in paths
+        assert {"get", "put", "delete"} <= set(paths["/v1/vaults/{vault_id}"])
 
     def test_creates_fastapi_app(self, mock_service_provider):
         assert mock_service_provider.app is not None

@@ -343,6 +343,52 @@ class DynamoDBRepository:
             )
             raise
 
+    def scan(
+        self,
+        filter_expression: str,
+        expression_attribute_values: Dict[str, Any],
+        limit: int,
+        exclusive_start_key: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Scan the table with a filter.
+
+        DynamoDB applies Limit before FilterExpression, so a page may have no Items
+        yet still carry a LastEvaluatedKey; callers must page until it is absent.
+
+        Args:
+            filter_expression: Filter applied to each scanned row
+            expression_attribute_values: Values for the filter expression
+            limit: Rows evaluated per page
+            exclusive_start_key: Optional pagination token
+
+        Returns:
+            Scan response with Items and optional LastEvaluatedKey
+        """
+        try:
+            kwargs: Dict[str, Any] = {
+                "FilterExpression": filter_expression,
+                "ExpressionAttributeValues": expression_attribute_values,
+                "Limit": limit,
+            }
+
+            if exclusive_start_key:
+                kwargs["ExclusiveStartKey"] = exclusive_start_key
+
+            response = self.table.scan(**kwargs)
+
+            return {
+                "Items": response.get("Items", []),
+                "LastEvaluatedKey": response.get("LastEvaluatedKey"),
+            }
+
+        except ClientError as e:
+            logger.error(
+                "DynamoDB scan failed",
+                **{"error": str(e), "table": self.table_name},
+            )
+            raise
+
 
 class S3Repository:
     """Repository class for S3 operations and presigned URL generation."""

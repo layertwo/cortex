@@ -47,6 +47,17 @@ from src.shared.util import _encode_binary
 logger = get_logger("item_routes")
 
 
+def _require_vault(
+    vault_service: VaultService, user_id: str, vault_id: str, operation: str
+) -> None:
+    """404 unless the caller owns vault_id (deny by default; a DELETING vault reads as absent)."""
+    if not vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
+        logger.warning(
+            "Vault access denied - user does not own vault", vault_id=vault_id, operation=operation
+        )
+        raise NotFoundError("Vault not found")
+
+
 def _item_fields(item: dict) -> dict:
     """Map a DynamoDB item dict to the generated item-model kwargs.
 
@@ -78,9 +89,10 @@ def _item_fields(item: dict) -> dict:
 class CreateItemRoute(BaseRoute):
     """Handle item creation (NOTE, TASK, EVENT with inline content)."""
 
-    def __init__(self, item_service: ItemService):
+    def __init__(self, item_service: ItemService, vault_service: VaultService):
         """Initialize the create item route."""
         self.item_service = item_service
+        self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
         @app.post("/v1/items", response_model=CreateItemResponseContent)
@@ -92,10 +104,13 @@ class CreateItemRoute(BaseRoute):
             Create item (NOTE, TASK, EVENT with inline content).
 
             Stores encrypted content directly in DynamoDB for non-media items.
-            All sensitive data is encrypted client-side.
+            All sensitive data is encrypted client-side. Vault ownership is
+            verified first (deny by default); a DELETING vault reads as absent.
 
             Requirements: 1.4, 2.1, 2.2, 24.1, 24.2, 24.3
             """
+            _require_vault(self.vault_service, user_id, request.vault_id, "create_item")
+
             response = self.item_service.create_item(user_id, request)
 
             logger.info(
@@ -110,9 +125,10 @@ class CreateItemRoute(BaseRoute):
 class InitiateUploadRoute(BaseRoute):
     """Handle upload initialization for MEDIA items."""
 
-    def __init__(self, item_service: ItemService):
+    def __init__(self, item_service: ItemService, vault_service: VaultService):
         """Initialize the upload initiation route."""
         self.item_service = item_service
+        self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
         @app.post("/v1/items/upload/init", response_model=InitiateItemUploadResponseContent)
@@ -126,9 +142,13 @@ class InitiateUploadRoute(BaseRoute):
             For files >100MB, initiates multipart upload server-side; for smaller
             files, generates a simple presigned PUT URL. The presigned PUT is
             signed with application/octet-stream (the real MIME is encrypted).
+            Vault ownership is verified first (deny by default); a DELETING
+            vault reads as absent, so no row or object lands under it.
 
             Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2
             """
+            _require_vault(self.vault_service, user_id, request.vault_id, "initiate_upload")
+
             response = self.item_service.initiate_upload(user_id, request)
 
             logger.info(
@@ -254,13 +274,7 @@ class ListItemsRoute(BaseRoute):
                 raise BadRequestError("item_type must be MEDIA, NOTE, TASK, or EVENT")
 
             # Verify vault ownership BEFORE listing items - deny by default
-            if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
-                logger.warning(
-                    "Vault access denied - user does not own vault",
-                    vault_id=vault_id,
-                    operation="list_items",
-                )
-                raise NotFoundError("Vault not found")
+            _require_vault(self.vault_service, user_id, vault_id, "list_items")
 
             items, next_page_token = self.item_service.list_items(
                 user_id=user_id,

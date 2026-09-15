@@ -14,9 +14,11 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
+from boto3.dynamodb.types import Binary
 from botocore.exceptions import ClientError
 from botocore.stub import ANY
 
+from src.api.services.item_service import tag_index_key
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
     CreateItemRequestContent,
@@ -24,6 +26,23 @@ from src.shared.generated.models import (
     UpdateItemRequestContent,
 )
 from src.shared.models import ItemType
+
+
+class TestTagIndexKey:
+    """Tests for the module-level tag_index_key helper (shared with the deletion sweep)."""
+
+    def test_key_shape_from_bytes(self):
+        """PK carries the base64 tag under the vault; SK is the item."""
+        assert tag_index_key("vault-123", "item-1", b"encrypted-tag") == {
+            "PK": "VAULT#vault-123#TAG#ZW5jcnlwdGVkLXRhZw==",
+            "SK": "ITEM#item-1",
+        }
+
+    def test_accepts_dynamodb_binary(self):
+        """A Binary read back from a row derives the same key as the raw bytes."""
+        assert tag_index_key("vault-123", "item-1", Binary(b"encrypted-tag")) == tag_index_key(
+            "vault-123", "item-1", b"encrypted-tag"
+        )
 
 
 class TestCreateItem:
@@ -39,7 +58,29 @@ class TestCreateItem:
             encrypted_tags=[base64.b64encode(b"tag1"), base64.b64encode(b"tag2")],
         )
 
-        dynamodb_stubber.add_response("transact_write_items", {}, {"TransactItems": ANY})
+        # Tag rows are keyed by tag_index_key; item_id is generated inside the call.
+        tag_row = {"SK": ANY, "item_id": ANY, "vault_id": "vault-123", "user_id": "user-123"}
+        dynamodb_stubber.add_response(
+            "transact_write_items",
+            {},
+            {
+                "TransactItems": [
+                    {"Put": {"TableName": "test-items-table", "Item": ANY}},
+                    {
+                        "Put": {
+                            "TableName": "test-items-table",
+                            "Item": {"PK": "VAULT#vault-123#TAG#dGFnMQ==", **tag_row},
+                        }
+                    },
+                    {
+                        "Put": {
+                            "TableName": "test-items-table",
+                            "Item": {"PK": "VAULT#vault-123#TAG#dGFnMg==", **tag_row},
+                        }
+                    },
+                ]
+            },
+        )
 
         response = item_service.create_item("user-123", request)
 
@@ -893,11 +934,19 @@ class TestDeleteItem:
             "delete_item", {}, {"TableName": "test-items-table", "Key": ANY}
         )
 
-        # Stub batch_write_item for tag row cleanup
+        # Stub batch_write_item for tag row cleanup: one DeleteRequest per tag,
+        # keyed exactly as tag_index_key derives them, in tag order.
         dynamodb_stubber.add_response(
             "batch_write_item",
             {"UnprocessedItems": {}},
-            {"RequestItems": ANY},
+            {
+                "RequestItems": {
+                    "test-items-table": [
+                        {"DeleteRequest": {"Key": tag_index_key("vault-123", "item-1", tag1)}},
+                        {"DeleteRequest": {"Key": tag_index_key("vault-123", "item-1", tag2)}},
+                    ]
+                }
+            },
         )
 
         item_service.delete_item("user-123", "item-1")
@@ -1177,7 +1226,25 @@ class TestUpdateItem:
             },
         )
         dynamodb_stubber.add_response(
-            "batch_write_item", {"UnprocessedItems": {}}, {"RequestItems": ANY}
+            "batch_write_item",
+            {"UnprocessedItems": {}},
+            {
+                "RequestItems": {
+                    "test-items-table": [
+                        {"DeleteRequest": {"Key": tag_index_key("vault-123", "item-1", b"tagA")}},
+                        {
+                            "PutRequest": {
+                                "Item": {
+                                    **tag_index_key("vault-123", "item-1", b"tagC"),
+                                    "item_id": "item-1",
+                                    "vault_id": "vault-123",
+                                    "user_id": "user-123",
+                                }
+                            }
+                        },
+                    ]
+                }
+            },
         )
 
         request = UpdateItemRequestContent(

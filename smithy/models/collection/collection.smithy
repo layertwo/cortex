@@ -76,6 +76,7 @@ operation UpdateCollection {
         AuthorizationError
         ResourceNotFoundError
         ValidationError
+        ConflictError
         InternalError
     ]
 }
@@ -133,6 +134,9 @@ structure CreateCollectionInput {
     @required
     @documentation("Encrypted collection metadata (name, description, etc.)")
     encryptedMetadata: Blob
+
+    @documentation("KEK version whose metadata key encrypted encryptedMetadata (default 1)")
+    metadataVersion: Integer
 }
 
 structure CreateCollectionOutput {
@@ -195,6 +199,9 @@ structure GetCollectionOutput {
     @documentation("Encrypted collection metadata")
     encryptedMetadata: Blob
 
+    @documentation("KEK version whose metadata key encrypts encryptedMetadata; absent means 1")
+    metadataVersion: Integer
+
     @required
     @documentation("Number of items in collection")
     itemCount: Integer
@@ -225,6 +232,12 @@ structure UpdateCollectionInput {
     @required
     @documentation("Updated encrypted collection metadata")
     encryptedMetadata: Blob
+
+    @documentation("KEK version whose metadata key encrypts the new encryptedMetadata")
+    metadataVersion: Integer
+
+    @documentation("Optimistic lock: the stored metadataVersion (1 if absent) must equal this")
+    expectedMetadataVersion: Integer
 }
 
 structure UpdateCollectionOutput {

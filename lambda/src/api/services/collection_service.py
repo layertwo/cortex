@@ -9,17 +9,13 @@ Requirements: 12.1, 12.2, 12.3, 12.5, 13.1, 13.2, 13.3, 13.4, 13.5
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import boto3
+from botocore.exceptions import ClientError
 
-from src.shared.exceptions import BadRequestError, NotFoundError
-from src.shared.generated.models import (
-    AddItemToCollectionResponseContent,
-    CreateCollectionRequestContent,
-    CreateCollectionResponseContent,
-    UpdateCollectionResponseContent,
-)
+from src.shared.exceptions import BadRequestError, ConflictError, NotFoundError
+from src.shared.generated.models import AddItemToCollectionResponseContent
 from src.shared.logger import get_logger
 from src.shared.repository import (
     DynamoDBRepository,
@@ -51,56 +47,51 @@ class CollectionService:
         self.items_repo = DynamoDBRepository(session, items_table_name)
 
     def create_collection(
-        self, user_id: str, request: CreateCollectionRequestContent
-    ) -> CreateCollectionResponseContent:
+        self,
+        user_id: str,
+        vault_id: str,
+        encrypted_metadata: bytes,
+        metadata_version: Optional[int] = None,
+    ) -> dict:
         """
         Create collection with encrypted metadata.
 
-        This method stores encrypted collection metadata in DynamoDB.
-        All sensitive data is encrypted client-side.
+        Stores the opaque, client-encrypted metadata plus the KEK version whose
+        metadata key encrypted it, so a rotation sweep can tell rotated rows apart.
 
         Args:
             user_id: Authenticated user ID
-            request: Create collection request
+            vault_id: Vault the collection belongs to
+            encrypted_metadata: Client-encrypted collection metadata
+            metadata_version: KEK version that encrypted the metadata (defaults to 1)
 
         Returns:
-            Create collection response with collection ID
-
-        Raises:
-            StorageError: If DynamoDB operation fails
+            Dict with collection_id and created_at
         """
-        # Generate unique collection ID
         collection_id = str(uuid.uuid4())
-        now = datetime.now(tz=timezone.utc)
+        now = int(datetime.now(tz=timezone.utc).timestamp())
 
-        # Build DynamoDB item
         item = {
-            "PK": f"VAULT#{request.vault_id}",
+            "PK": f"VAULT#{vault_id}",
             "SK": f"COLLECTION#{collection_id}",
             "collection_id": collection_id,
-            "vault_id": request.vault_id,
+            "vault_id": vault_id,
             "user_id": user_id,
-            "encrypted_metadata": request.encrypted_metadata,
-            "created_at": int(now.timestamp()),
-            "updated_at": int(now.timestamp()),
+            "encrypted_metadata": encrypted_metadata,
+            "created_at": now,
+            "updated_at": now,
             "item_count": 0,
+            "metadata_version": 1 if metadata_version is None else metadata_version,
         }
 
-        # Store collection in DynamoDB
         self.collections_repo.put_item(item)
 
         logger.info(
             "Created collection",
-            **{
-                "vault_id": request.vault_id,
-                "collection_id": collection_id,
-            },
+            **{"vault_id": vault_id, "collection_id": collection_id},
         )
 
-        return CreateCollectionResponseContent(
-            collection_id=collection_id,
-            created_at=int(now.timestamp()),
-        )
+        return {"collection_id": collection_id, "created_at": now}
 
     def list_collections(
         self,
@@ -217,73 +208,90 @@ class CollectionService:
         return collection
 
     def update_collection(
-        self, user_id: str, vault_id: str, collection_id: str, encrypted_metadata: bytes
-    ) -> UpdateCollectionResponseContent:
+        self,
+        user_id: str,
+        vault_id: str,
+        collection_id: str,
+        encrypted_metadata: bytes,
+        metadata_version: int | None = None,
+        expected_metadata_version: int | None = None,
+    ) -> dict:
         """
-        Update collection metadata.
-
-        This method updates encrypted collection metadata in DynamoDB.
-        All sensitive data is encrypted client-side.
+        Update collection metadata, optionally guarded by the stored metadata version.
 
         Args:
             user_id: Authenticated user ID
             vault_id: Vault ID (collections are partitioned by vault)
             collection_id: Collection ID to update
             encrypted_metadata: New encrypted collection metadata
+            metadata_version: KEK version that encrypted the new metadata; None leaves it as is
+            expected_metadata_version: Optimistic lock on the stored version (1 when absent)
 
         Returns:
-            Update collection response
+            Dict with collection_id and updated_at
 
         Raises:
-            ResourceNotFoundError: If collection not found
-            AuthorizationError: If user doesn't own the collection
-            StorageError: If DynamoDB operation fails
+            NotFoundError: If the collection is missing or not owned by the user
+            ConflictError: If expected_metadata_version does not match the stored row
         """
-        # Verify collection exists and user owns it
         collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
             raise NotFoundError("Collection not found")
 
-        # Update collection metadata
-        now = datetime.now(tz=timezone.utc)
+        now = int(datetime.now(tz=timezone.utc).timestamp())
         key = {
             "PK": f"VAULT#{vault_id}",
             "SK": f"COLLECTION#{collection_id}",
         }
 
         update_expression = "SET encrypted_metadata = :metadata, updated_at = :updated_at"
-        expression_attribute_values = {
+        expression_attribute_values: dict[str, Any] = {
             ":metadata": encrypted_metadata,
-            ":updated_at": int(now.timestamp()),
+            ":updated_at": now,
         }
+        if metadata_version is not None:
+            update_expression += ", metadata_version = :mv"
+            expression_attribute_values[":mv"] = metadata_version
 
-        self.collections_repo.update_item(
-            key=key,
-            update_expression=update_expression,
-            expression_attribute_values=expression_attribute_values,
-        )
+        if expected_metadata_version is None:
+            self.collections_repo.update_item(
+                key=key,
+                update_expression=update_expression,
+                expression_attribute_values=expression_attribute_values,
+            )
+        else:
+            # Rows written before this attribute existed read as version 1.
+            condition_expression = "metadata_version = :expected"
+            if expected_metadata_version == 1:
+                condition_expression = (
+                    "attribute_not_exists(metadata_version) OR metadata_version = :expected"
+                )
+            expression_attribute_values[":expected"] = expected_metadata_version
+            try:
+                self.collections_repo.update_item_conditional(
+                    key=key,
+                    update_expression=update_expression,
+                    condition_expression=condition_expression,
+                    expression_attribute_values=expression_attribute_values,
+                )
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                    raise ConflictError(
+                        "Collection was modified on another device; reload and retry"
+                    ) from e
+                raise
 
         logger.info(
             "Updated collection",
-            **{
-                "vault_id": vault_id,
-                "collection_id": collection_id,
-            },
+            **{"vault_id": vault_id, "collection_id": collection_id},
         )
 
-        return UpdateCollectionResponseContent(
-            collection_id=collection_id,
-            updated_at=int(now.timestamp()),
-        )
+        return {"collection_id": collection_id, "updated_at": now}
 
     def delete_collection(self, user_id: str, vault_id: str, collection_id: str) -> None:
         """
-        Delete collection while preserving items.
-
-        This method deletes the collection metadata and all item-collection
-        associations, but preserves the items themselves. Uses paginated
-        queries to prevent Lambda timeouts on large collections.
+        Delete a collection the user owns, preserving its items.
 
         Args:
             user_id: Authenticated user ID
@@ -291,84 +299,80 @@ class CollectionService:
             collection_id: Collection ID to delete
 
         Raises:
-            ResourceNotFoundError: If collection not found
-            AuthorizationError: If user doesn't own the collection
-            StorageError: If deletion operation fails
+            NotFoundError: If the collection is missing or not owned by the user
         """
-        # Verify collection exists and user owns it
         collection = self.get_collection(user_id, vault_id, collection_id)
 
         if not collection:
             raise NotFoundError("Collection not found")
 
-        # Delete all item-collection associations using paginated batch operations
-        # Process in batches to prevent Lambda timeouts on large collections
-        batch_size = 25  # DynamoDB batch_write_item limit
+        self.purge_collection(vault_id, collection_id)
+
+    def purge_collection(
+        self,
+        vault_id: str,
+        collection_id: str,
+        budget_spent: Callable[[], bool] | None = None,
+    ) -> bool:
+        """
+        Remove a collection's membership rows, then the collection row. No ownership check.
+
+        Paginated 25-row batch deletes keep one call bounded. When budget_spent
+        is given, it is checked after each membership page's batch delete; a
+        spent budget stops before the collection row is removed, so the next
+        call resumes (already-deleted membership rows stay deleted). The vault
+        deletion sweep calls this directly after its own ownership check.
+
+        Args:
+            vault_id: Vault ID
+            collection_id: Collection ID to purge
+            budget_spent: Optional zero-arg predicate checked between membership pages
+
+        Returns:
+            True once the collection row itself is deleted; False when the
+            budget was spent first and the collection row was left in place.
+        """
         total_deleted = 0
         exclusive_start_key = None
 
         while True:
-            # Query associations for this collection with pagination
-            key_condition_expression = "PK = :pk"
-            expression_attribute_values = {
-                ":pk": f"COLLECTION#{collection_id}",
-            }
+            result = self.collections_repo.query(
+                key_condition_expression="PK = :pk",
+                expression_attribute_values={":pk": f"COLLECTION#{collection_id}"},
+                limit=100,  # Process 100 items per query iteration
+                exclusive_start_key=exclusive_start_key,
+            )
 
-            query_params: dict[str, Any] = {
-                "key_condition_expression": key_condition_expression,
-                "expression_attribute_values": expression_attribute_values,
-                "limit": 100,  # Process 100 items per query iteration
-            }
+            with self.collections_repo.table.batch_writer() as writer:
+                for association in result["Items"]:
+                    writer.delete_item(Key={"PK": association["PK"], "SK": association["SK"]})
+                    total_deleted += 1
 
-            if exclusive_start_key:
-                query_params["exclusive_start_key"] = exclusive_start_key
-
-            result = self.collections_repo.query(**query_params)
-            associations = result["Items"]
-
-            # Delete associations in batches
-            for i in range(0, len(associations), batch_size):
-                batch = associations[i : i + batch_size]
-
-                with self.collections_repo.table.batch_writer() as writer:
-                    for association in batch:
-                        writer.delete_item(
-                            Key={
-                                "PK": association["PK"],
-                                "SK": association["SK"],
-                            }
-                        )
-                        total_deleted += 1
-
-            # Check if there are more items to process
-            if not result.get("LastEvaluatedKey"):
+            exclusive_start_key = result.get("LastEvaluatedKey")
+            if not exclusive_start_key:
                 break
-
-            exclusive_start_key = result["LastEvaluatedKey"]
+            if budget_spent is not None and budget_spent():
+                logger.info(
+                    "Collection purge paused for budget",
+                    **{"collection_id": collection_id, "count": total_deleted},
+                )
+                return False
 
         logger.info(
             "Deleted item-collection associations",
-            **{
-                "collection_id": collection_id,
-                "count": total_deleted,
-            },
+            **{"collection_id": collection_id, "count": total_deleted},
         )
 
-        # Delete collection metadata
-        collection_key = {
-            "PK": f"VAULT#{vault_id}",
-            "SK": f"COLLECTION#{collection_id}",
-        }
-
-        self.collections_repo.delete_item(collection_key)
+        self.collections_repo.delete_item(
+            {"PK": f"VAULT#{vault_id}", "SK": f"COLLECTION#{collection_id}"}
+        )
 
         logger.info(
             "Deleted collection",
-            **{
-                "vault_id": vault_id,
-                "collection_id": collection_id,
-            },
+            **{"vault_id": vault_id, "collection_id": collection_id},
         )
+
+        return True
 
     def add_item_to_collection(
         self, user_id: str, vault_id: str, collection_id: str, item_id: str

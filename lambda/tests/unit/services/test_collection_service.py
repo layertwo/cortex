@@ -4,50 +4,78 @@ Unit tests for collection service layer.
 Tests verify collection CRUD operations and item-collection associations.
 """
 
-import base64
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 from botocore.stub import ANY
 
 from src.api.services.collection_service import CollectionService
-from src.shared.exceptions import NotFoundError
-from src.shared.generated.models import (
-    CreateCollectionRequestContent,
-)
+from src.shared.exceptions import ConflictError, NotFoundError
+from tests.fixtures.vault_deletion import collection_row
+
+UPDATE_EXPR = "SET encrypted_metadata = :metadata, updated_at = :updated_at"
+VERSIONED_UPDATE_EXPR = UPDATE_EXPR + ", metadata_version = :mv"
 
 
 class TestCreateCollection:
     """Test suite for create_collection."""
 
-    def test_create_collection_success(
+    def _expected_item(self, vault_id: str, user_id: str, metadata_version: int) -> dict:
+        return {
+            "PK": f"VAULT#{vault_id}",
+            "SK": ANY,
+            "collection_id": ANY,
+            "vault_id": vault_id,
+            "user_id": user_id,
+            "encrypted_metadata": b"encrypted-metadata",
+            "created_at": ANY,
+            "updated_at": ANY,
+            "item_count": 0,
+            "metadata_version": metadata_version,
+        }
+
+    def test_create_collection_defaults_metadata_version_to_1(
         self, collection_service, dynamodb_stubber, collections_table_name
     ):
-        """Test successful collection creation."""
+        """A new row is stamped metadata_version 1 when the caller supplies none."""
         user_id = "user-123"
         vault_id = "vault-456"
-        encrypted_metadata = b"encrypted-metadata"
 
-        request = CreateCollectionRequestContent(
-            vault_id=vault_id,
-            encrypted_metadata=base64.b64encode(encrypted_metadata),
-        )
-
-        # Stub DynamoDB put_item
         dynamodb_stubber.add_response(
             "put_item",
             {},
             {
                 "TableName": collections_table_name,
-                "Item": ANY,
+                "Item": self._expected_item(vault_id, user_id, metadata_version=1),
             },
         )
 
-        response = collection_service.create_collection(user_id, request)
+        result = collection_service.create_collection(user_id, vault_id, b"encrypted-metadata")
 
-        assert response.collection_id is not None
-        assert isinstance(response.created_at, (int, float))
+        assert result["collection_id"]
+        assert isinstance(result["created_at"], int)
+
+    def test_create_collection_stamps_supplied_metadata_version(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """The supplied metadata_version is written verbatim."""
+        user_id = "user-123"
+        vault_id = "vault-456"
+
+        dynamodb_stubber.add_response(
+            "put_item",
+            {},
+            {
+                "TableName": collections_table_name,
+                "Item": self._expected_item(vault_id, user_id, metadata_version=3),
+            },
+        )
+
+        result = collection_service.create_collection(
+            user_id, vault_id, b"encrypted-metadata", metadata_version=3
+        )
+
+        assert result["collection_id"]
 
 
 class TestListCollections:
@@ -198,65 +226,175 @@ class TestGetCollection:
 class TestUpdateCollection:
     """Test suite for update_collection."""
 
+    user_id = "user-123"
+    vault_id = "vault-456"
+    collection_id = "col-789"
+    key = {"PK": f"VAULT#{vault_id}", "SK": f"COLLECTION#{collection_id}"}
+
+    def _stub_owned_row(self, dynamodb_stubber, collections_table_name):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": collection_row(self.collection_id, self.vault_id, self.user_id)},
+            {"TableName": collections_table_name, "Key": self.key},
+        )
+
+    def _update_params(self, collections_table_name, update_expression, values, condition=None):
+        params = {
+            "TableName": collections_table_name,
+            "Key": self.key,
+            "UpdateExpression": update_expression,
+            "ExpressionAttributeValues": values,
+            "ReturnValues": "ALL_NEW",
+        }
+        if condition is not None:
+            params["ConditionExpression"] = condition
+        return params
+
     def test_update_collection_success(
         self, collection_service, dynamodb_stubber, collections_table_name
     ):
-        """Test successful collection update."""
-        user_id = "user-123"
-        vault_id = "vault-456"
-        collection_id = "col-789"
-        new_metadata = b"new-metadata"
-
-        # Stub get_item for verification
-        dynamodb_stubber.add_response(
-            "get_item",
-            {
-                "Item": {
-                    "PK": {"S": f"VAULT#{vault_id}"},
-                    "SK": {"S": f"COLLECTION#{collection_id}"},
-                    "collection_id": {"S": collection_id},
-                    "vault_id": {"S": vault_id},
-                    "user_id": {"S": user_id},
-                    "encrypted_metadata": {"B": b"old-metadata"},
-                    "created_at": {"N": "1234567890"},
-                    "updated_at": {"N": "1234567890"},
-                    "item_count": {"N": "3"},
-                }
-            },
-            {
-                "TableName": collections_table_name,
-                "Key": ANY,
-            },
-        )
-
-        # Stub update_item
+        """Without version arguments the write is unconditional and leaves metadata_version alone."""
+        self._stub_owned_row(dynamodb_stubber, collections_table_name)
         dynamodb_stubber.add_response(
             "update_item",
-            {
-                "Attributes": {
-                    "collection_id": {"S": collection_id},
-                    "encrypted_metadata": {"B": new_metadata},
-                    "updated_at": {"N": str(int(datetime.now(tz=timezone.utc).timestamp()))},
-                }
-            },
-            {
-                "TableName": collections_table_name,
-                "Key": ANY,
-                "UpdateExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "ReturnValues": "ALL_NEW",
-            },
+            {"Attributes": {"collection_id": {"S": self.collection_id}}},
+            self._update_params(
+                collections_table_name,
+                UPDATE_EXPR,
+                {":metadata": b"new-metadata", ":updated_at": ANY},
+            ),
         )
 
-        response = collection_service.update_collection(
-            user_id,
-            vault_id=vault_id,
-            collection_id=collection_id,
-            encrypted_metadata=new_metadata,
+        result = collection_service.update_collection(
+            self.user_id,
+            vault_id=self.vault_id,
+            collection_id=self.collection_id,
+            encrypted_metadata=b"new-metadata",
         )
 
-        assert response.collection_id == collection_id
-        assert isinstance(response.updated_at, (int, float))
+        assert result["collection_id"] == self.collection_id
+        assert isinstance(result["updated_at"], int)
+
+    def test_update_collection_not_found(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """A missing row is a 404 before any write."""
+        dynamodb_stubber.add_response(
+            "get_item", {}, {"TableName": collections_table_name, "Key": self.key}
+        )
+
+        with pytest.raises(NotFoundError, match="Collection not found"):
+            collection_service.update_collection(
+                self.user_id,
+                vault_id=self.vault_id,
+                collection_id=self.collection_id,
+                encrypted_metadata=b"new-metadata",
+            )
+
+    def test_update_collection_writes_metadata_version_unconditionally(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """metadata_version alone adds the SET clause but no condition."""
+        self._stub_owned_row(dynamodb_stubber, collections_table_name)
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"collection_id": {"S": self.collection_id}}},
+            self._update_params(
+                collections_table_name,
+                VERSIONED_UPDATE_EXPR,
+                {":metadata": b"new-metadata", ":updated_at": ANY, ":mv": 2},
+            ),
+        )
+
+        result = collection_service.update_collection(
+            self.user_id,
+            vault_id=self.vault_id,
+            collection_id=self.collection_id,
+            encrypted_metadata=b"new-metadata",
+            metadata_version=2,
+        )
+        assert result["collection_id"] == self.collection_id
+
+    def test_update_collection_expected_version_1_accepts_legacy_row(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """expected 1 must also match rows written before metadata_version existed."""
+        self._stub_owned_row(dynamodb_stubber, collections_table_name)
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"collection_id": {"S": self.collection_id}}},
+            self._update_params(
+                collections_table_name,
+                VERSIONED_UPDATE_EXPR,
+                {":metadata": b"new-metadata", ":updated_at": ANY, ":mv": 2, ":expected": 1},
+                condition="attribute_not_exists(metadata_version) OR metadata_version = :expected",
+            ),
+        )
+
+        result = collection_service.update_collection(
+            self.user_id,
+            vault_id=self.vault_id,
+            collection_id=self.collection_id,
+            encrypted_metadata=b"new-metadata",
+            metadata_version=2,
+            expected_metadata_version=1,
+        )
+        assert result["collection_id"] == self.collection_id
+
+    def test_update_collection_expected_version_above_1_pins_equality(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """expected > 1 requires the attribute to exist and match."""
+        self._stub_owned_row(dynamodb_stubber, collections_table_name)
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"collection_id": {"S": self.collection_id}}},
+            self._update_params(
+                collections_table_name,
+                VERSIONED_UPDATE_EXPR,
+                {":metadata": b"new-metadata", ":updated_at": ANY, ":mv": 3, ":expected": 2},
+                condition="metadata_version = :expected",
+            ),
+        )
+
+        result = collection_service.update_collection(
+            self.user_id,
+            vault_id=self.vault_id,
+            collection_id=self.collection_id,
+            encrypted_metadata=b"new-metadata",
+            metadata_version=3,
+            expected_metadata_version=2,
+        )
+        assert result["collection_id"] == self.collection_id
+
+    def test_update_collection_version_mismatch_raises_conflict(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """A failed condition is a 409 with the contract message."""
+        self._stub_owned_row(dynamodb_stubber, collections_table_name)
+        dynamodb_stubber.add_client_error(
+            "update_item",
+            service_error_code="ConditionalCheckFailedException",
+            service_message="The conditional request failed",
+            expected_params=self._update_params(
+                collections_table_name,
+                VERSIONED_UPDATE_EXPR,
+                {":metadata": b"new-metadata", ":updated_at": ANY, ":mv": 3, ":expected": 2},
+                condition="metadata_version = :expected",
+            ),
+        )
+
+        with pytest.raises(
+            ConflictError, match="Collection was modified on another device; reload and retry"
+        ):
+            collection_service.update_collection(
+                self.user_id,
+                vault_id=self.vault_id,
+                collection_id=self.collection_id,
+                encrypted_metadata=b"new-metadata",
+                metadata_version=3,
+                expected_metadata_version=2,
+            )
 
 
 class TestDeleteCollection:
@@ -538,6 +676,166 @@ class TestDeleteCollection:
         )
 
         collection_service.delete_collection(user_id, vault_id, collection_id)
+
+
+class TestPurgeCollection:
+    """Test suite for purge_collection (no ownership check; shared with the vault sweep)."""
+
+    def test_purge_collection_pages_associations_then_deletes_row(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """150 membership rows: two query pages, six batch flushes, then the collection row."""
+        vault_id = "vault-456"
+        collection_id = "col-789"
+
+        def rows(start: int, stop: int) -> list[dict]:
+            return [
+                {
+                    "PK": {"S": f"COLLECTION#{collection_id}"},
+                    "SK": {"S": f"ITEM#item-{i}"},
+                    "collection_id": {"S": collection_id},
+                    "item_id": {"S": f"item-{i}"},
+                    "vault_id": {"S": vault_id},
+                    "user_id": {"S": "user-123"},
+                    "added_at": {"N": "1234567890"},
+                }
+                for i in range(start, stop)
+            ]
+
+        query_params = {
+            "TableName": collections_table_name,
+            "KeyConditionExpression": "PK = :pk",
+            "ExpressionAttributeValues": {":pk": f"COLLECTION#{collection_id}"},
+            "Limit": 100,
+            "ScanIndexForward": True,
+        }
+        batch_params = {"RequestItems": {collections_table_name: ANY}}
+
+        # Page 1: 100 rows -> 4 flushes of 25
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": rows(0, 100),
+                "Count": 100,
+                "LastEvaluatedKey": {
+                    "PK": {"S": f"COLLECTION#{collection_id}"},
+                    "SK": {"S": "ITEM#item-99"},
+                },
+            },
+            query_params,
+        )
+        for _ in range(4):
+            dynamodb_stubber.add_response(
+                "batch_write_item", {"UnprocessedItems": {}}, batch_params
+            )
+
+        # Page 2: 50 rows -> 2 flushes, no LastEvaluatedKey
+        dynamodb_stubber.add_response(
+            "query",
+            {"Items": rows(100, 150), "Count": 50},
+            {
+                **query_params,
+                "ExclusiveStartKey": {"PK": f"COLLECTION#{collection_id}", "SK": "ITEM#item-99"},
+            },
+        )
+        for _ in range(2):
+            dynamodb_stubber.add_response(
+                "batch_write_item", {"UnprocessedItems": {}}, batch_params
+            )
+
+        # Finally the collection row itself
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": collections_table_name,
+                "Key": {"PK": f"VAULT#{vault_id}", "SK": f"COLLECTION#{collection_id}"},
+            },
+        )
+
+        assert collection_service.purge_collection(vault_id, collection_id) is True
+
+    def test_purge_collection_stops_when_budget_is_spent_after_a_page(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """A predicate that trips after page 1 stops before the collection row delete."""
+        vault_id = "vault-456"
+        collection_id = "col-789"
+
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {
+                        "PK": {"S": f"COLLECTION#{collection_id}"},
+                        "SK": {"S": "ITEM#item-0"},
+                        "collection_id": {"S": collection_id},
+                        "item_id": {"S": "item-0"},
+                        "vault_id": {"S": vault_id},
+                        "user_id": {"S": "user-123"},
+                        "added_at": {"N": "1234567890"},
+                    }
+                ],
+                "Count": 1,
+                "LastEvaluatedKey": {
+                    "PK": {"S": f"COLLECTION#{collection_id}"},
+                    "SK": {"S": "ITEM#item-0"},
+                },
+            },
+            {
+                "TableName": collections_table_name,
+                "KeyConditionExpression": "PK = :pk",
+                "ExpressionAttributeValues": {":pk": f"COLLECTION#{collection_id}"},
+                "Limit": 100,
+                "ScanIndexForward": True,
+            },
+        )
+        dynamodb_stubber.add_response(
+            "batch_write_item",
+            {"UnprocessedItems": {}},
+            {"RequestItems": {collections_table_name: ANY}},
+        )
+        # No second query and no delete_item are stubbed: an unstubbed call
+        # (either one) would fail the test.
+
+        result = collection_service.purge_collection(
+            vault_id, collection_id, budget_spent=lambda: True
+        )
+
+        assert result is False
+
+    def test_purge_collection_predicate_never_tripping_returns_true(
+        self, collection_service, dynamodb_stubber, collections_table_name
+    ):
+        """A predicate that never trips behaves exactly like passing none at all."""
+        vault_id = "vault-456"
+        collection_id = "col-789"
+
+        dynamodb_stubber.add_response(
+            "query",
+            {"Items": [], "Count": 0},
+            {
+                "TableName": collections_table_name,
+                "KeyConditionExpression": "PK = :pk",
+                "ExpressionAttributeValues": {":pk": f"COLLECTION#{collection_id}"},
+                "Limit": 100,
+                "ScanIndexForward": True,
+            },
+        )
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": collections_table_name,
+                "Key": {"PK": f"VAULT#{vault_id}", "SK": f"COLLECTION#{collection_id}"},
+            },
+        )
+
+        result = collection_service.purge_collection(
+            vault_id, collection_id, budget_spent=lambda: False
+        )
+
+        assert result is True
 
 
 class TestAddItemToCollection:

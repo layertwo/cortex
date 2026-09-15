@@ -23,11 +23,24 @@ import pytest
 from botocore.stub import ANY
 
 from src.shared.generated.models import (
-    CreateCollectionRequestContent,
     CreateItemRequestContent,
     InitiateItemUploadRequestContent,
 )
 from src.shared.models import ItemType
+from tests.fixtures.vault_deletion import (
+    ITEMS_TABLE,
+    item_key,
+    media_row,
+    note_row,
+    s3_key_for,
+    stub_batch_delete,
+    stub_empty_tail,
+    stub_items_page,
+    stub_mark,
+    stub_row_delete,
+    stub_s3_delete,
+    tag_key,
+)
 
 SRC_DIR = Path(__file__).resolve().parents[2] / "src"
 
@@ -230,16 +243,10 @@ class TestRuntimeLogCapture:
         self, collection_service, dynamodb_stubber, capsys
     ):
         """create_collection logs vault_id + collection_id, never user_id."""
-        import base64
-
-        request = CreateCollectionRequestContent(
-            vault_id="vault-789",
-            encrypted_metadata=base64.b64encode(b"opaque"),
-        )
         dynamodb_stubber.add_response(
             "put_item", {}, {"TableName": self.COLLECTIONS_TABLE, "Item": ANY}
         )
-        collection_service.create_collection("user-abc-123", request)
+        collection_service.create_collection("user-abc-123", "vault-789", b"opaque")
 
         entries = self._capture_log_entries(capsys)
         self._assert_no_banned_fields(entries, "create_collection")
@@ -278,3 +285,33 @@ class TestRuntimeLogCapture:
 
         entries = self._capture_log_entries(capsys)
         self._assert_no_banned_fields(entries, "create_share")
+
+    def test_vault_deletion_service_delete_vault_log_has_no_banned_fields(
+        self, vault_deletion_service, dynamodb_stubber, s3_stubber, capsys
+    ):
+        """delete_vault logs vault_id, deletion_state and counts, never user_id or s3_key."""
+        user_id = "user-abc-123"
+        vault_id = "vault-delete-me"
+        stub_mark(dynamodb_stubber, user_id, vault_id)
+        stub_items_page(
+            dynamodb_stubber,
+            vault_id,
+            [
+                media_row("m1", vault_id, user_id, tags=(b"t",)),
+                note_row("n2", "vault-other", user_id),
+            ],
+        )
+        stub_s3_delete(s3_stubber, s3_key_for(vault_id, "m1"))
+        stub_batch_delete(
+            dynamodb_stubber, ITEMS_TABLE, [item_key("m1"), tag_key(vault_id, "m1", b"t")]
+        )
+        stub_empty_tail(dynamodb_stubber, user_id, vault_id)
+        stub_row_delete(dynamodb_stubber, user_id, vault_id)
+
+        vault_deletion_service.delete_vault(user_id, vault_id)
+
+        entries = self._capture_log_entries(capsys)
+        # Non-vacuity: the sweep's own lines (finished + skipped-row warning) were captured.
+        assert any(entry.get("deletion_state") == "DELETED" for entry in entries)
+        assert any(entry.get("skipped") == 1 for entry in entries)
+        self._assert_no_banned_fields(entries, "delete_vault")

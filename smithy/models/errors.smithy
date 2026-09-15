@@ -89,4 +89,7 @@ structure ShareRevokedError {
 structure ConflictError {
     @required
     message: String
+
+    @documentation("Error code for client handling")
+    code: String = "CONFLICT"
 }
