@@ -7,7 +7,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
-import { useSession } from '../auth/SessionContext';
+import { CANCELLED_ERROR, useSession } from '../auth/SessionContext';
 import { identifyVaultForPhrase, normalizePhrase, PHRASE_ERROR } from '../vault/recovery';
 import { parseRecoveryKit } from '../vault/recoveryKit';
 import AuthFrame from './common/AuthFrame';
@@ -15,6 +15,7 @@ import PhraseInput, { PHRASE_LENGTH } from './common/PhraseInput';
 import PasswordStrength from './common/PasswordStrength';
 import RecoveryPhrase from './common/RecoveryPhrase';
 import SubmitButton from './common/SubmitButton';
+import { useStagedMismatch } from './StagedRotationDialog';
 
 const STEPS = ['Phrase', 'New password', 'New phrase'] as const;
 type Stage = 'phrase' | 'password' | 'sweep' | 'done';
@@ -24,6 +25,7 @@ type Stage = 'phrase' | 'password' | 'sweep' | 'done';
 // from local verifiers) or on a new one (a recovery kit supplies the vault ID).
 export default function RecoverVault() {
   const { recoverVault, vaults } = useSession();
+  const { onStagedMismatch, stagedDialog } = useStagedMismatch();
   const navigate = useNavigate();
   const [stage, setStage] = useState<Stage>('phrase');
   const [words, setWords] = useState<string[]>(Array(PHRASE_LENGTH).fill(''));
@@ -78,10 +80,24 @@ export default function RecoverVault() {
     }
     setStage('sweep');
     try {
-      setResult(await recoverVault(phrase, password, (done, total) => setProgress({ done, total }), target ?? undefined));
+      setResult(
+        await recoverVault(
+          phrase,
+          password,
+          (done, total) => setProgress({ done, total }),
+          target ?? undefined,
+          onStagedMismatch,
+        ),
+      );
       setStage('done');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Recovery failed';
+      // Cancel in the staged-change dialog: the session paused the rotation and there is
+      // nothing to report, so return to the password step quietly.
+      if (message === CANCELLED_ERROR) {
+        setStage('password');
+        return;
+      }
       setError(message);
       setStage(message === PHRASE_ERROR ? 'phrase' : 'password');
     }
@@ -119,6 +135,7 @@ export default function RecoverVault() {
         <Text as="p" type="supporting">
           If this is interrupted you can resume it the next time you unlock. Nothing is lost part-way.
         </Text>
+        {stagedDialog}
       </AuthFrame>
     );
   }

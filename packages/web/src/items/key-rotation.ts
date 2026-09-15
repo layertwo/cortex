@@ -8,9 +8,13 @@ import type { CollectionData } from '@cortex/client';
 import { decryptMetadata, encryptMetadata } from './metadata';
 import { decryptCollectionName, encryptCollectionName } from './collectionMetadata';
 import { updateItemRotation } from '../api/items';
-import { updateCollection } from '../api/collections';
+import { updateCollection, listAllCollections } from '../api/collections';
 
 const ITEM_RETRIES = 3;
+
+// Exact server text of the collection 409 (global constraints §10): a concurrent write (e.g. a
+// rename on another device) moved the row out from under the version this sweep last saw.
+const COLLECTION_CONFLICT_MESSAGE = 'Collection was modified on another device; reload and retry';
 
 export async function reWrapDek(
   wrappedDek: Uint8Array,
@@ -94,17 +98,49 @@ export async function rotateItems({
   }
 }
 
-// Re-encrypt all collection names (metadata) under the new metadataKey.
+// Re-encrypt every collection name still under the old metadata key. `metadataVersion` is the
+// KEK version whose key encrypts the row (absent means 1); rows already at `targetVersion` were
+// re-keyed by an earlier attempt and are skipped, so the sweep resumes where it stopped. Each
+// update is retried like items (a 409 from a concurrent rename included), then rethrown so the
+// caller can pause the rotation.
 export async function rotateCollections(
   collections: CollectionData[],
   oldMetadataKey: Uint8Array,
   newMetadataKey: Uint8Array,
   vaultId: string,
+  targetVersion: number,
 ): Promise<void> {
   for (const col of collections) {
-    if (!col.encryptedMetadata) continue;
-    const name = decryptCollectionName(col.encryptedMetadata, oldMetadataKey);
-    const newMeta = await encryptCollectionName(name, newMetadataKey);
-    await updateCollection(col.collectionId!, vaultId, newMeta);
+    let current = col.metadataVersion ?? 1;
+    let encryptedMetadata = col.encryptedMetadata;
+    if (!encryptedMetadata || current >= targetVersion) continue;
+
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= ITEM_RETRIES; attempt++) {
+      try {
+        const name = decryptCollectionName(encryptedMetadata, oldMetadataKey);
+        const newMeta = await encryptCollectionName(name, newMetadataKey);
+        await updateCollection(col.collectionId!, vaultId, newMeta, targetVersion, current);
+        lastErr = undefined;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (err instanceof Error && err.message === COLLECTION_CONFLICT_MESSAGE) {
+          // The expected version we sent is now stale (e.g. a concurrent rename bumped it) and
+          // would 409 forever if resent as-is: re-read the row and retry with what it holds now.
+          const fresh = (await listAllCollections(vaultId)).find((c) => c.collectionId === col.collectionId);
+          if (!fresh || !fresh.encryptedMetadata || (fresh.metadataVersion ?? 1) >= targetVersion) {
+            lastErr = undefined;
+            break;
+          }
+          current = fresh.metadataVersion ?? 1;
+          encryptedMetadata = fresh.encryptedMetadata;
+        }
+        if (attempt < ITEM_RETRIES) {
+          await new Promise((r) => setTimeout(r, 200 * 2 ** attempt));
+        }
+      }
+    }
+    if (lastErr) throw lastErr;
   }
 }

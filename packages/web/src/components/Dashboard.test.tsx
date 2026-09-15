@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import type { VaultEntry } from '../vault/registry';
 
 const { mockSession } = vi.hoisted(() => ({
   mockSession: {
     logout: vi.fn(),
     rotationInterrupted: false,
-    activeVault: { vaultId: 'v1', name: 'Personal' },
+    activeVault: { vaultId: 'v1', name: 'Personal' } as VaultEntry,
     vaultVersion: 0,
     vaults: [{ vaultId: 'v1', name: 'Personal' }],
     switchVault: vi.fn(),
@@ -24,6 +25,7 @@ import Dashboard from './Dashboard';
 
 beforeEach(() => {
   mockSession.rotationInterrupted = false;
+  mockSession.activeVault = { vaultId: 'v1', name: 'Personal' };
 });
 
 describe('Dashboard', () => {
@@ -50,6 +52,18 @@ describe('Dashboard', () => {
     mockSession.rotationInterrupted = true;
     render(<Dashboard />);
     expect(screen.getByText(/password change was interrupted/i)).toBeInTheDocument();
+  });
+
+  it('shows the resume banner when the server says the active vault is mid-rotation', () => {
+    mockSession.activeVault = { vaultId: 'v1', name: 'Personal', rotationState: 'PAUSED' };
+    render(<Dashboard />);
+    expect(screen.getByText(/password change was interrupted/i)).toBeInTheDocument();
+  });
+
+  it('shows no banner for an IDLE vault when nothing was interrupted locally', () => {
+    mockSession.activeVault = { vaultId: 'v1', name: 'Personal', rotationState: 'IDLE' };
+    render(<Dashboard />);
+    expect(screen.queryByText(/password change was interrupted/i)).toBeNull();
   });
 
   it('shows the active vault name beside the title', () => {

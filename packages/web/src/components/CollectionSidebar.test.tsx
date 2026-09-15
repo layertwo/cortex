@@ -3,8 +3,8 @@ import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const h = vi.hoisted(() => ({
-  getVaultKeys: vi.fn(async () => ({ vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32) })),
-  listCollections: vi.fn(async () => [
+  getVaultKeys: vi.fn(async () => ({ vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32), kekVersion: 1 })),
+  listAllCollections: vi.fn(async () => [
     { collectionId: 'c1', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 2, createdAt: new Date(0), updatedAt: new Date(0) },
   ]),
   createCollection: vi.fn(async () => 'c2'),
@@ -14,7 +14,7 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock('../vault/keyAccess', () => ({ getVaultKeys: h.getVaultKeys }));
 vi.mock('../api/collections', () => ({
-  listCollections: h.listCollections,
+  listAllCollections: h.listAllCollections,
   createCollection: h.createCollection,
   deleteCollection: h.deleteCollection,
   updateCollection: vi.fn(),
@@ -47,7 +47,7 @@ describe('CollectionSidebar', () => {
     await userEvent.click(await screen.findByRole('button', { name: /new collection/i }));
     await userEvent.type(screen.getByLabelText(/collection name/i), 'Receipts');
     await userEvent.click(screen.getByRole('button', { name: /^create$/i }));
-    await waitFor(() => expect(h.createCollection).toHaveBeenCalledWith('v1', expect.any(Uint8Array)));
+    await waitFor(() => expect(h.createCollection).toHaveBeenCalledWith('v1', expect.any(Uint8Array), 1));
     expect(h.encryptCollectionName).toHaveBeenCalledWith('Receipts', expect.any(Uint8Array));
   });
 
@@ -84,17 +84,17 @@ describe('CollectionSidebar', () => {
     const { rerender } = render(
       <CollectionSidebar selected={{ kind: 'all' }} onSelect={vi.fn()} refreshKey={0} onLoaded={() => {}} />,
     );
-    await waitFor(() => expect(h.listCollections).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.listAllCollections).toHaveBeenCalledTimes(1));
 
     // Same refreshKey, brand-new inline callback instance — must NOT trigger a refetch.
     rerender(
       <CollectionSidebar selected={{ kind: 'all' }} onSelect={vi.fn()} refreshKey={0} onLoaded={() => {}} />,
     );
     await act(async () => {});
-    expect(h.listCollections).toHaveBeenCalledTimes(1);
+    expect(h.listAllCollections).toHaveBeenCalledTimes(1);
 
     // A real refreshKey bump still refetches, and the CURRENT callback is the one invoked.
-    h.listCollections.mockResolvedValueOnce([
+    h.listAllCollections.mockResolvedValueOnce([
       { collectionId: 'c1', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 2, createdAt: new Date(0), updatedAt: new Date(0) },
       { collectionId: 'c2', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
     ]);
@@ -102,7 +102,7 @@ describe('CollectionSidebar', () => {
     rerender(
       <CollectionSidebar selected={{ kind: 'all' }} onSelect={vi.fn()} refreshKey={1} onLoaded={onLoaded} />,
     );
-    await waitFor(() => expect(h.listCollections).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(h.listAllCollections).toHaveBeenCalledTimes(2));
     expect(onLoaded).toHaveBeenCalledWith(2);
   });
 });

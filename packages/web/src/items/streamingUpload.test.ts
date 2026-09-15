@@ -13,7 +13,7 @@ vi.mock('../api/items', () => api);
 
 import { uploadFileStreaming } from './streamingUpload';
 
-const keys = { vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32) };
+const keys = { vaultId: 'v1', kek: new Uint8Array(32), metadataKey: new Uint8Array(32), kekVersion: 1 };
 
 // File-like stub: deterministic slice/arrayBuffer, no jsdom Blob dependency.
 function fakeFile(bytes: Uint8Array, name = 'f.bin', type = 'image/png'): File {
@@ -58,6 +58,12 @@ describe('uploadFileStreaming', () => {
     expect(api.putToS3.mock.calls[0][1].length).toBe(32); // header(13)+ct(3+16)
     expect(api.completeUpload).toHaveBeenCalledWith('i1'); // no opts
     expect(onProgress).toHaveBeenLastCalledWith(1);
+  });
+
+  it("sends the vault KEK version as the new item's dekVersion", async () => {
+    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'https://s3/put' });
+    await uploadFileStreaming(fakeFile(new Uint8Array([1, 2, 3])), { ...keys, kekVersion: 3 });
+    expect(api.initiateUpload).toHaveBeenCalledWith(expect.objectContaining({ dekVersion: 3 }));
   });
 
   it('dual-writes tags: plaintext in metadata, HMAC in encryptedTags', async () => {

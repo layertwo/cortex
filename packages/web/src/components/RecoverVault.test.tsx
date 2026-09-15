@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import type { SessionValue } from '../auth/SessionContext';
 
 const WORDS = Array.from({ length: 24 }, (_, i) => `w${i + 1}`);
 const NEW_PHRASE = Array.from({ length: 24 }, (_, i) => `n${i + 1}`).join(' ');
@@ -9,12 +10,15 @@ const NEW_PHRASE = Array.from({ length: 24 }, (_, i) => `n${i + 1}`).join(' ');
 const { session, navigate, recovery } = vi.hoisted(() => ({
   session: {
     vaults: [{ vaultId: 'v1', name: 'Personal' }],
-    recoverVault: vi.fn(async () => ({ phrase: '', vaultId: 'v1', name: 'Personal' })),
+    recoverVault: vi.fn<SessionValue['recoverVault']>(async () => ({ phrase: '', vaultId: 'v1', name: 'Personal' })),
   },
   navigate: vi.fn(),
   recovery: { identifyVaultForPhrase: vi.fn((): string | null => 'v1') },
 }));
-vi.mock('../auth/SessionContext', () => ({ useSession: () => session }));
+vi.mock('../auth/SessionContext', () => ({
+  useSession: () => session,
+  CANCELLED_ERROR: 'Password change cancelled',
+}));
 vi.mock('react-router-dom', async (o) => ({
   ...(await o<typeof import('react-router-dom')>()),
   useNavigate: () => navigate,
@@ -51,7 +55,13 @@ describe('RecoverVault', () => {
     await userEvent.type(screen.getByLabelText(/confirm/i), 'NewVaultPw123!');
     await userEvent.click(screen.getByRole('button', { name: /set password and re-secure/i }));
     await waitFor(() =>
-      expect(session.recoverVault).toHaveBeenCalledWith(WORDS.join(' '), 'NewVaultPw123!', expect.any(Function), { vaultId: 'v1', name: undefined }),
+      expect(session.recoverVault).toHaveBeenCalledWith(
+        WORDS.join(' '),
+        'NewVaultPw123!',
+        expect.any(Function),
+        { vaultId: 'v1', name: undefined },
+        expect.any(Function),
+      ),
     );
     expect(await screen.findByText('n1 n2 n3')).toBeInTheDocument();
     const open = screen.getByRole('button', { name: /open my vault/i });
@@ -134,5 +144,50 @@ describe('RecoverVault', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/already in progress/i);
     expect(screen.getByLabelText(/^new vault password/i)).toBeInTheDocument();
     expect(screen.queryByLabelText('Word 1')).toBeNull();
+  });
+
+  it('offers to start over when the staged password change does not match the new password', async () => {
+    session.recoverVault.mockImplementationOnce(async (_phrase, _password, _onProgress, _target, onStagedMismatch) => {
+      const decision = await onStagedMismatch!(1_757_900_000);
+      if (decision.action !== 'startOver') throw new Error(`unexpected ${decision.action}`);
+      return { phrase: NEW_PHRASE, vaultId: 'v1', name: 'Personal' };
+    });
+    render(
+      <MemoryRouter>
+        <RecoverVault />
+      </MemoryRouter>,
+    );
+    pastePhrase();
+    await userEvent.click(screen.getByRole('button', { name: /continue · 24 of 24/i }));
+    await userEvent.type(screen.getByLabelText(/^new vault password/i), 'NewVaultPw123!');
+    await userEvent.type(screen.getByLabelText(/confirm/i), 'NewVaultPw123!');
+    await userEvent.click(screen.getByRole('button', { name: /set password and re-secure/i }));
+    const staged = await screen.findByRole('dialog', { name: 'Finish an earlier password change?' });
+    await userEvent.click(within(staged).getByRole('button', { name: 'Start over' }));
+    expect(await screen.findByText('n1 n2 n3')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Finish an earlier password change?' })).toBeNull();
+  });
+
+  it('Cancel in the staged dialog returns to the password step without an error', async () => {
+    session.recoverVault.mockImplementationOnce(async (_phrase, _password, _onProgress, _target, onStagedMismatch) => {
+      const decision = await onStagedMismatch!(null);
+      if (decision.action === 'cancel') throw new Error('Password change cancelled');
+      throw new Error(`unexpected ${decision.action}`);
+    });
+    render(
+      <MemoryRouter>
+        <RecoverVault />
+      </MemoryRouter>,
+    );
+    pastePhrase();
+    await userEvent.click(screen.getByRole('button', { name: /continue · 24 of 24/i }));
+    await userEvent.type(screen.getByLabelText(/^new vault password/i), 'NewVaultPw123!');
+    await userEvent.type(screen.getByLabelText(/confirm/i), 'NewVaultPw123!');
+    await userEvent.click(screen.getByRole('button', { name: /set password and re-secure/i }));
+    const staged = await screen.findByRole('dialog', { name: 'Finish an earlier password change?' });
+    await userEvent.click(within(staged).getByRole('button', { name: 'Cancel' }));
+    expect(await screen.findByLabelText(/^new vault password/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: 'Finish an earlier password change?' })).toBeNull();
   });
 });

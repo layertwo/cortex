@@ -8,8 +8,9 @@ import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
-import { useSession } from '../auth/SessionContext';
+import { CANCELLED_ERROR, useSession } from '../auth/SessionContext';
 import RecoveryPhrase from './common/RecoveryPhrase';
+import { useStagedMismatch } from './StagedRotationDialog';
 
 type Stage = 'form' | 'sweep' | 'phrase';
 
@@ -31,6 +32,7 @@ const normalize = (s: string) => s.trim().split(/\s+/).join(' ');
 // close. Once the sweep starts the dialog cannot be dismissed (purpose="required").
 export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) {
   const { changeVaultPassword } = useSession();
+  const { onStagedMismatch, stagedDialog } = useStagedMismatch();
   const [stage, setStage] = useState<Stage>('form');
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -49,13 +51,23 @@ export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) 
     }
     setStage('sweep');
     try {
-      const newPhrase = await changeVaultPassword(current, next, (done, total) =>
-        setProgress({ done, total }),
+      const newPhrase = await changeVaultPassword(
+        current,
+        next,
+        (done, total) => setProgress({ done, total }),
+        onStagedMismatch,
       );
       setPhrase(newPhrase);
       setStage('phrase');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Password change failed');
+      const message = err instanceof Error ? err.message : 'Password change failed';
+      // Cancel in the staged-change dialog: the session paused the rotation and there is
+      // nothing to report, so just close.
+      if (message === CANCELLED_ERROR) {
+        onDone();
+        return;
+      }
+      setError(message);
       setStage('form');
     }
   }
@@ -71,100 +83,103 @@ export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) 
   const dismissable = stage === 'form';
 
   return (
-    <Dialog
-      isOpen
-      onOpenChange={(open) => {
-        if (!open && dismissable) onDone();
-      }}
-      purpose={dismissable ? 'form' : 'required'}
-      width={480}
-    >
-      <Layout
-        height="auto"
-        header={
-          <DialogHeader title={TITLES[stage]} onOpenChange={dismissable ? () => onDone() : undefined} />
-        }
-        content={
-          <LayoutContent>
-            {stage === 'form' && (
-              <form id={FORM_ID} onSubmit={handleSubmit}>
+    <>
+      <Dialog
+        isOpen
+        onOpenChange={(open) => {
+          if (!open && dismissable) onDone();
+        }}
+        purpose={dismissable ? 'form' : 'required'}
+        width={480}
+      >
+        <Layout
+          height="auto"
+          header={
+            <DialogHeader title={TITLES[stage]} onOpenChange={dismissable ? () => onDone() : undefined} />
+          }
+          content={
+            <LayoutContent>
+              {stage === 'form' && (
+                <form id={FORM_ID} onSubmit={handleSubmit}>
+                  <VStack gap={3}>
+                    <TextInput
+                      label="Current vault password"
+                      type="password"
+                      autoComplete="current-password"
+                      hasAutoFocus
+                      value={current}
+                      onChange={setCurrent}
+                    />
+                    <TextInput
+                      label="New vault password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={next}
+                      onChange={setNext}
+                    />
+                    <TextInput
+                      label="Confirm new password"
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirm}
+                      onChange={setConfirm}
+                      status={confirm && confirm !== next ? { type: 'error' } : undefined}
+                    />
+                    {error && <Banner status="error" title={error} />}
+                  </VStack>
+                </form>
+              )}
+              {stage === 'sweep' && (
                 <VStack gap={3}>
-                  <TextInput
-                    label="Current vault password"
-                    type="password"
-                    autoComplete="current-password"
-                    hasAutoFocus
-                    value={current}
-                    onChange={setCurrent}
+                  <Text as="p">Keep this tab open — you can safely resume if interrupted.</Text>
+                  <ProgressBar
+                    label="Re-encrypting files"
+                    value={progress.done}
+                    max={Math.max(progress.total, 1)}
+                    isIndeterminate={progress.total === 0}
+                    hasValueLabel
+                    formatValueLabel={(v, m) => `${v} of ${m}`}
                   />
+                </VStack>
+              )}
+              {stage === 'phrase' && (
+                <VStack gap={3}>
+                  <Text as="p">
+                    Your old recovery phrase no longer works. Save this new one before continuing.
+                  </Text>
+                  <RecoveryPhrase phrase={phrase} />
                   <TextInput
-                    label="New vault password"
-                    type="password"
-                    autoComplete="new-password"
-                    value={next}
-                    onChange={setNext}
-                  />
-                  <TextInput
-                    label="Confirm new password"
-                    type="password"
-                    autoComplete="new-password"
-                    value={confirm}
-                    onChange={setConfirm}
-                    status={confirm && confirm !== next ? { type: 'error' } : undefined}
+                    label="Type your new recovery phrase to confirm"
+                    value={phraseInput}
+                    onChange={setPhraseInput}
                   />
                   {error && <Banner status="error" title={error} />}
                 </VStack>
-              </form>
-            )}
-            {stage === 'sweep' && (
-              <VStack gap={3}>
-                <Text as="p">Keep this tab open — you can safely resume if interrupted.</Text>
-                <ProgressBar
-                  label="Re-encrypting files"
-                  value={progress.done}
-                  max={Math.max(progress.total, 1)}
-                  isIndeterminate={progress.total === 0}
-                  hasValueLabel
-                  formatValueLabel={(v, m) => `${v} of ${m}`}
-                />
-              </VStack>
-            )}
-            {stage === 'phrase' && (
-              <VStack gap={3}>
-                <Text as="p">
-                  Your old recovery phrase no longer works. Save this new one before continuing.
-                </Text>
-                <RecoveryPhrase phrase={phrase} />
-                <TextInput
-                  label="Type your new recovery phrase to confirm"
-                  value={phraseInput}
-                  onChange={setPhraseInput}
-                />
-                {error && <Banner status="error" title={error} />}
-              </VStack>
-            )}
-          </LayoutContent>
-        }
-        footer={
-          <LayoutFooter>
-            <HStack gap={2} hAlign="end">
-              {stage === 'form' && <Button label="Cancel" variant="ghost" onClick={onDone} />}
-              {stage === 'form' && (
-                <Button
-                  label="Change password"
-                  variant="primary"
-                  type="submit"
-                  form={FORM_ID}
-                  isDisabled={!current || !next || !confirm}
-                />
               )}
-              {stage === 'phrase' && (
-                <Button label="Complete password change" variant="primary" onClick={handleComplete} />
-              )}
-            </HStack>
-          </LayoutFooter>
-        }
-      />
-    </Dialog>
+            </LayoutContent>
+          }
+          footer={
+            <LayoutFooter>
+              <HStack gap={2} hAlign="end">
+                {stage === 'form' && <Button label="Cancel" variant="ghost" onClick={onDone} />}
+                {stage === 'form' && (
+                  <Button
+                    label="Change password"
+                    variant="primary"
+                    type="submit"
+                    form={FORM_ID}
+                    isDisabled={!current || !next || !confirm}
+                  />
+                )}
+                {stage === 'phrase' && (
+                  <Button label="Complete password change" variant="primary" onClick={handleComplete} />
+                )}
+              </HStack>
+            </LayoutFooter>
+          }
+        />
+      </Dialog>
+      {stagedDialog}
+    </>
   );
 }

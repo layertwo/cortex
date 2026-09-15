@@ -23,6 +23,7 @@ function renderAt(path: string, ui: ReactNode) {
 
 beforeEach(() => {
   localStorage.clear();
+  localStorage.setItem('cortex_account', 'u1');
 });
 
 describe('guards', () => {
@@ -38,17 +39,25 @@ describe('guards', () => {
     expect(screen.getByText('protected')).toBeInTheDocument();
   });
 
-  it('RequireVault redirects locked user to /vault/setup when no vault id', () => {
+  it('RequireVault redirects locked user to /vault/setup when the account has no vaults', () => {
     state.status = 'signedInVaultLocked';
-    localStorage.removeItem('cortex_vault_id');
     renderAt('/secret', <RequireVault><div>vault-content</div></RequireVault>);
     expect(screen.getByText('setup-screen')).toBeInTheDocument();
   });
 
-  it('RequireVault redirects locked user to /vault/unlock when vault id exists', () => {
+  it('RequireVault redirects locked user to /vault/unlock when the account registry has a vault', () => {
     state.status = 'signedInVaultLocked';
-    localStorage.setItem('cortex_vault_id', 'v1');
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
     renderAt('/secret', <RequireVault><div>vault-content</div></RequireVault>);
     expect(screen.getByText('unlock-screen')).toBeInTheDocument();
+  });
+
+  it('RequireVault ignores another account\'s registry and legacy keys', () => {
+    state.status = 'signedInVaultLocked';
+    localStorage.setItem('cortex_vaults:u2', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    localStorage.setItem('cortex_vault_id', 'v1');
+    renderAt('/secret', <RequireVault><div>vault-content</div></RequireVault>);
+    expect(screen.getByText('setup-screen')).toBeInTheDocument();
   });
 });
