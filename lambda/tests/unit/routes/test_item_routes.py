@@ -9,6 +9,23 @@ from datetime import datetime, timezone
 
 from botocore.stub import ANY
 
+from tests.fixtures.vault_deletion import stub_vault_lookup, vault_row
+
+USER_ID = "test-user-id"  # the get_current_user override in conftest
+
+NOTE_BODY = {
+    "itemType": "NOTE",
+    "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
+    "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+}
+
+UPLOAD_BODY = {
+    "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+    "sizeBytes": 50 * 1024 * 1024,
+    "wrappedDek": base64.b64encode(bytes(range(97))).decode(),
+    "dekVersion": 1,
+}
+
 
 class TestCreateItemRoute:
     """Test suite for CreateItemRoute through FastAPI test client."""
@@ -17,7 +34,8 @@ class TestCreateItemRoute:
         """Test create item route handler returns expected response."""
         vault_id = "test-vault-456"
 
-        # Stub DynamoDB put_item call
+        # Vault ownership check, then the item write
+        stub_vault_lookup(dynamodb_stubber, USER_ID, vault_id, vault_row(USER_ID, vault_id))
         dynamodb_stubber.add_response(
             "put_item",
             {},
@@ -51,6 +69,33 @@ class TestCreateItemRoute:
         # createdAt is an epoch timestamp (number), not an ISO string
         assert isinstance(body["createdAt"], (int, float))
 
+    def test_create_item_returns_404_for_deleting_vault(self, client, dynamodb_stubber):
+        """A vault marked DELETING reads as absent; no item row is written."""
+        vault_id = "vault-being-deleted"
+        stub_vault_lookup(
+            dynamodb_stubber,
+            USER_ID,
+            vault_id,
+            vault_row(USER_ID, vault_id, deletion_state={"S": "DELETING"}),
+        )
+
+        response = client.post("/v1/items", json={**NOTE_BODY, "vaultId": vault_id})
+
+        assert response.status_code == 404
+        assert response.json()["error"]["message"] == "Vault not found"
+
+    def test_create_item_returns_404_for_vault_owned_by_different_user(
+        self, client, dynamodb_stubber
+    ):
+        """A vault the caller does not own misses under USER#{sub}; nothing else is called."""
+        vault_id = "vault-owned-by-other-user"
+        stub_vault_lookup(dynamodb_stubber, USER_ID, vault_id)
+
+        response = client.post("/v1/items", json={**NOTE_BODY, "vaultId": vault_id})
+
+        assert response.status_code == 404
+        assert response.json()["error"]["message"] == "Vault not found"
+
 
 class TestInitiateUploadRoute:
     """Test suite for InitiateUploadRoute through FastAPI test client."""
@@ -59,7 +104,8 @@ class TestInitiateUploadRoute:
         """Test initiate upload route handler returns expected response."""
         vault_id = "test-vault-456"
 
-        # Stub DynamoDB put_item call (creates item metadata)
+        # Vault ownership check, then the pending item write
+        stub_vault_lookup(dynamodb_stubber, USER_ID, vault_id, vault_row(USER_ID, vault_id))
         dynamodb_stubber.add_response(
             "put_item",
             {},
@@ -100,6 +146,33 @@ class TestInitiateUploadRoute:
 
         # expiresAt is an epoch timestamp (number), not an ISO string
         assert isinstance(body["expiresAt"], (int, float))
+
+    def test_initiate_upload_returns_404_for_deleting_vault(self, client, dynamodb_stubber):
+        """A vault marked DELETING reads as absent; no pending row or presigned URL is made."""
+        vault_id = "vault-being-deleted"
+        stub_vault_lookup(
+            dynamodb_stubber,
+            USER_ID,
+            vault_id,
+            vault_row(USER_ID, vault_id, deletion_state={"S": "DELETING"}),
+        )
+
+        response = client.post("/v1/items/upload/init", json={**UPLOAD_BODY, "vaultId": vault_id})
+
+        assert response.status_code == 404
+        assert response.json()["error"]["message"] == "Vault not found"
+
+    def test_initiate_upload_returns_404_for_vault_owned_by_different_user(
+        self, client, dynamodb_stubber
+    ):
+        """A vault the caller does not own misses under USER#{sub}; nothing else is called."""
+        vault_id = "vault-owned-by-other-user"
+        stub_vault_lookup(dynamodb_stubber, USER_ID, vault_id)
+
+        response = client.post("/v1/items/upload/init", json={**UPLOAD_BODY, "vaultId": vault_id})
+
+        assert response.status_code == 404
+        assert response.json()["error"]["message"] == "Vault not found"
 
 
 class TestCompleteUploadRoute:

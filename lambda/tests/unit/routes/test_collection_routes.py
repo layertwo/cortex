@@ -6,6 +6,26 @@ Tests verify that collection routes work correctly through the FastAPI test clie
 
 from botocore.stub import ANY
 
+from tests.fixtures.vault_deletion import collection_row, stub_vault_lookup, vault_row
+
+USER_ID = "test-user-id"
+VAULT_ID = "test-vault-456"
+COLLECTION_ID = "test-collection-123"
+UPDATE_EXPR = "SET encrypted_metadata = :metadata, updated_at = :updated_at, metadata_version = :mv"
+CONFLICT_MESSAGE = "Collection was modified on another device; reload and retry"
+
+
+def _stub_collection(dynamodb_stubber, collections_table_name, **extra):
+    """get_collection -> get_item on the collection row (ownership check)."""
+    dynamodb_stubber.add_response(
+        "get_item",
+        {"Item": collection_row(COLLECTION_ID, VAULT_ID, USER_ID, **extra)},
+        {
+            "TableName": collections_table_name,
+            "Key": {"PK": f"VAULT#{VAULT_ID}", "SK": f"COLLECTION#{COLLECTION_ID}"},
+        },
+    )
+
 
 class TestCreateCollectionRoute:
     """Test suite for CreateCollectionRoute through FastAPI test client."""
@@ -336,3 +356,192 @@ class TestCollectionVaultOwnership:
 
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+class TestCollectionMetadataVersion:
+    """metadataVersion is surfaced (default 1), passed through on write, and 409 on conflict."""
+
+    def test_list_collections_surfaces_metadata_version_and_defaults_to_1(
+        self, client, dynamodb_stubber, collections_table_name
+    ):
+        stub_vault_lookup(dynamodb_stubber, USER_ID, VAULT_ID, vault_row(USER_ID, VAULT_ID))
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    collection_row("col-rotated", VAULT_ID, USER_ID, metadata_version={"N": "2"}),
+                    collection_row("col-legacy", VAULT_ID, USER_ID),
+                ],
+                "Count": 2,
+            },
+            {
+                "TableName": collections_table_name,
+                "KeyConditionExpression": "PK = :pk AND begins_with(SK, :sk_prefix)",
+                "ExpressionAttributeValues": {
+                    ":pk": f"VAULT#{VAULT_ID}",
+                    ":sk_prefix": "COLLECTION#",
+                },
+                "Limit": 50,
+                "ScanIndexForward": False,
+            },
+        )
+
+        response = client.get(f"/v1/collections?vaultId={VAULT_ID}")
+
+        assert response.status_code == 200
+        collections = response.json()["collections"]
+        assert [c["collectionId"] for c in collections] == ["col-rotated", "col-legacy"]
+        assert [c["metadataVersion"] for c in collections] == [2, 1]
+
+    def test_get_collection_defaults_metadata_version_to_1(
+        self, client, dynamodb_stubber, collections_table_name
+    ):
+        stub_vault_lookup(dynamodb_stubber, USER_ID, VAULT_ID, vault_row(USER_ID, VAULT_ID))
+        _stub_collection(dynamodb_stubber, collections_table_name)
+
+        response = client.get(f"/v1/collections/{COLLECTION_ID}?vaultId={VAULT_ID}")
+
+        assert response.status_code == 200
+        assert response.json()["metadataVersion"] == 1
+
+    def test_create_collection_stamps_metadata_version(
+        self, client, dynamodb_stubber, collections_table_name
+    ):
+        stub_vault_lookup(dynamodb_stubber, USER_ID, VAULT_ID, vault_row(USER_ID, VAULT_ID))
+        dynamodb_stubber.add_response(
+            "put_item",
+            {},
+            {
+                "TableName": collections_table_name,
+                "Item": {
+                    "PK": f"VAULT#{VAULT_ID}",
+                    "SK": ANY,
+                    "collection_id": ANY,
+                    "vault_id": VAULT_ID,
+                    "user_id": USER_ID,
+                    "encrypted_metadata": b"encrypted-metadata",
+                    "created_at": ANY,
+                    "updated_at": ANY,
+                    "item_count": 0,
+                    "metadata_version": 2,
+                },
+            },
+        )
+
+        response = client.post(
+            "/v1/collections",
+            json={
+                "vaultId": VAULT_ID,
+                "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+                "metadataVersion": 2,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["collectionId"]
+
+    def test_create_collection_accepts_explicit_metadata_version_zero(
+        self, client, dynamodb_stubber, collections_table_name
+    ):
+        """metadataVersion: 0 is written as 0, not coerced to the default of 1."""
+        stub_vault_lookup(dynamodb_stubber, USER_ID, VAULT_ID, vault_row(USER_ID, VAULT_ID))
+        dynamodb_stubber.add_response(
+            "put_item",
+            {},
+            {
+                "TableName": collections_table_name,
+                "Item": {
+                    "PK": f"VAULT#{VAULT_ID}",
+                    "SK": ANY,
+                    "collection_id": ANY,
+                    "vault_id": VAULT_ID,
+                    "user_id": USER_ID,
+                    "encrypted_metadata": b"encrypted-metadata",
+                    "created_at": ANY,
+                    "updated_at": ANY,
+                    "item_count": 0,
+                    "metadata_version": 0,
+                },
+            },
+        )
+
+        response = client.post(
+            "/v1/collections",
+            json={
+                "vaultId": VAULT_ID,
+                "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
+                "metadataVersion": 0,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["collectionId"]
+
+    def test_update_collection_passes_versions_through(
+        self, client, dynamodb_stubber, collections_table_name
+    ):
+        stub_vault_lookup(dynamodb_stubber, USER_ID, VAULT_ID, vault_row(USER_ID, VAULT_ID))
+        _stub_collection(dynamodb_stubber, collections_table_name)
+        dynamodb_stubber.add_response(
+            "update_item",
+            {"Attributes": {"collection_id": {"S": COLLECTION_ID}}},
+            {
+                "TableName": collections_table_name,
+                "Key": {"PK": f"VAULT#{VAULT_ID}", "SK": f"COLLECTION#{COLLECTION_ID}"},
+                "UpdateExpression": UPDATE_EXPR,
+                "ConditionExpression": (
+                    "attribute_not_exists(metadata_version) OR metadata_version = :expected"
+                ),
+                "ExpressionAttributeValues": {
+                    ":metadata": b"new",
+                    ":updated_at": ANY,
+                    ":mv": 2,
+                    ":expected": 1,
+                },
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
+        response = client.put(
+            f"/v1/collections/{COLLECTION_ID}?vaultId={VAULT_ID}",
+            json={"encryptedMetadata": "bmV3", "metadataVersion": 2, "expectedMetadataVersion": 1},
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["collectionId"] == COLLECTION_ID
+        assert isinstance(body["updatedAt"], (int, float))
+
+    def test_update_collection_version_conflict_returns_409(
+        self, client, dynamodb_stubber, collections_table_name
+    ):
+        stub_vault_lookup(dynamodb_stubber, USER_ID, VAULT_ID, vault_row(USER_ID, VAULT_ID))
+        _stub_collection(dynamodb_stubber, collections_table_name, metadata_version={"N": "3"})
+        dynamodb_stubber.add_client_error(
+            "update_item",
+            service_error_code="ConditionalCheckFailedException",
+            service_message="The conditional request failed",
+            expected_params={
+                "TableName": collections_table_name,
+                "Key": {"PK": f"VAULT#{VAULT_ID}", "SK": f"COLLECTION#{COLLECTION_ID}"},
+                "UpdateExpression": UPDATE_EXPR,
+                "ConditionExpression": "metadata_version = :expected",
+                "ExpressionAttributeValues": {
+                    ":metadata": b"new",
+                    ":updated_at": ANY,
+                    ":mv": 3,
+                    ":expected": 2,
+                },
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
+        response = client.put(
+            f"/v1/collections/{COLLECTION_ID}?vaultId={VAULT_ID}",
+            json={"encryptedMetadata": "bmV3", "metadataVersion": 3, "expectedMetadataVersion": 2},
+        )
+
+        assert response.status_code == 409
+        error = response.json()["error"]
+        assert error["code"] == "CONFLICT"
+        assert error["message"] == CONFLICT_MESSAGE

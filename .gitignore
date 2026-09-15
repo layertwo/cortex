@@ -1,6 +1,7 @@
 # Build artifacts
 dist/
 build/
+smithy/.gradle/
 *.js
 *.d.ts
 *.js.map

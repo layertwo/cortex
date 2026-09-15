@@ -22,6 +22,11 @@ def _encode_binary(value: bytes | Binary | None) -> str | None:
     return b64encode(value).decode("utf-8")
 
 
+def to_bytes(value: bytes | Binary | None) -> bytes | None:
+    """Return bytes for a value or None; boto3 Binary implements __bytes__."""
+    return None if value is None else bytes(value)
+
+
 def _decode_binary(value: bytes | Binary) -> str:
     """
     Decode binary data to base64 string.

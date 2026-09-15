@@ -46,13 +46,17 @@ from src.api.routes.shares import CreateShareRoute, GetShareRoute, RevokeShareRo
 from src.api.routes.tags import SearchTagsRoute
 from src.api.routes.vaults import (
     CreateVaultRoute,
+    DeleteVaultRoute,
     GetVaultRoute,
     GetVaultSaltRoute,
+    ListVaultsRoute,
     UpdateVaultRotationRoute,
+    UpdateVaultRoute,
 )
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
+from src.api.services.vault_deletion_service import VaultDeletionService
 from src.api.services.vault_service import VaultService
 from src.shared.exceptions import CortexError
 from src.shared.logger import get_logger
@@ -194,6 +198,18 @@ class ServiceProvider:
         )
 
     @cached_property
+    def vault_deletion_service(self) -> VaultDeletionService:
+        """Create vault deletion service (bounded, resumable DeleteVault sweep)."""
+        return VaultDeletionService(
+            session=self.session,
+            vault_service=self.vault_service,
+            collection_service=self.collection_service,
+            items_table_name=self.items_table_name,
+            shares_table_name=self.shares_table_name,
+            s3_bucket_name=self.files_bucket_name,
+        )
+
+    @cached_property
     def app(self) -> FastAPI:
         """
         Create FastAPI app with all routes, middleware, and exception handlers.
@@ -253,11 +269,14 @@ class ServiceProvider:
         router = APIRouter()
         routes = [
             CreateVaultRoute(vault_service=self.vault_service),
+            ListVaultsRoute(vault_service=self.vault_service),
             GetVaultSaltRoute(vault_service=self.vault_service),
             GetVaultRoute(vault_service=self.vault_service),
+            UpdateVaultRoute(vault_service=self.vault_service),
+            DeleteVaultRoute(vault_deletion_service=self.vault_deletion_service),
             UpdateVaultRotationRoute(vault_service=self.vault_service),
-            CreateItemRoute(item_service=self.item_service),
-            InitiateUploadRoute(item_service=self.item_service),
+            CreateItemRoute(item_service=self.item_service, vault_service=self.vault_service),
+            InitiateUploadRoute(item_service=self.item_service, vault_service=self.vault_service),
             CompleteUploadRoute(item_service=self.item_service),
             CreateUploadPartUrlsRoute(item_service=self.item_service),
             AbortItemUploadRoute(item_service=self.item_service),

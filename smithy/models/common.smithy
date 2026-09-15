@@ -38,6 +38,11 @@ list ValidationErrorList {
     member: ValidationErrorDetail
 }
 
+/// List of vault summaries
+list VaultSummaryList {
+    member: VaultSummary
+}
+
 /// Vault rotation state — tracks whether a password-change rotation is in progress
 enum RotationState {
     IDLE = "IDLE"
@@ -50,6 +55,13 @@ enum RotationState {
 enum RotationAction {
     ACQUIRE = "ACQUIRE"
     RELEASE = "RELEASE"
+    PAUSE = "PAUSE"
+}
+
+/// Vault deletion progress
+enum DeletionState {
+    DELETING = "DELETING"
+    DELETED = "DELETED"
 }
 
 /// Common item data structure
@@ -121,6 +133,9 @@ structure CollectionData {
     @documentation("Encrypted collection metadata")
     encryptedMetadata: Blob
 
+    @documentation("KEK version whose metadata key encrypts encryptedMetadata; absent means 1")
+    metadataVersion: Integer
+
     @required
     @documentation("Number of items in collection")
     itemCount: Integer
@@ -132,6 +147,39 @@ structure CollectionData {
     @required
     @documentation("Last modified timestamp")
     updatedAt: Timestamp
+}
+
+/// Vault summary returned by ListVaults
+structure VaultSummary {
+    @required
+    @documentation("Vault identifier")
+    vaultId: String
+
+    @required
+    @documentation("Vault salt for key derivation (16 bytes, non-secret)")
+    vaultSalt: Blob
+
+    @documentation("Vault name encrypted under the vault metadata key")
+    encryptedName: Blob
+
+    @documentation("Password verifier ciphertext (owner only)")
+    verifier: Blob
+
+    @required
+    @documentation("Vault creation timestamp")
+    createdAt: Timestamp
+
+    @required
+    @documentation("Last modified timestamp")
+    updatedAt: Timestamp
+
+    @required
+    @documentation("Current KEK version")
+    kekVersion: Integer
+
+    @required
+    @documentation("Current rotation state")
+    rotationState: RotationState
 }
 
 /// Validation error detail

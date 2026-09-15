@@ -49,6 +49,7 @@ def _collection_fields(collection: dict) -> dict:
         "item_count": int(collection.get("item_count", 0)),
         "created_at": float(collection["created_at"]),
         "updated_at": float(collection["updated_at"]),
+        "metadata_version": int(collection.get("metadata_version", 1)),
     }
 
 
@@ -74,15 +75,20 @@ class CreateCollectionRoute(BaseRoute):
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=request.vault_id):
                 raise NotFoundError("Vault not found")
 
-            response = self.collection_service.create_collection(user_id, request)
+            result = self.collection_service.create_collection(
+                user_id=user_id,
+                vault_id=request.vault_id,
+                encrypted_metadata=bytes(request.encrypted_metadata),
+                metadata_version=request.metadata_version,
+            )
 
             logger.info(
                 "Collection created successfully",
                 vault_id=request.vault_id,
-                collection_id=response.collection_id,
+                collection_id=result["collection_id"],
             )
 
-            return response
+            return CreateCollectionResponseContent(**result)
 
 
 class ListCollectionsRoute(BaseRoute):
@@ -194,11 +200,13 @@ class UpdateCollectionRoute(BaseRoute):
             if not self.vault_service.vault_exists(user_id=user_id, vault_id=vault_id):
                 raise NotFoundError("Vault not found")
 
-            response = self.collection_service.update_collection(
+            result = self.collection_service.update_collection(
                 user_id=user_id,
                 vault_id=vault_id,
                 collection_id=collection_id,
-                encrypted_metadata=body.encrypted_metadata,
+                encrypted_metadata=bytes(body.encrypted_metadata),
+                metadata_version=body.metadata_version,
+                expected_metadata_version=body.expected_metadata_version,
             )
 
             logger.info(
@@ -206,7 +214,7 @@ class UpdateCollectionRoute(BaseRoute):
                 collection_id=collection_id,
             )
 
-            return response
+            return UpdateCollectionResponseContent(**result)
 
 
 class DeleteCollectionRoute(BaseRoute):

@@ -52,6 +52,17 @@ PRESIGNED_URL_EXPIRATION = 900  # 15 minutes
 UPLOAD_CONTENT_TYPE = "application/octet-stream"
 
 
+def tag_index_key(vault_id: str, item_id: str, tag: bytes) -> dict:
+    """DynamoDB key of the tag index row for one (item, encrypted tag) pair.
+
+    Accepts raw bytes or a boto3 ``Binary`` read back from a row.
+    """
+    return {
+        "PK": f"VAULT#{vault_id}#TAG#{b64encode(bytes(tag)).decode('utf-8')}",
+        "SK": f"ITEM#{item_id}",
+    }
+
+
 class ItemService:
     """Service layer for item operations."""
 
@@ -134,8 +145,7 @@ class ItemService:
             transact_items = [{"Put": {"TableName": self.items_repo.table_name, "Item": item}}]
             for tag in request.encrypted_tags:
                 tag_row = {
-                    "PK": f"VAULT#{request.vault_id}#TAG#{b64encode(tag).decode('utf-8')}",
-                    "SK": f"ITEM#{item_id}",
+                    **tag_index_key(request.vault_id, item_id, tag),
                     "item_id": item_id,
                     "vault_id": request.vault_id,
                     "user_id": user_id,
@@ -682,7 +692,7 @@ class ItemService:
 
         The item row is the source of truth and is updated atomically (optionally
         guarded by expected_version). When encrypted_tags changes, the denormalized
-        tag-index rows are reconciled best-effort — orphans are harmless, exactly
+        tag-index rows are reconciled best-effort; orphans are harmless, exactly
         as on the delete path.
         """
         key = {"PK": f"ITEM#{item_id}"}
@@ -742,13 +752,10 @@ class ItemService:
 
         # Best-effort tag-index reconcile (only when tags were part of the update).
         if request.encrypted_tags is not None:
-            old_b64 = {
-                b64encode(bytes(t) if hasattr(t, "value") else t).decode("utf-8")
-                for t in (item.get("encrypted_tags") or [])
-            }
-            new_b64 = {b64encode(t).decode("utf-8") for t in request.encrypted_tags}
+            old_tags = {bytes(t) for t in (item.get("encrypted_tags") or [])}
+            new_tags = {bytes(t) for t in request.encrypted_tags}
             self._reconcile_tag_rows(
-                item["vault_id"], item_id, user_id, old_b64 - new_b64, new_b64 - old_b64
+                item["vault_id"], item_id, user_id, old_tags - new_tags, new_tags - old_tags
             )
 
         logger.info(
@@ -759,27 +766,22 @@ class ItemService:
             item_id=item_id, updated_at=int(now.timestamp()), version=new_version
         )
 
-    def _reconcile_tag_rows(self, vault_id, item_id, user_id, delete_b64, add_b64) -> None:
+    def _reconcile_tag_rows(self, vault_id, item_id, user_id, delete_tags, add_tags) -> None:
         """Add/remove tag-index rows for a tags edit. Best-effort (orphans harmless).
 
-        ponytail: best-effort index — a crash mid-reconcile can leave a removed tag
+        ponytail: best-effort index: a crash mid-reconcile can leave a removed tag
         still matching this item until cleanup; the item row stays correct. Go
         transactional (≤100-op TransactWriteItems) only if false-positive search hits
         ever matter.
         """
-        if not delete_b64 and not add_b64:
-            return
         try:
             with self.items_repo.table.batch_writer() as writer:
-                for tag_b64 in delete_b64:
-                    writer.delete_item(
-                        Key={"PK": f"VAULT#{vault_id}#TAG#{tag_b64}", "SK": f"ITEM#{item_id}"}
-                    )
-                for tag_b64 in add_b64:
+                for tag in delete_tags:
+                    writer.delete_item(Key=tag_index_key(vault_id, item_id, tag))
+                for tag in add_tags:
                     writer.put_item(
                         Item={
-                            "PK": f"VAULT#{vault_id}#TAG#{tag_b64}",
-                            "SK": f"ITEM#{item_id}",
+                            **tag_index_key(vault_id, item_id, tag),
                             "item_id": item_id,
                             "vault_id": vault_id,
                             "user_id": user_id,
@@ -1071,22 +1073,13 @@ class ItemService:
             item_id: Item ID
             encrypted_tags: List of encrypted tag bytes
         """
-        from base64 import b64encode
-
         if not encrypted_tags:
             return
 
         try:
             with self.items_repo.table.batch_writer() as writer:
                 for tag in encrypted_tags:
-                    tag_bytes = bytes(tag) if hasattr(tag, "value") else tag
-                    tag_b64 = b64encode(tag_bytes).decode("utf-8")
-                    writer.delete_item(
-                        Key={
-                            "PK": f"VAULT#{vault_id}#TAG#{tag_b64}",
-                            "SK": f"ITEM#{item_id}",
-                        }
-                    )
+                    writer.delete_item(Key=tag_index_key(vault_id, item_id, tag))
             logger.info(
                 "Deleted tag index rows",
                 **{"item_id": item_id, "tag_count": len(encrypted_tags)},
