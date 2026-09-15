@@ -340,6 +340,38 @@ class TestDynamoDBRepository:
             exclusive_start_key=start_key,
         )
 
+    def test_query_passes_filter_expression_only_when_supplied(
+        self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
+    ):
+        """query() forwards FilterExpression only when a filter_expression is supplied."""
+        dynamodb_stubber.add_response(
+            "query",
+            {
+                "Items": [
+                    {"PK": {"S": "VAULT#v1"}, "SK": {"S": "ITEM#i1"}, "dek_version": {"N": "2"}}
+                ]
+            },
+            {
+                "TableName": dynamodb_table_name,
+                "IndexName": "GSI2",
+                "KeyConditionExpression": "GSI2PK = :pk",
+                "FilterExpression": "dek_version > :kek",
+                "ExpressionAttributeValues": {":pk": "VAULT#v1", ":kek": 1},
+                "Limit": 100,
+                "ScanIndexForward": True,
+            },
+        )
+
+        result = dynamodb_repository.query(
+            key_condition_expression="GSI2PK = :pk",
+            expression_attribute_values={":pk": "VAULT#v1", ":kek": 1},
+            filter_expression="dek_version > :kek",
+            index_name="GSI2",
+            limit=100,
+        )
+
+        assert len(result["Items"]) == 1
+
     def test_scan_passes_filter_and_limit(
         self, dynamodb_repository, dynamodb_stubber, dynamodb_table_name
     ):

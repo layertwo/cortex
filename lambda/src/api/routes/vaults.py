@@ -18,6 +18,7 @@ import base64
 from fastapi import APIRouter, Depends, Query
 
 from src.api.routes.base_route import BaseRoute
+from src.api.services.rotation_abandon_service import RotationAbandonService
 from src.api.services.vault_deletion_service import VaultDeletionService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
@@ -175,16 +176,20 @@ class GetVaultRoute(BaseRoute):
 
 
 class UpdateVaultRotationRoute(BaseRoute):
-    """Handle rotation lock acquire/pause/release (conditional write)."""
+    """Handle rotation lock acquire/pause/release/abandon (conditional write)."""
 
-    def __init__(self, vault_service: VaultService):
+    def __init__(
+        self, vault_service: VaultService, rotation_abandon_service: RotationAbandonService
+    ):
         """
         Initialize update vault rotation route.
 
         Args:
             vault_service: VaultService instance for dependency injection
+            rotation_abandon_service: RotationAbandonService for the ABANDON action
         """
         self.vault_service = vault_service
+        self.rotation_abandon_service = rotation_abandon_service
 
     def register(self, app: APIRouter) -> None:
         @app.post(
@@ -196,10 +201,11 @@ class UpdateVaultRotationRoute(BaseRoute):
             user_id: str = Depends(get_current_user),
         ):
             """
-            Acquire, pause, or release the vault password rotation lock.
+            Acquire, pause, release, or abandon the vault password rotation lock.
 
             ACQUIRE may stage a new salt and verifier pair; RELEASE promotes a
-            staged pair and may store the re-encrypted name.
+            staged pair and may store the re-encrypted name; ABANDON discards
+            a staged pair once nothing has been re-keyed under it.
 
             Path Parameters:
                 vault_id: Vault identifier
@@ -208,7 +214,9 @@ class UpdateVaultRotationRoute(BaseRoute):
                 The resulting rotation state, lock timestamp, and staged pair (if any).
 
             Raises:
-                ConflictError: If the conditional write fails (409)
+                BadRequestError: ABANDON without expectedState PAUSED (400)
+                ConflictError: If the conditional write fails, or (ABANDON
+                    only) a row was already re-keyed under the staged pair (409)
             """
             logger.info(
                 "Updating vault rotation state",
@@ -216,16 +224,21 @@ class UpdateVaultRotationRoute(BaseRoute):
                 action=request.action,
             )
 
-            result = self.vault_service.update_vault_rotation(
-                user_id=user_id,
-                vault_id=vault_id,
-                action=request.action,
-                expected_state=request.expected_state,
-                kek_version=request.kek_version,
-                new_verifier=to_bytes(request.new_verifier),
-                new_vault_salt=to_bytes(request.new_vault_salt),
-                new_encrypted_name=to_bytes(request.new_encrypted_name),
-            )
+            if request.action == "ABANDON":
+                if request.expected_state != "PAUSED":
+                    raise BadRequestError("ABANDON requires expectedState PAUSED")
+                result = self.rotation_abandon_service.abandon(user_id=user_id, vault_id=vault_id)
+            else:
+                result = self.vault_service.update_vault_rotation(
+                    user_id=user_id,
+                    vault_id=vault_id,
+                    action=request.action,
+                    expected_state=request.expected_state,
+                    kek_version=request.kek_version,
+                    new_verifier=to_bytes(request.new_verifier),
+                    new_vault_salt=to_bytes(request.new_vault_salt),
+                    new_encrypted_name=to_bytes(request.new_encrypted_name),
+                )
 
             return UpdateVaultRotationResponseContent(
                 rotation_state=result["rotation_state"],

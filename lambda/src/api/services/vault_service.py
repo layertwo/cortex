@@ -11,7 +11,7 @@ Requirements: 14.4, 22.1, 22.2, 22.3, 22.4, 22.5
 import secrets
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NoReturn, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -521,34 +521,102 @@ class VaultService:
                 ReturnValues="ALL_NEW",
             )
         except ClientError as e:
-            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
-                # Disambiguate the failed condition with one read, as update_vault does.
-                item = self._read(key)
-                if not item:
-                    logger.warning(
-                        "Vault rotation attempted on missing vault",
-                        vault_id=vault_id,
-                        action=action,
-                    )
-                    raise NotFoundError("Vault not found") from e
-                if item.get("deletion_state"):
-                    logger.warning(
-                        "Vault rotation blocked, vault is being deleted", vault_id=vault_id
-                    )
-                    raise ConflictError("Vault is being deleted") from e
-                logger.warning(
-                    "Vault rotation conflict",
-                    **{"vault_id": vault_id, "action": action},
-                )
-                raise ConflictError(
-                    "A vault password change is already in progress on another device"
-                ) from e
-            logger.error(
-                "Failed to update vault rotation state",
-                **{"error": str(e), "vault_id": vault_id, "action": action},
-            )
-            raise
+            self._rotation_conflict(key, vault_id, action, e)
 
+        return self._rotation_result(resp)
+
+    def abandon_rotation(
+        self, user_id: str, vault_id: str, expected_locked_at: Optional[int] = None
+    ) -> Dict:
+        """
+        Discard a staged rotation pair when nothing has been re-keyed under it.
+
+        Not reachable through update_vault_rotation's dispatcher: the route
+        sends ABANDON to RotationAbandonService, which runs the re-keyed-row
+        safety check (spec 3) before calling this write (spec 4).
+
+        expected_locked_at pins the rotation_locked_at RotationAbandonService
+        observed via get_vault: if the row's timestamp has since moved
+        (an interleaved ACQUIRE re-armed the lock), the write's condition
+        fails even if the row has drifted back to PAUSED or a stale
+        IN_PROGRESS in the meantime.
+
+        Returns:
+            Dictionary with rotation_state ("IDLE"), rotation_locked_at
+            (None), pending_vault_salt (None), pending_verifier (None).
+
+        Raises:
+            NotFoundError: If the vault is missing or unowned.
+            ConflictError: If the vault is being deleted, the row is
+                neither PAUSED nor a stale IN_PROGRESS lock, or
+                rotation_locked_at no longer matches expected_locked_at.
+        """
+        key = {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
+        now = int(time.time())
+
+        condition = (
+            "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
+            "rotation_state = :paused OR "
+            "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
+        )
+        values: Dict[str, Any] = {
+            ":idle": "IDLE",
+            ":now": now,
+            ":paused": "PAUSED",
+            ":in_progress": "IN_PROGRESS",
+            ":stale": now - STALE_LOCK_SECONDS,
+        }
+        if expected_locked_at is not None:
+            condition += " AND rotation_locked_at = :seen"
+            values[":seen"] = expected_locked_at
+
+        try:
+            resp = self.vaults_table.update_item(
+                Key=key,
+                UpdateExpression=(
+                    "SET rotation_state = :idle, updated_at = :now"
+                    " REMOVE pending_vault_salt, pending_verifier, rotation_locked_at"
+                ),
+                ConditionExpression=condition,
+                ExpressionAttributeValues=values,
+                ReturnValues="ALL_NEW",
+            )
+        except ClientError as e:
+            self._rotation_conflict(key, vault_id, "ABANDON", e)
+
+        return self._rotation_result(resp)
+
+    def _rotation_conflict(self, key: dict, vault_id: str, action: str, e: ClientError) -> NoReturn:
+        """Raise the right error for a failed rotation condition (never returns)."""
+        if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            # Disambiguate the failed condition with one read, as update_vault does.
+            item = self._read(key)
+            if not item:
+                logger.warning(
+                    "Vault rotation attempted on missing vault",
+                    vault_id=vault_id,
+                    action=action,
+                )
+                raise NotFoundError("Vault not found") from e
+            if item.get("deletion_state"):
+                logger.warning("Vault rotation blocked, vault is being deleted", vault_id=vault_id)
+                raise ConflictError("Vault is being deleted") from e
+            logger.warning(
+                "Vault rotation conflict",
+                **{"vault_id": vault_id, "action": action},
+            )
+            raise ConflictError(
+                "A vault password change is already in progress on another device"
+            ) from e
+        logger.error(
+            "Failed to update vault rotation state",
+            **{"error": str(e), "vault_id": vault_id, "action": action},
+        )
+        raise e
+
+    @staticmethod
+    def _rotation_result(resp: dict) -> Dict:
+        """Map an ALL_NEW rotation write response to the service return shape."""
         attrs = resp.get("Attributes", {})
         return {
             "rotation_state": attrs.get("rotation_state", "IDLE"),
