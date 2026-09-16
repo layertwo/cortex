@@ -15,7 +15,7 @@ describe('getVaultKeys', () => {
   it('returns vaultId + kek + metadataKey from key-storage and kekVersion from the registry', async () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', kekVersion: 3 }]));
-    retrieveKeys.mockResolvedValue({
+    retrieveKeys.mockResolvedValueOnce({
       keyEncryptionKey: new Uint8Array(32).fill(1),
       metadataEncryptionKey: new Uint8Array(32).fill(2),
     });
@@ -29,7 +29,7 @@ describe('getVaultKeys', () => {
 
   it('defaults kekVersion to 1 when the registry has no version for the vault', async () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    retrieveKeys.mockResolvedValue({
+    retrieveKeys.mockResolvedValueOnce({
       keyEncryptionKey: new Uint8Array(32).fill(1),
       metadataEncryptionKey: new Uint8Array(32).fill(2),
     });
@@ -49,7 +49,7 @@ describe('getVaultKeys', () => {
 
   it('throws when keys are absent/expired', async () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    retrieveKeys.mockResolvedValue(null);
+    retrieveKeys.mockResolvedValueOnce(null);
     await expect(getVaultKeys()).rejects.toThrow('locked');
   });
 });

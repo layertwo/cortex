@@ -6,7 +6,13 @@ import CodeInput from './CodeInput';
 
 function Harness({ onComplete }: { onComplete?: (c: string) => void }) {
   const [v, setV] = useState('');
-  return <CodeInput value={v} onChange={setV} onComplete={onComplete} />;
+  return (
+    <>
+      <CodeInput value={v} onChange={setV} onComplete={onComplete} />
+      <button onClick={() => setV('')}>Reset</button>
+      <button onClick={() => setV('481920')}>Prefill</button>
+    </>
+  );
 }
 
 describe('CodeInput', () => {
@@ -51,5 +57,41 @@ describe('CodeInput', () => {
     expect(screen.getByLabelText('Digit 3')).toHaveValue('1');
     expect(screen.getByLabelText('Digit 4')).toHaveFocus();
     expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('typing into box 3 while box 2 is empty does not collapse the digit into box 2, and onComplete waits for all six', async () => {
+    const onComplete = vi.fn();
+    render(<Harness onComplete={onComplete} />);
+    await userEvent.click(screen.getByLabelText('Digit 1'));
+    await userEvent.keyboard('4');
+    await userEvent.click(screen.getByLabelText('Digit 3'));
+    await userEvent.keyboard('7');
+    expect(screen.getByLabelText('Digit 2')).toHaveValue('');
+    expect(screen.getByLabelText('Digit 3')).toHaveValue('7');
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('a browser autofill that writes a whole code into box 1 distributes it across the boxes', () => {
+    const onComplete = vi.fn();
+    render(<Harness onComplete={onComplete} />);
+    fireEvent.change(screen.getByLabelText('Digit 1'), { target: { value: '481920' } });
+    '481920'.split('').forEach((d, i) => expect(screen.getByLabelText(`Digit ${i + 1}`)).toHaveValue(d));
+    expect(onComplete).toHaveBeenCalledWith('481920');
+  });
+
+  it('a code the parent sets after mount shows in every box', async () => {
+    render(<Harness />);
+    await userEvent.type(screen.getByLabelText('Digit 1'), '7');
+    await userEvent.click(screen.getByRole('button', { name: 'Prefill' }));
+    '481920'.split('').forEach((d, i) => expect(screen.getByLabelText(`Digit ${i + 1}`)).toHaveValue(d));
+  });
+
+  it('a parent reset to empty string clears every box', async () => {
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText('Digit 1'));
+    await userEvent.keyboard('123456');
+    expect(screen.getByLabelText('Digit 6')).toHaveValue('6');
+    await userEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    for (let i = 1; i <= 6; i++) expect(screen.getByLabelText(`Digit ${i}`)).toHaveValue('');
   });
 });

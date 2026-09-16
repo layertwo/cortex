@@ -10,29 +10,34 @@ export async function makeThumbnail(file: File, opts?: { timeoutMs?: number }): 
   if (!kind || typeof document === 'undefined') return undefined;
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const url = URL.createObjectURL(file);
+  const el: HTMLImageElement | HTMLVideoElement = kind === 'image' ? new Image() : document.createElement('video');
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     const source = await Promise.race([
-      kind === 'image' ? loadImage(url) : loadVideoFrame(url),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('thumbnail timeout')), timeoutMs)),
+      kind === 'image' ? loadImage(el as HTMLImageElement, url) : loadVideoFrame(el as HTMLVideoElement, url),
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('thumbnail timeout')), timeoutMs);
+      }),
     ]);
     return encode(source);
   } catch {
+    el.removeAttribute('src');
+    if (kind === 'video') (el as HTMLVideoElement).load();
     return undefined;
   } finally {
+    clearTimeout(timeoutHandle);
     URL.revokeObjectURL(url);
   }
 }
 
-async function loadImage(url: string): Promise<HTMLImageElement> {
-  const img = new Image();
+async function loadImage(img: HTMLImageElement, url: string): Promise<HTMLImageElement> {
   img.src = url;
   await img.decode();
   return img;
 }
 
-function loadVideoFrame(url: string): Promise<HTMLVideoElement> {
+function loadVideoFrame(v: HTMLVideoElement, url: string): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
-    const v = document.createElement('video');
     v.muted = true;
     v.playsInline = true;
     v.preload = 'auto';

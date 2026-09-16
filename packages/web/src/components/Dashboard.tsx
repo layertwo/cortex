@@ -119,9 +119,20 @@ export default function Dashboard() {
                   hasCollections={counts.collections > 0}
                 />
               )}
-              <UploadQueue onUploaded={bump} />
+              <UploadQueue
+                onUploaded={() => {
+                  setCounts((c) => ({ ...c, files: c.files + 1 }));
+                  bump();
+                }}
+              />
             </VStack>
-            <FileList view={view} refreshKey={refreshKey} onLoaded={(n) => setCounts((c) => ({ ...c, files: n }))} />
+            <FileList
+              view={view}
+              refreshKey={refreshKey}
+              onLoaded={(n) => {
+                if (view.kind === 'all') setCounts((c) => ({ ...c, files: n }));
+              }}
+            />
           </LayoutContent>
         }
       />

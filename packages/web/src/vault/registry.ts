@@ -80,7 +80,6 @@ export function setActiveVault(vaultId: string): void {
 }
 
 export function upsertVault(entry: VaultPatch): void {
-  requireAccount();
   const list = listVaults();
   const i = list.findIndex((v) => v.vaultId === entry.vaultId);
   if (i === -1) list.push({ name: DEFAULT_VAULT_NAME, ...entry });

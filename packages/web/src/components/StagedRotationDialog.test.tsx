@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import StagedRotationDialog from './StagedRotationDialog';
+import StagedRotationDialog, { useStagedMismatch } from './StagedRotationDialog';
 
 // rotationLockedAt as the server sends it: epoch seconds.
 const STARTED_AT = 1_757_900_000;
@@ -55,5 +55,24 @@ describe('StagedRotationDialog', () => {
   it('shows the error from a failed finish attempt', () => {
     const { dialog } = setup({ error: 'Incorrect vault password' });
     expect(within(dialog).getByRole('alert')).toHaveTextContent('Incorrect vault password');
+  });
+});
+
+function Probe({ onReady }: { onReady: (fn: ReturnType<typeof useStagedMismatch>['onStagedMismatch']) => void }) {
+  const { onStagedMismatch, stagedDialog } = useStagedMismatch();
+  onReady(onStagedMismatch);
+  return stagedDialog;
+}
+
+describe('useStagedMismatch', () => {
+  it('settles the pending promise to cancel when the owning screen unmounts', async () => {
+    let onStagedMismatch!: ReturnType<typeof useStagedMismatch>['onStagedMismatch'];
+    const { unmount } = render(<Probe onReady={(fn) => { onStagedMismatch = fn; }} />);
+    let decision!: ReturnType<typeof onStagedMismatch>;
+    act(() => {
+      decision = onStagedMismatch(null);
+    });
+    unmount();
+    await expect(decision).resolves.toEqual({ action: 'cancel' });
   });
 });

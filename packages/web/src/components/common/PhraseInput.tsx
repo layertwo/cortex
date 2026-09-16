@@ -42,7 +42,8 @@ export default function PhraseInput({
       next[i + k] = w;
     });
     onChange(next);
-    refs.current[Math.min(i + pasted.length, PHRASE_LENGTH) - 1]?.focus();
+    const nextEmpty = next.findIndex((w, j) => j >= i && !w);
+    refs.current[nextEmpty === -1 ? PHRASE_LENGTH - 1 : nextEmpty]?.focus();
   }
 
   return (
