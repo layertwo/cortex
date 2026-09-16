@@ -53,7 +53,7 @@ describe('SessionContext auth', () => {
     );
     await screen.findByText('signin');
     // After a successful Cognito sign-in the current user is available to the gate.
-    amplify.getCurrentUser.mockResolvedValue({ userId: 'u1' } as never);
+    amplify.getCurrentUser.mockResolvedValueOnce({ userId: 'u1' } as never);
     await act(async () => {
       await userEvent.click(screen.getByText('signin'));
     });

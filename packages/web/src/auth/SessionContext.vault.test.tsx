@@ -406,7 +406,7 @@ describe('SessionContext vault', () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
     saveVerifier('v1', local);
     api.listAllVaults.mockResolvedValue([summary()]); // listed, but no verifier stored server-side
-    api.getVault.mockResolvedValue({
+    api.getVault.mockResolvedValueOnce({
       vaultId: 'v1',
       vaultSalt: SALT,
       kekVersion: 1,
@@ -431,7 +431,7 @@ describe('SessionContext vault', () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
     saveVerifier('v1', local);
     api.getVaultSalt.mockResolvedValue(SALT);
-    api.getVault.mockResolvedValue({
+    api.getVault.mockResolvedValueOnce({
       vaultId: 'v1',
       vaultSalt: SALT,
       kekVersion: 1,

@@ -49,4 +49,25 @@ describe('PhraseInput', () => {
     expect(screen.getByLabelText('Word 2')).toHaveFocus();
     expect(screen.queryByRole('alert')).toBeNull();
   });
+
+  it('pasting three words into box 1 focuses box 4, the next empty box', () => {
+    render(<Harness />);
+    fireEvent.paste(screen.getByLabelText('Word 1'), { clipboardData: { getData: () => 'w1 w2 w3' } });
+    expect(screen.getByLabelText('Word 4')).toHaveFocus();
+  });
+
+  it('pasting 2 words into box 2 when boxes 1-4 are already filled focuses box 5, the first empty one, not box 4', () => {
+    render(<Harness />);
+    ['w0', 'w1', 'w2', 'w3'].forEach((w, i) => {
+      fireEvent.change(screen.getByLabelText(`Word ${i + 1}`), { target: { value: w } });
+    });
+    fireEvent.paste(screen.getByLabelText('Word 2'), { clipboardData: { getData: () => 'x1 x2' } });
+    expect(screen.getByLabelText('Word 5')).toHaveFocus();
+  });
+
+  it('pasting all 24 words focuses box 24, the last box', () => {
+    render(<Harness />);
+    fireEvent.paste(screen.getByLabelText('Word 1'), { clipboardData: { getData: () => WORDS.join(' ') } });
+    expect(screen.getByLabelText('Word 24')).toHaveFocus();
+  });
 });

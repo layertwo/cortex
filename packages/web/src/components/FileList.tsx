@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { encryptTagForSearch } from '@cortex/encryption';
 import { Table, proportional, pixel, type TableColumn } from '@astryxdesign/core/Table';
+import { Thumbnail } from '@astryxdesign/core/Thumbnail';
 import { MoreMenu } from '@astryxdesign/core/MoreMenu';
 import { Token } from '@astryxdesign/core/Token';
 import { Text } from '@astryxdesign/core/Text';
@@ -140,13 +141,7 @@ export default function FileList({
       width: pixel(56),
       renderCell: (row) =>
         row.meta?.thumb ? (
-          <img
-            src={row.meta.thumb}
-            alt=""
-            width={40}
-            height={40}
-            style={{ display: 'block', objectFit: 'cover', borderRadius: 'var(--radius-element)' }}
-          />
+          <Thumbnail src={row.meta.thumb} alt="" />
         ) : (
           <FileTypeGlyph name={row.meta?.name} contentType={row.meta?.contentType} />
         ),

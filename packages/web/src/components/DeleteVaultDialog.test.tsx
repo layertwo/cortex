@@ -7,9 +7,13 @@ const { session } = vi.hoisted(() => ({
     deleteVault: vi.fn(async (_vaultId: string, _password: string, _onProgress?: (n: number) => void) => {}),
   },
 }));
-vi.mock('../auth/SessionContext', () => ({ useSession: () => session }));
+vi.mock('../auth/SessionContext', () => ({
+  useSession: () => session,
+  DELETE_REFUSED: 'Unlock this vault once on a device that knows its password',
+}));
 
 import DeleteVaultDialog from './DeleteVaultDialog';
+import { DELETE_REFUSED } from '../auth/SessionContext';
 
 const vault = { vaultId: 'v2', name: 'Family archive' };
 
@@ -86,5 +90,16 @@ describe('DeleteVaultDialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
     expect(onClose).toHaveBeenCalled();
     expect(session.deleteVault).not.toHaveBeenCalled();
+  });
+
+  it('a fail-closed refusal (no verifier anywhere) offers no Retry', async () => {
+    session.deleteVault.mockRejectedValueOnce(new Error(DELETE_REFUSED));
+    const { dialog, onClose } = setup();
+    await userEvent.type(within(dialog).getByLabelText(/vault password/i), 'pw');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^delete vault$/i }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(DELETE_REFUSED);
+    expect(within(dialog).queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(within(dialog).getByRole('button', { name: /^delete vault$/i })).toBeEnabled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

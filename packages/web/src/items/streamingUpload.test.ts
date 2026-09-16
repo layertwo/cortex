@@ -37,7 +37,7 @@ beforeEach(() => {
 
 describe('uploadFileStreaming', () => {
   it('single-PUT path: assembles one blob, completes with no parts, sets streamVersion', async () => {
-    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'https://s3/put' }); // no uploadId
+    api.initiateUpload.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put' }); // no uploadId
     const onProgress = vi.fn();
     await uploadFileStreaming(fakeFile(new Uint8Array([1, 2, 3])), keys, onProgress);
 
@@ -61,13 +61,13 @@ describe('uploadFileStreaming', () => {
   });
 
   it("sends the vault KEK version as the new item's dekVersion", async () => {
-    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'https://s3/put' });
+    api.initiateUpload.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put' });
     await uploadFileStreaming(fakeFile(new Uint8Array([1, 2, 3])), { ...keys, kekVersion: 3 });
     expect(api.initiateUpload).toHaveBeenCalledWith(expect.objectContaining({ dekVersion: 3 }));
   });
 
   it('dual-writes tags: plaintext in metadata, HMAC in encryptedTags', async () => {
-    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'https://s3/put' });
+    api.initiateUpload.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put' });
     await uploadFileStreaming(fakeFile(new Uint8Array([1, 2, 3])), keys, undefined, { tags: ['Trip', 'beach'] });
 
     const arg = api.initiateUpload.mock.calls[0][0];
@@ -79,7 +79,7 @@ describe('uploadFileStreaming', () => {
   });
 
   it('multipart path: parts uploaded in order, eTags collected, complete gets ordered parts', async () => {
-    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
+    api.initiateUpload.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
     api.putToS3.mockImplementation(async (url: string) => `"e-${url.slice(-2)}"`);
     // 10 bytes, chunkSize 4 → 3 parts (4, 4, 2)
     await uploadFileStreaming(fakeFile(new Uint8Array(10)), keys, undefined, { chunkSize: 4 });
@@ -101,7 +101,7 @@ describe('uploadFileStreaming', () => {
   });
 
   it('retries a failing part, then completes without aborting', async () => {
-    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'x', uploadId: 'mp1' });
+    api.initiateUpload.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'x', uploadId: 'mp1' });
     let calls = 0;
     api.putToS3.mockImplementation(async () => {
       calls += 1;
@@ -115,7 +115,7 @@ describe('uploadFileStreaming', () => {
   });
 
   it('aborts the multipart upload and rethrows when a part exhausts its retries', async () => {
-    api.initiateUpload.mockResolvedValue({ itemId: 'i1', uploadUrl: 'x', uploadId: 'mp1' });
+    api.initiateUpload.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'x', uploadId: 'mp1' });
     api.putToS3.mockRejectedValue(new Error('dead'));
     await expect(
       uploadFileStreaming(fakeFile(new Uint8Array(3)), keys, undefined, { chunkSize: 4 }),

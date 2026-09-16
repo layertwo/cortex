@@ -171,7 +171,10 @@ describe('FileList', () => {
     ]);
     const { container } = render(<FileList view={ALL} refreshKey={0} />);
     await screen.findByText('notes.pdf');
-    expect(container.querySelector('img[src^="data:image/jpeg"]')).not.toBeNull();
+    const img = container.querySelector('img[src^="data:image/jpeg"]');
+    expect(img).not.toBeNull();
+    expect(container.querySelector('img[style]')).toBeNull();
+    expect(img).toHaveAttribute('aria-hidden', 'true'); // decorative: the Name column already announces the file
     expect(screen.getByText('PDF')).toBeInTheDocument();
   });
 

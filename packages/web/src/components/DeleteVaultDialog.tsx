@@ -7,7 +7,7 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
-import { useSession } from '../auth/SessionContext';
+import { useSession, DELETE_REFUSED } from '../auth/SessionContext';
 import type { VaultEntry } from '../vault/registry';
 
 const FORM_ID = 'delete-vault-form';
@@ -15,7 +15,8 @@ const FORM_ID = 'delete-vault-form';
 // Password-confirmed delete (spec §7). Astryx AlertDialog has no slot for the password
 // field, so this composes Dialog + Layout with a destructive primary that never closes on
 // its own. Every error stops the loop and stays visible; the primary then reads "Retry"
-// (the server sweep is idempotent) except after a 409, which a retry cannot fix.
+// (the server sweep is idempotent) except after a 409, which a retry cannot fix, or after
+// the fail-closed refusal, which no retry on this device can fix.
 export default function DeleteVaultDialog({ vault, onClose }: { vault: VaultEntry; onClose: () => void }) {
   const { deleteVault } = useSession();
   const [password, setPassword] = useState('');
@@ -33,7 +34,10 @@ export default function DeleteVaultDialog({ vault, onClose }: { vault: VaultEntr
     } catch (err) {
       const failure = err instanceof Error ? err : new Error('Delete failed');
       setRemoved(null);
-      setError({ message: failure.message, retry: failure.name !== 'ConflictError' });
+      setError({
+        message: failure.message,
+        retry: failure.name !== 'ConflictError' && failure.message !== DELETE_REFUSED,
+      });
     }
   }
 

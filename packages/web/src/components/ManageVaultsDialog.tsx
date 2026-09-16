@@ -32,7 +32,7 @@ function RenameField({
     else setDraft(name);
   }
   return (
-    <>
+    <VStack gap={0.5}>
       <TextInput
         label={`Rename ${name}`}
         isLabelHidden
@@ -48,7 +48,7 @@ function RenameField({
           isLabelHidden is set (dist/Field/FieldLabel.js), so the hint must be a plain visible
           sibling instead, not the `description` prop. */}
       {isLocked && <Text type="supporting">Unlock to rename</Text>}
-    </>
+    </VStack>
   );
 }
 

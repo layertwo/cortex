@@ -61,7 +61,7 @@ export const WRONG_VAULT_PASSWORD = 'Incorrect vault password';
 
 // Thrown by deleteVault when neither the server nor this device has a verifier: a
 // password-confirmed delete cannot be confirmed, so it is refused (spec §7).
-const DELETE_REFUSED = 'Unlock this vault once on a device that knows its password';
+export const DELETE_REFUSED = 'Unlock this vault once on a device that knows its password';
 
 // Rotation outcomes the screens turn into copy. REKEYED_ERROR: "Start over" was refused because
 // an earlier attempt already re-wrapped files under its new password. CANCELLED_ERROR: the user

@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
 import { TextInput } from '@astryxdesign/core/TextInput';
@@ -75,6 +75,17 @@ type Pending = { startedAt: number | null; error?: string; resolve: (decision: S
 // `stagedDialog` anywhere in the screen's tree; it is null until the session asks.
 export function useStagedMismatch(): { onStagedMismatch: OnStagedMismatch; stagedDialog: ReactNode } {
   const [pending, setPending] = useState<Pending | null>(null);
+  const pendingRef = useRef<Pending | null>(null);
+  pendingRef.current = pending;
+  // If the owning screen unmounts while the dialog is open (e.g. the user navigates away),
+  // resolve as a cancel so the awaiting rotateVault does not hang and the server lock is not
+  // held forever; the caller's own PAUSE-on-failure path takes it from there.
+  useEffect(
+    () => () => {
+      pendingRef.current?.resolve({ action: 'cancel' });
+    },
+    [],
+  );
   const onStagedMismatch = useCallback<OnStagedMismatch>(
     (startedAt, error) => new Promise((resolve) => setPending({ startedAt, error, resolve })),
     [],

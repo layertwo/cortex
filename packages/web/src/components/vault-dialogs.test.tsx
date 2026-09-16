@@ -128,6 +128,20 @@ describe('ManageVaultsDialog', () => {
     expect(within(dialog).getByLabelText(/rename personal/i)).toBeEnabled();
   });
 
+  it('renaming: the hint sits under the field, in its own column, not beside the row state label', () => {
+    render(<ManageVaultsDialog onClose={vi.fn()} onUnlock={vi.fn()} onChangePassword={vi.fn()} onNew={vi.fn()} />);
+    const dialog = screen.getByRole('dialog', { name: /manage vaults/i });
+    const field = within(dialog).getByLabelText(/rename family archive/i);
+    const hint = within(dialog).getByText('Unlock to rename');
+    // Astryx's Stack (VStack/HStack) reflects its `direction` prop as a real `data-direction`
+    // DOM attribute (see Global Constraints); the field's nearest vertical ancestor must
+    // contain the hint but not the row's own "Locked" state label or buttons.
+    const column = field.closest('[data-direction="vertical"]');
+    expect(column).not.toBeNull();
+    expect(column).toContainElement(hint);
+    expect(column).not.toHaveTextContent('Locked');
+  });
+
   it('renaming: shows the error in the dialog when the server rejects it', async () => {
     session.renameVault.mockRejectedValueOnce(new Error('Network error'));
     render(<ManageVaultsDialog onClose={vi.fn()} onUnlock={vi.fn()} onChangePassword={vi.fn()} onNew={vi.fn()} />);
