@@ -13,6 +13,8 @@ const amplify = vi.hoisted(() => ({
   }),
 }));
 vi.mock('aws-amplify/auth', () => amplify);
+// The account gate syncs the registry from ListVaults after every sign-in.
+vi.mock('../api/client', () => ({ listAllVaults: vi.fn(async () => []) }));
 
 import { SessionProvider, useSession } from './SessionContext';
 
@@ -40,23 +42,28 @@ describe('SessionContext auth', () => {
       </SessionProvider>,
     );
     expect(await screen.findByTestId('status')).toHaveTextContent('signedOut');
+    expect(localStorage.getItem('cortex_account')).toBeNull();
   });
 
-  it('signInAccount → signedInVaultLocked, logout → signedOut', async () => {
+  it('signInAccount → signedInVaultLocked with the account resolved, logout → signedOut and cleared', async () => {
     render(
       <SessionProvider>
         <Probe />
       </SessionProvider>,
     );
     await screen.findByText('signin');
+    // After a successful Cognito sign-in the current user is available to the gate.
+    amplify.getCurrentUser.mockResolvedValue({ userId: 'u1' } as never);
     await act(async () => {
       await userEvent.click(screen.getByText('signin'));
     });
     expect(amplify.signIn).toHaveBeenCalledWith({ username: 'a@b.com', password: 'pw' });
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
+    expect(localStorage.getItem('cortex_account')).toBe('u1');
     await act(async () => {
       await userEvent.click(screen.getByText('logout'));
     });
     expect(screen.getByTestId('status')).toHaveTextContent('signedOut');
+    expect(localStorage.getItem('cortex_account')).toBeNull();
   });
 });

@@ -11,7 +11,7 @@ import { encryptCollectionName, decryptCollectionName } from './collectionMetada
 const itemsApi = vi.hoisted(() => ({ updateItemRotation: vi.fn() }));
 vi.mock('../api/items', () => itemsApi);
 
-const collectionsApi = vi.hoisted(() => ({ updateCollection: vi.fn() }));
+const collectionsApi = vi.hoisted(() => ({ updateCollection: vi.fn(), listAllCollections: vi.fn() }));
 vi.mock('../api/collections', () => collectionsApi);
 
 import { reWrapDek, rotateItems, rotateCollections } from './key-rotation';
@@ -265,29 +265,32 @@ describe('rotateItems', () => {
 });
 
 describe('rotateCollections', () => {
-  it('re-encrypts every collection name under the new metadataKey', async () => {
+  it('re-encrypts every collection name under the new metadataKey and sends the version pair', async () => {
     const name1 = 'Vacation Photos';
     const name2 = 'Work Docs';
     const encMeta1 = await encryptCollectionName(name1, oldMetadataKey);
     const encMeta2 = await encryptCollectionName(name2, oldMetadataKey);
     const cols: CollectionData[] = [
       { collectionId: 'c1', vaultId, encryptedMetadata: encMeta1, itemCount: 3, createdAt: new Date(0), updatedAt: new Date(0) },
-      { collectionId: 'c2', vaultId, encryptedMetadata: encMeta2, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+      { collectionId: 'c2', vaultId, encryptedMetadata: encMeta2, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0), metadataVersion: 1 },
     ];
     collectionsApi.updateCollection.mockResolvedValue(undefined);
 
-    await rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId);
+    await rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId, 2);
 
     expect(collectionsApi.updateCollection).toHaveBeenCalledTimes(2);
 
-    const [id1, vault1, newMeta1] = collectionsApi.updateCollection.mock.calls[0];
+    const [id1, vault1, newMeta1, version1, expected1] = collectionsApi.updateCollection.mock.calls[0];
     expect(id1).toBe('c1');
     expect(vault1).toBe(vaultId);
     expect(decryptCollectionName(newMeta1, newMetadataKey)).toBe(name1);
+    // Absent metadataVersion means 1: the row is written as version 2, guarded by expected 1.
+    expect([version1, expected1]).toEqual([2, 1]);
 
-    const [id2, , newMeta2] = collectionsApi.updateCollection.mock.calls[1];
+    const [id2, , newMeta2, version2, expected2] = collectionsApi.updateCollection.mock.calls[1];
     expect(id2).toBe('c2');
     expect(decryptCollectionName(newMeta2, newMetadataKey)).toBe(name2);
+    expect([version2, expected2]).toEqual([2, 1]);
   });
 
   it('skips collections without encryptedMetadata', async () => {
@@ -295,8 +298,79 @@ describe('rotateCollections', () => {
       { collectionId: 'c1', vaultId, encryptedMetadata: undefined, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
     ];
 
-    await rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId);
+    await rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId, 2);
 
     expect(collectionsApi.updateCollection).not.toHaveBeenCalled();
   });
+
+  it('skips collections already at targetVersion (resume after a partial sweep)', async () => {
+    const pending = await encryptCollectionName('Still old', oldMetadataKey);
+    const cols: CollectionData[] = [
+      // Bogus ciphertext: must never be decrypted, since the version filter drops it first.
+      { collectionId: 'done', vaultId, encryptedMetadata: new Uint8Array([9, 9, 9]), metadataVersion: 2, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+      { collectionId: 'todo', vaultId, encryptedMetadata: pending, metadataVersion: 1, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ];
+    collectionsApi.updateCollection.mockResolvedValue(undefined);
+
+    await rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId, 2);
+
+    expect(collectionsApi.updateCollection).toHaveBeenCalledTimes(1);
+    expect(collectionsApi.updateCollection.mock.calls[0][0]).toBe('todo');
+  });
+
+  it('a 409 re-reads the collection and retries with the fresh version, re-encrypting whatever name is there now', async () => {
+    const enc = await encryptCollectionName('Flaky', oldMetadataKey);
+    const freshEnc = await encryptCollectionName('Flaky (renamed elsewhere)', oldMetadataKey);
+    const cols: CollectionData[] = [
+      { collectionId: 'c1', vaultId, encryptedMetadata: enc, metadataVersion: 1, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ];
+    collectionsApi.updateCollection
+      .mockRejectedValueOnce(new Error('Collection was modified on another device; reload and retry'))
+      .mockResolvedValueOnce(undefined);
+    // A concurrent rename bumped the row to version 2 in between the sweep's original list and
+    // this update attempt: resending expected version 1 would 409 forever.
+    collectionsApi.listAllCollections.mockResolvedValueOnce([
+      { collectionId: 'c1', vaultId, encryptedMetadata: freshEnc, metadataVersion: 2, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ]);
+
+    await expect(rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId, 3)).resolves.toBeUndefined();
+
+    expect(collectionsApi.updateCollection).toHaveBeenCalledTimes(2);
+    const [, , firstMeta, firstVersion, firstExpected] = collectionsApi.updateCollection.mock.calls[0];
+    expect([firstVersion, firstExpected]).toEqual([3, 1]);
+    expect(decryptCollectionName(firstMeta, newMetadataKey)).toBe('Flaky');
+    const [, , secondMeta, secondVersion, secondExpected] = collectionsApi.updateCollection.mock.calls[1];
+    expect([secondVersion, secondExpected]).toEqual([3, 2]); // the fresh version, not the stale 1
+    expect(decryptCollectionName(secondMeta, newMetadataKey)).toBe('Flaky (renamed elsewhere)');
+  });
+
+  it('a 409 re-read already at the target version skips the collection without throwing', async () => {
+    const enc = await encryptCollectionName('Already there', oldMetadataKey);
+    const cols: CollectionData[] = [
+      { collectionId: 'c1', vaultId, encryptedMetadata: enc, metadataVersion: 1, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ];
+    collectionsApi.updateCollection.mockRejectedValueOnce(new Error('Collection was modified on another device; reload and retry'));
+    // Another rotation attempt already finished this row by the time of the re-read.
+    collectionsApi.listAllCollections.mockResolvedValueOnce([
+      { collectionId: 'c1', vaultId, encryptedMetadata: enc, metadataVersion: 2, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ]);
+
+    await expect(rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId, 2)).resolves.toBeUndefined();
+    expect(collectionsApi.updateCollection).toHaveBeenCalledTimes(1); // no retry once the fresh read shows it's done
+  });
+
+  it('throws after exhausting the retries so the caller can pause the sweep', async () => {
+    const enc = await encryptCollectionName('Dead', oldMetadataKey);
+    const cols: CollectionData[] = [
+      { collectionId: 'c1', vaultId, encryptedMetadata: enc, itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
+    ];
+    collectionsApi.updateCollection.mockRejectedValue(new Error('Collection was modified on another device; reload and retry'));
+    collectionsApi.listAllCollections.mockResolvedValue(cols); // still stale/unchanged on every re-read
+
+    await expect(rotateCollections(cols, oldMetadataKey, newMetadataKey, vaultId, 2)).rejects.toThrow(
+      'Collection was modified on another device; reload and retry',
+    );
+    // ITEM_RETRIES = 3 → 4 total attempts (initial + 3 retries).
+    expect(collectionsApi.updateCollection).toHaveBeenCalledTimes(4);
+  }, 10000);
 });

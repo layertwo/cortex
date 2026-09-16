@@ -27,6 +27,9 @@ export interface VaultKeys {
   vaultId: string;
   kek: Uint8Array;
   metadataKey: Uint8Array;
+  // KEK version the `kek` belongs to; items are created at this dekVersion so a rotation
+  // sweep in flight never re-keys them with the wrong old key.
+  kekVersion: number;
 }
 
 function concat(parts: Uint8Array[]): Uint8Array {
@@ -100,7 +103,7 @@ export async function uploadFileStreaming(
       encryptedMetadata,
       sizeBytes,
       wrappedDek,
-      dekVersion: 1,
+      dekVersion: keys.kekVersion,
       ...(encryptedTags.length ? { encryptedTags } : {}),
     });
 

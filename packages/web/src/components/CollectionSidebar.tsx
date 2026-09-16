@@ -12,7 +12,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { HStack } from '@astryxdesign/core/HStack';
 import { VStack } from '@astryxdesign/core/VStack';
 import { getVaultKeys } from '../vault/keyAccess';
-import { listCollections, createCollection, deleteCollection } from '../api/collections';
+import { listAllCollections, createCollection, deleteCollection } from '../api/collections';
 import { encryptCollectionName, decryptCollectionName } from '../items/collectionMetadata';
 import { useAsyncAction } from './common/useAsyncAction';
 
@@ -54,7 +54,7 @@ export default function CollectionSidebar({
     setError('');
     try {
       const { vaultId, metadataKey } = await getVaultKeys();
-      const cols = await listCollections(vaultId);
+      const cols = await listAllCollections(vaultId);
       setRows(
         cols.map((c) => ({
           id: c.collectionId!,
@@ -81,8 +81,8 @@ export default function CollectionSidebar({
     const name = newName.trim();
     if (!name) return;
     void create.run(async () => {
-      const { vaultId, metadataKey } = await getVaultKeys();
-      await createCollection(vaultId, await encryptCollectionName(name, metadataKey));
+      const { vaultId, metadataKey, kekVersion } = await getVaultKeys();
+      await createCollection(vaultId, await encryptCollectionName(name, metadataKey), kekVersion);
       closeCreate();
       await load();
       onChanged?.();
