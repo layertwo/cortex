@@ -16,10 +16,10 @@
 | src/api/services/\_\_init\_\_.py               |        0 |        0 |        0 |        0 |    100% |           |
 | src/api/services/collection\_service.py        |      153 |       27 |       36 |        6 |     81% |283, 307, 404, 410, 424, 522, 595-633, 663-696 |
 | src/api/services/item\_service.py              |      367 |       55 |      116 |       13 |     86% |397, 414-425, 445-446, 460-481, 522-527, 534-539, 549-554, 712-713, 718-719, 721-722, 790-791, 950-956, 962-\>978, 970-975, 992-997, 1010-1034, 1055-1060, 1077, 1087-1089, 1166, 1169-\>1172, 1173-\>1176 |
-| src/api/services/rotation\_abandon\_service.py |       36 |        0 |        8 |        0 |    100% |           |
+| src/api/services/rotation\_abandon\_service.py |       37 |        0 |        8 |        0 |    100% |           |
 | src/api/services/share\_service.py             |       93 |        8 |       22 |        4 |     90% |169, 187, 201-202, 249, 330-335 |
 | src/api/services/vault\_deletion\_service.py   |      117 |        3 |       44 |        4 |     96% |135-\>144, 169, 177, 205 |
-| src/api/services/vault\_service.py             |      240 |        2 |       74 |        1 |     99% |   611-615 |
+| src/api/services/vault\_service.py             |      246 |        2 |       76 |        1 |     99% |   625-629 |
 | src/entrypoint/\_\_init\_\_.py                 |        0 |        0 |        0 |        0 |    100% |           |
 | src/entrypoint/api.py                          |        4 |        4 |        0 |        0 |      0% |       3-8 |
 | src/entrypoint/container.py                    |        5 |        5 |        0 |        0 |      0% |      3-10 |
@@ -33,7 +33,7 @@
 | src/shared/models.py                           |      293 |       12 |       14 |        3 |     94% |126-128, 140, 376, 379-384, 409 |
 | src/shared/repository.py                       |      218 |       47 |       38 |        5 |     80% |56-61, 92-93, 131-136, 209-214, 230-239, 267-269, 273-278, 339-344, 385-390, 437-442, 472-477, 517-526, 556-561, 668-672, 710-714, 755-756, 784-786 |
 | src/shared/util.py                             |       12 |        3 |        4 |        0 |     69% |     42-44 |
-| **TOTAL**                                      | **2103** |  **200** |  **408** |   **46** | **90%** |           |
+| **TOTAL**                                      | **2110** |  **200** |  **410** |   **46** | **90%** |           |
 
 
 ## Setup coverage badge
