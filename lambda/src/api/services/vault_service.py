@@ -40,6 +40,7 @@ def _vault_summary(item: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": int(item.get("updated_at", item["created_at"])),
         "kek_version": int(item["kek_version"]) if item.get("kek_version") is not None else 1,
         "rotation_state": item.get("rotation_state", "IDLE"),
+        "rotation_generation": int(item.get("rotation_generation", 0)),
     }
 
 
@@ -285,7 +286,8 @@ class VaultService:
         Returns:
             Dictionary with vault_id, vault_salt, encrypted_name, verifier,
             pending_vault_salt, pending_verifier, created_at, updated_at,
-            kek_version, rotation_state, and rotation_locked_at.
+            kek_version, rotation_state, rotation_locked_at, and
+            rotation_generation.
 
         Raises:
             NotFoundError: If the vault is missing, unowned, or being deleted
@@ -526,7 +528,11 @@ class VaultService:
         return self._rotation_result(resp)
 
     def abandon_rotation(
-        self, user_id: str, vault_id: str, expected_locked_at: Optional[int] = None
+        self,
+        user_id: str,
+        vault_id: str,
+        expected_generation: int,
+        expected_locked_at: Optional[int],
     ) -> Dict:
         """
         Discard a staged rotation pair when nothing has been re-keyed under it.
@@ -535,11 +541,14 @@ class VaultService:
         sends ABANDON to RotationAbandonService, which runs the re-keyed-row
         safety check (spec 3) before calling this write (spec 4).
 
-        expected_locked_at pins the rotation_locked_at RotationAbandonService
-        observed via get_vault: if the row's timestamp has since moved
-        (an interleaved ACQUIRE re-armed the lock), the write's condition
-        fails even if the row has drifted back to PAUSED or a stale
-        IN_PROGRESS in the meantime.
+        expected_generation pins the rotation_generation the pre-flight read
+        (0: the attribute was absent, a row never through a new-code ACQUIRE).
+        expected_locked_at additionally pins rotation_locked_at when one was
+        read (None: none was). ACQUIRE is the only writer of both, so any
+        ACQUIRE between the read and this write fails the condition; the
+        timestamp pin is kept because an old-code ACQUIRE during a rollout
+        refreshes it without bumping the counter. Both are required so a
+        caller cannot silently skip a pin.
 
         Returns:
             Dictionary with rotation_state ("IDLE"), rotation_locked_at
@@ -548,8 +557,8 @@ class VaultService:
         Raises:
             NotFoundError: If the vault is missing or unowned.
             ConflictError: If the vault is being deleted, the row is
-                neither PAUSED nor a stale IN_PROGRESS lock, or
-                rotation_locked_at no longer matches expected_locked_at.
+                neither PAUSED nor a stale IN_PROGRESS lock, or either
+                pin no longer matches.
         """
         key = {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
         now = int(time.time())
@@ -566,6 +575,11 @@ class VaultService:
             ":in_progress": "IN_PROGRESS",
             ":stale": now - STALE_LOCK_SECONDS,
         }
+        if expected_generation > 0:
+            condition += " AND rotation_generation = :gen"
+            values[":gen"] = expected_generation
+        else:
+            condition += " AND attribute_not_exists(rotation_generation)"
         if expected_locked_at is not None:
             condition += " AND rotation_locked_at = :seen"
             values[":seen"] = expected_locked_at
@@ -661,6 +675,8 @@ class VaultService:
             )
             values[":salt"] = new_vault_salt
             values[":pv"] = new_verifier
+        update_expr += " ADD rotation_generation :one"
+        values[":one"] = 1
         return update_expr, condition, values
 
     def _prepare_release(
