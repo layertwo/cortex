@@ -338,6 +338,7 @@ class TestUpdateVaultRotationRoute:
                     "updated_at = :now, "
                     "pending_vault_salt = if_not_exists(pending_vault_salt, :salt), "
                     "pending_verifier = if_not_exists(pending_verifier, :pv)"
+                    " ADD rotation_generation :one"
                 ),
                 "ConditionExpression": ANY,
                 "ExpressionAttributeValues": ANY,

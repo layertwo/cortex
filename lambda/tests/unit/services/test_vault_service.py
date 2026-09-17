@@ -351,6 +351,7 @@ class TestVaultService:
                         "updated_at": {"N": "1234567999"},
                         "kek_version": {"N": "3"},
                         "rotation_state": {"S": "PAUSED"},
+                        "rotation_generation": {"N": "2"},
                     },
                 ]
             },
@@ -376,6 +377,7 @@ class TestVaultService:
             "updated_at": 1234567890,
             "kek_version": 1,
             "rotation_state": "IDLE",
+            "rotation_generation": 0,
         }
         assert vaults[1]["vault_salt"] == salt2
         assert vaults[1]["encrypted_name"] == name2
@@ -383,6 +385,7 @@ class TestVaultService:
         assert vaults[1]["updated_at"] == 1234567999
         assert vaults[1]["kek_version"] == 3
         assert vaults[1]["rotation_state"] == "PAUSED"
+        assert vaults[1]["rotation_generation"] == 2
 
     def test_list_user_vaults_pagination_token_round_trip(self, vault_service, dynamodb_stubber):
         """LastEvaluatedKey becomes next_token; feeding it back sends ExclusiveStartKey."""
@@ -914,12 +917,14 @@ class TestVaultService:
 
 ROTATION_KEY = {"PK": "USER#u1", "SK": "VAULT#v1"}
 NOW = 1_700_000_000
+LOCKED_AT = 1_699_999_000
 STALE = NOW - 7 * 24 * 3600
 ACQUIRE_UPDATE = "SET rotation_state = :in_progress, rotation_locked_at = :now, updated_at = :now"
 ACQUIRE_STAGING = (
     ", pending_vault_salt = if_not_exists(pending_vault_salt, :salt)"
     ", pending_verifier = if_not_exists(pending_verifier, :pv)"
 )
+ACQUIRE_ADD = " ADD rotation_generation :one"
 ACQUIRE_CONDITION = (
     "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
     "attribute_not_exists(rotation_state) OR rotation_state = :expected OR "
@@ -932,7 +937,7 @@ RELEASE_UPDATE = "SET rotation_state = :idle, updated_at = :now"
 def _vault_row(**extra):
     """get_item response for u1/v1 mid-rotation; no kek_version unless given (legacy row)."""
     row = vault_row(
-        "u1", "v1", rotation_state={"S": "IN_PROGRESS"}, rotation_locked_at={"N": "1699999000"}
+        "u1", "v1", rotation_state={"S": "IN_PROGRESS"}, rotation_locked_at={"N": str(LOCKED_AT)}
     )
     row.update(extra)
     return {"Item": row}
@@ -974,13 +979,14 @@ class TestVaultRotation:
             {
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
-                "UpdateExpression": ACQUIRE_UPDATE,
+                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_ADD,
                 "ConditionExpression": ACQUIRE_CONDITION,
                 "ExpressionAttributeValues": {
                     ":in_progress": "IN_PROGRESS",
                     ":expected": "IDLE",
                     ":stale": STALE,
                     ":now": NOW,
+                    ":one": 1,
                 },
                 "ReturnValues": "ALL_NEW",
             },
@@ -1009,7 +1015,7 @@ class TestVaultRotation:
             {
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
-                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_STAGING,
+                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_STAGING + ACQUIRE_ADD,
                 "ConditionExpression": ACQUIRE_CONDITION,
                 "ExpressionAttributeValues": {
                     ":in_progress": "IN_PROGRESS",
@@ -1018,6 +1024,7 @@ class TestVaultRotation:
                     ":now": NOW,
                     ":salt": salt,
                     ":pv": verifier,
+                    ":one": 1,
                 },
                 "ReturnValues": "ALL_NEW",
             },
@@ -1047,7 +1054,7 @@ class TestVaultRotation:
             {
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
-                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_STAGING,
+                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_STAGING + ACQUIRE_ADD,
                 "ConditionExpression": ACQUIRE_CONDITION,
                 "ExpressionAttributeValues": ANY,
                 "ReturnValues": "ALL_NEW",
@@ -1128,7 +1135,7 @@ class TestVaultRotation:
             {
                 "Attributes": {
                     "rotation_state": {"S": "PAUSED"},
-                    "rotation_locked_at": {"N": "1699999000"},
+                    "rotation_locked_at": {"N": str(LOCKED_AT)},
                     "pending_vault_salt": {"B": salt},
                     "pending_verifier": {"B": b"pv"},
                 }
@@ -1149,7 +1156,7 @@ class TestVaultRotation:
         result = self._rotate(vault_service, "PAUSE", "IN_PROGRESS")
         assert result == {
             "rotation_state": "PAUSED",
-            "rotation_locked_at": 1699999000,
+            "rotation_locked_at": LOCKED_AT,
             "pending_vault_salt": salt,
             "pending_verifier": b"pv",
         }
@@ -1187,7 +1194,7 @@ class TestVaultRotation:
             {
                 "Attributes": {
                     "rotation_state": {"S": "IDLE"},
-                    "rotation_locked_at": {"N": "1699999000"},
+                    "rotation_locked_at": {"N": str(LOCKED_AT)},
                     "kek_version": {"N": "2"},
                     "vault_salt": {"B": salt},
                     "verifier": {"B": verifier},
@@ -1223,7 +1230,7 @@ class TestVaultRotation:
         )
         assert result == {
             "rotation_state": "IDLE",
-            "rotation_locked_at": 1699999000,
+            "rotation_locked_at": LOCKED_AT,
             "pending_vault_salt": None,
             "pending_verifier": None,
         }
@@ -1387,9 +1394,31 @@ class TestAbandonRotation:
         monkeypatch.setattr(time, "time", lambda: NOW)
         return NOW
 
-    def test_abandon_from_paused_pins_expressions(
-        self, vault_service, dynamodb_stubber, frozen_time
+    @pytest.mark.parametrize(
+        "expected_generation, expected_locked_at, condition_suffix, extra_values",
+        [
+            (
+                3,
+                LOCKED_AT,
+                " AND rotation_generation = :gen AND rotation_locked_at = :seen",
+                {":gen": 3, ":seen": LOCKED_AT},
+            ),
+            (3, None, " AND rotation_generation = :gen", {":gen": 3}),
+            (0, None, " AND attribute_not_exists(rotation_generation)", {}),
+        ],
+        ids=["generation_and_locked_at", "generation_only", "attribute_not_exists"],
+    )
+    def test_abandon_pins_what_the_preflight_read(
+        self,
+        vault_service,
+        dynamodb_stubber,
+        frozen_time,
+        expected_generation,
+        expected_locked_at,
+        condition_suffix,
+        extra_values,
     ):
+        """0 means no rotation_generation attribute was read; None means no timestamp was."""
         dynamodb_stubber.add_response(
             "update_item",
             {"Attributes": {"rotation_state": {"S": "IDLE"}}},
@@ -1397,13 +1426,16 @@ class TestAbandonRotation:
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
                 "UpdateExpression": ABANDON_UPDATE,
-                "ConditionExpression": ABANDON_CONDITION + " AND rotation_locked_at = :seen",
-                "ExpressionAttributeValues": {**ABANDON_VALUES, ":seen": 1699999000},
+                "ConditionExpression": ABANDON_CONDITION + condition_suffix,
+                "ExpressionAttributeValues": {**ABANDON_VALUES, **extra_values},
                 "ReturnValues": "ALL_NEW",
             },
         )
         result = vault_service.abandon_rotation(
-            user_id="u1", vault_id="v1", expected_locked_at=1699999000
+            user_id="u1",
+            vault_id="v1",
+            expected_generation=expected_generation,
+            expected_locked_at=expected_locked_at,
         )
         assert result == {
             "rotation_state": "IDLE",
@@ -1412,10 +1444,10 @@ class TestAbandonRotation:
             "pending_verifier": None,
         }
 
-    def test_abandon_conflict_when_locked_at_changed(
+    def test_abandon_conflict_when_generation_changed(
         self, vault_service, dynamodb_stubber, frozen_time
     ):
-        """A rotation_locked_at that moved since get_vault (interleaved ACQUIRE/PAUSE) 409s."""
+        """A failed generation pin maps to 409."""
         dynamodb_stubber.add_client_error(
             "update_item", service_error_code="ConditionalCheckFailedException"
         )
@@ -1424,7 +1456,7 @@ class TestAbandonRotation:
         )
         with pytest.raises(ConflictError, match="already in progress"):
             vault_service.abandon_rotation(
-                user_id="u1", vault_id="v1", expected_locked_at=1699999000
+                user_id="u1", vault_id="v1", expected_generation=3, expected_locked_at=None
             )
 
     def test_abandon_live_lock_raises_conflict(self, vault_service, dynamodb_stubber, frozen_time):
@@ -1436,7 +1468,9 @@ class TestAbandonRotation:
             "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
         )
         with pytest.raises(ConflictError, match="already in progress"):
-            vault_service.abandon_rotation(user_id="u1", vault_id="v1")
+            vault_service.abandon_rotation(
+                user_id="u1", vault_id="v1", expected_generation=0, expected_locked_at=None
+            )
 
     def test_abandon_deleting_vault_is_conflict(self, vault_service, dynamodb_stubber, frozen_time):
         dynamodb_stubber.add_client_error(
@@ -1454,7 +1488,9 @@ class TestAbandonRotation:
             {"TableName": "test-vaults-table", "Key": ROTATION_KEY},
         )
         with pytest.raises(ConflictError, match="Vault is being deleted"):
-            vault_service.abandon_rotation(user_id="u1", vault_id="v1")
+            vault_service.abandon_rotation(
+                user_id="u1", vault_id="v1", expected_generation=0, expected_locked_at=None
+            )
 
     def test_abandon_missing_vault_is_not_found(self, vault_service, dynamodb_stubber, frozen_time):
         dynamodb_stubber.add_client_error(
@@ -1464,4 +1500,6 @@ class TestAbandonRotation:
             "get_item", {}, {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
         )
         with pytest.raises(NotFoundError, match="Vault not found"):
-            vault_service.abandon_rotation(user_id="u1", vault_id="v1")
+            vault_service.abandon_rotation(
+                user_id="u1", vault_id="v1", expected_generation=0, expected_locked_at=None
+            )

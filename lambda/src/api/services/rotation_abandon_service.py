@@ -65,6 +65,7 @@ class RotationAbandonService:
         kek_version = vault["kek_version"]
         state = vault["rotation_state"]
         locked_at = vault["rotation_locked_at"]
+        generation = vault["rotation_generation"]
 
         if state != "PAUSED" and not (
             state == "IN_PROGRESS"
@@ -106,7 +107,9 @@ class RotationAbandonService:
             rekeyed_items=0,
             rekeyed_collections=0,
         )
-        return self.vault_service.abandon_rotation(user_id, vault_id, expected_locked_at=locked_at)
+        return self.vault_service.abandon_rotation(
+            user_id, vault_id, expected_generation=generation, expected_locked_at=locked_at
+        )
 
     def _check_rows(self, repo, query_kwargs: dict, vault_id: str, what: str) -> None:
         """Page repo.query(**query_kwargs) to exhaustion; raise on the first row this vault owns."""

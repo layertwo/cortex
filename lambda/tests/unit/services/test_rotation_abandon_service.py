@@ -21,6 +21,8 @@ USER = "user-a"
 VAULT = "vault-a"
 
 ROTATION_LOCKED_AT = 1699999000
+ROTATION_GENERATION = 4
+STALE_LOCK = int(time.time()) - STALE_LOCK_SECONDS - 100
 CONFLICT_MESSAGE = "A vault password change is already in progress on another device"
 
 VAULTS_TABLE = "test-vaults-table"
@@ -68,7 +70,9 @@ def _collection_row(vault_id: str, collection_id: str, metadata_version: int) ->
 
 
 def _stub_vault(
-    stubber, kek_version: int = 1, rotation_locked_at: int = ROTATION_LOCKED_AT
+    stubber,
+    kek_version: int = 1,
+    rotation_locked_at: int = ROTATION_LOCKED_AT,
 ) -> None:
     """get_item for the vault: PAUSED with a staged pair, at the given kek_version."""
     row = vault_row(
@@ -79,6 +83,7 @@ def _stub_vault(
         pending_verifier={"B": b"\x02" * 32},
         kek_version={"N": str(kek_version)},
         rotation_locked_at={"N": str(rotation_locked_at)},
+        rotation_generation={"N": str(ROTATION_GENERATION)},
     )
     stubber.add_response(
         "get_item", {"Item": row}, {"TableName": VAULTS_TABLE, "Key": _vault_key(USER, VAULT)}
@@ -86,7 +91,10 @@ def _stub_vault(
 
 
 def _stub_vault_state(
-    stubber, rotation_state: str, rotation_locked_at: int | None = None, kek_version: int = 1
+    stubber,
+    rotation_state: str,
+    rotation_locked_at: int | None = None,
+    kek_version: int = 1,
 ) -> None:
     """get_item for the vault in an arbitrary rotation_state, for the pre-flight check tests."""
     attrs = {"rotation_state": {"S": rotation_state}, "kek_version": {"N": str(kek_version)}}
@@ -141,7 +149,20 @@ def _stub_collections_page(
     stubber.add_response("query", response, expected)
 
 
-def _stub_abandon_write(stubber, locked_at: int = ROTATION_LOCKED_AT) -> None:
+def _stub_abandon_write(
+    stubber,
+    generation: int = ROTATION_GENERATION,
+    locked_at: int | None = ROTATION_LOCKED_AT,
+) -> None:
+    if generation > 0:
+        condition_suffix = " AND rotation_generation = :gen"
+        extra_values = {":gen": generation}
+    else:
+        condition_suffix = " AND attribute_not_exists(rotation_generation)"
+        extra_values = {}
+    if locked_at is not None:
+        condition_suffix += " AND rotation_locked_at = :seen"
+        extra_values[":seen"] = locked_at
     stubber.add_response(
         "update_item",
         {"Attributes": {"rotation_state": {"S": "IDLE"}}},
@@ -149,14 +170,14 @@ def _stub_abandon_write(stubber, locked_at: int = ROTATION_LOCKED_AT) -> None:
             "TableName": VAULTS_TABLE,
             "Key": _vault_key(USER, VAULT),
             "UpdateExpression": ABANDON_UPDATE,
-            "ConditionExpression": ABANDON_CONDITION + " AND rotation_locked_at = :seen",
+            "ConditionExpression": ABANDON_CONDITION + condition_suffix,
             "ExpressionAttributeValues": {
                 ":idle": "IDLE",
                 ":now": ANY,
                 ":paused": "PAUSED",
                 ":in_progress": "IN_PROGRESS",
                 ":stale": ANY,
-                ":seen": locked_at,
+                **extra_values,
             },
             "ReturnValues": "ALL_NEW",
         },
@@ -227,15 +248,19 @@ class TestRotationAbandonService:
         with pytest.raises(ConflictError, match=CONFLICT_MESSAGE):
             rotation_abandon_service.abandon(USER, VAULT)
 
-    def test_abandon_on_stale_in_progress_vault_proceeds_to_scans(
-        self, rotation_abandon_service, dynamodb_stubber
+    @pytest.mark.parametrize(
+        "state, locked_at",
+        [("IN_PROGRESS", STALE_LOCK), ("PAUSED", None)],
+        ids=["stale_in_progress", "legacy_paused_no_lock"],
+    )
+    def test_preflight_admits_stale_lock_and_legacy_row(
+        self, rotation_abandon_service, dynamodb_stubber, state, locked_at
     ):
-        """A stale IN_PROGRESS lock passes the pre-flight check and reaches the scans."""
-        stale_lock = int(time.time()) - STALE_LOCK_SECONDS - 100
-        _stub_vault_state(dynamodb_stubber, "IN_PROGRESS", rotation_locked_at=stale_lock)
+        """Both reach the scans; neither row has a rotation_generation attribute, so the write pins absence."""
+        _stub_vault_state(dynamodb_stubber, state, rotation_locked_at=locked_at)
         _stub_items_page(dynamodb_stubber, [])
         _stub_collections_page(dynamodb_stubber, [])
-        _stub_abandon_write(dynamodb_stubber, locked_at=stale_lock)
+        _stub_abandon_write(dynamodb_stubber, generation=0, locked_at=locked_at)
 
         result = rotation_abandon_service.abandon(USER, VAULT)
 
