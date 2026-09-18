@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -15,8 +15,6 @@ const { session } = vi.hoisted(() => ({
 vi.mock('../auth/SessionContext', () => ({ useSession: () => session }));
 
 import VaultSwitcher from './VaultSwitcher';
-
-beforeEach(() => vi.clearAllMocks());
 
 describe('VaultSwitcher', () => {
   it('names the current vault on the trigger and lists every vault plus the two actions', async () => {

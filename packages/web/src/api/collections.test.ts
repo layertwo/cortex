@@ -49,7 +49,6 @@ const col = (collectionId: string) => ({
 });
 
 beforeEach(() => {
-  sendMock.mockReset();
   commands.length = 0;
 });
 

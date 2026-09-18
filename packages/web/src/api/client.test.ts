@@ -68,7 +68,6 @@ const summary = (vaultId: string) => ({
 });
 
 beforeEach(() => {
-  sendMock.mockReset();
   configs.length = 0;
   commands.length = 0;
 });

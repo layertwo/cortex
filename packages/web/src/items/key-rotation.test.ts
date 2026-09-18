@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { wrapDek, unwrapDek, generateDek, encryptTagForSearch } from '@cortex/encryption';
 import type { ItemData, CollectionData } from '@cortex/client';
 import { encryptMetadata, decryptMetadata, type FileMetadata } from './metadata';
@@ -93,10 +93,6 @@ async function makeMediaItem(opts: {
   };
   return { item, dek, meta };
 }
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
 
 describe('rotateItems', () => {
   it('re-wraps the DEK and re-encrypts metadata + tags for a MEDIA item below targetDekVersion', async () => {

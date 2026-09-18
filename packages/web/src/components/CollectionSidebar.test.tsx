@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -25,8 +25,6 @@ vi.mock('../items/collectionMetadata', () => ({
 }));
 
 import CollectionSidebar from './CollectionSidebar';
-
-beforeEach(() => vi.clearAllMocks());
 
 describe('CollectionSidebar', () => {
   it('lists decrypted collection names with an All files entry', async () => {

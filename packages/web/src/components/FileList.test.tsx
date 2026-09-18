@@ -45,7 +45,6 @@ async function openRowMenu() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
   vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([9]).buffer)));
   vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:x'), revokeObjectURL: vi.fn() });
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -16,8 +16,6 @@ import DeleteVaultDialog from './DeleteVaultDialog';
 import { DELETE_REFUSED } from '../auth/SessionContext';
 
 const vault = { vaultId: 'v2', name: 'Family archive' };
-
-beforeEach(() => vi.clearAllMocks());
 
 function setup() {
   const onClose = vi.fn();
