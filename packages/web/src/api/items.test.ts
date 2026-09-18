@@ -60,7 +60,6 @@ import {
 } from './items';
 
 beforeEach(() => {
-  sendMock.mockReset();
   commands.length = 0;
   vi.unstubAllGlobals();
 });

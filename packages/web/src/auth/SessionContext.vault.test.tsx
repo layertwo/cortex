@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { getCurrentUser } from 'aws-amplify/auth';
 import {
@@ -182,7 +182,6 @@ function storedRegistry(): Record<string, unknown>[] {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
   localStorage.clear();
   document.title = '';
   // Offline by default: the gate keeps whatever registry a test seeded. Tests that exercise
@@ -813,9 +812,6 @@ describe('rotation with the staged pair', () => {
 
   beforeEach(() => {
     vi.mocked(deriveVaultMasterKey).mockImplementation(async (password: string) => MASTERS[password] ?? MASTER);
-  });
-  afterEach(() => {
-    vi.mocked(deriveVaultMasterKey).mockImplementation(async () => MASTER);
   });
 
   // A vault this device unlocked before (local verifier blob) that the server also lists.

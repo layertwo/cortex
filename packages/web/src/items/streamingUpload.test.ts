@@ -26,7 +26,6 @@ function fakeFile(bytes: Uint8Array, name = 'f.bin', type = 'image/png'): File {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
   api.putToS3.mockResolvedValue('"etag"');
   api.completeUpload.mockResolvedValue(undefined);
   api.abortUpload.mockResolvedValue(undefined);

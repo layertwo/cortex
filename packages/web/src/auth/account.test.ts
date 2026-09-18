@@ -6,7 +6,6 @@ vi.mock('aws-amplify/auth', () => ({ getCurrentUser }));
 import { ACCOUNT_KEY, getAccountId, resolveAccount, clearAccount } from './account';
 
 beforeEach(() => {
-  vi.clearAllMocks();
   localStorage.clear();
 });
 

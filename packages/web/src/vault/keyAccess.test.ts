@@ -6,7 +6,6 @@ vi.mock('@cortex/encryption', () => ({ retrieveKeys }));
 import { getVaultKeys } from './keyAccess';
 
 beforeEach(() => {
-  vi.clearAllMocks();
   localStorage.clear();
   localStorage.setItem('cortex_account', 'u1');
 });

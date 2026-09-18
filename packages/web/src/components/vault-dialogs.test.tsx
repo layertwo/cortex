@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -21,8 +21,6 @@ vi.mock('../auth/SessionContext', () => ({ useSession: () => session }));
 import UnlockVaultDialog from './UnlockVaultDialog';
 import NewVaultDialog from './NewVaultDialog';
 import ManageVaultsDialog from './ManageVaultsDialog';
-
-beforeEach(() => vi.clearAllMocks());
 
 describe('UnlockVaultDialog', () => {
   it('unlocks the named vault and reports success', async () => {

@@ -30,7 +30,6 @@ function Probe() {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
   localStorage.clear();
 });
 

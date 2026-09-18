@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -10,8 +10,6 @@ vi.mock('react-router-dom', async (o) => ({
 }));
 
 import Landing from './Landing';
-
-beforeEach(() => vi.clearAllMocks());
 
 describe('Landing', () => {
   it('shows the hero headline and both calls to action', () => {

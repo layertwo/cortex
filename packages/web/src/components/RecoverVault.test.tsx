@@ -31,7 +31,6 @@ vi.mock('../vault/recovery', async (o) => ({
 import RecoverVault from './RecoverVault';
 
 beforeEach(() => {
-  vi.clearAllMocks();
   recovery.identifyVaultForPhrase.mockReturnValue('v1');
   session.recoverVault.mockResolvedValue({ phrase: NEW_PHRASE, vaultId: 'v1', name: 'Personal' });
 });

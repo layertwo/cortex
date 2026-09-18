@@ -27,7 +27,6 @@ import VaultSetup from './VaultSetup';
 import VaultUnlock from './VaultUnlock';
 
 beforeEach(() => {
-  vi.clearAllMocks();
   session.setupVault.mockResolvedValue(RECOVERY);
   session.vaults = [];
 });

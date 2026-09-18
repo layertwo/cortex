@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor, fireEvent, within, createEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -12,8 +12,6 @@ vi.mock('../items/streamingUpload', () => ({ uploadFileStreaming: h.uploadFileSt
 vi.mock('../items/thumbnail', () => ({ makeThumbnail: h.makeThumbnail }));
 
 import UploadQueue, { MAX_FILE_SIZE_BYTES } from './UploadQueue';
-
-beforeEach(() => vi.clearAllMocks());
 
 function pick(name: string, bytes: number, type = 'image/png') {
   const file = new File([new Uint8Array(Math.min(bytes, 4))], name, { type });

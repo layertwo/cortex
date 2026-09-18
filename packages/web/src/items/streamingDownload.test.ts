@@ -62,7 +62,6 @@ const meta = (contentId: string): FileMetadata =>
   ({ name: 'f.bin', contentType: 'application/octet-stream', size: 0, contentId, streamVersion: 1 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
   vi.unstubAllGlobals();
 });
 

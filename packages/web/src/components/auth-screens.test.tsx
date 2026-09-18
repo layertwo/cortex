@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -22,10 +22,6 @@ vi.mock('react-router-dom', async (o) => ({
 import Signup from './Signup';
 import Login from './Login';
 import ForgotPassword from './ForgotPassword';
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
 
 describe('auth screens', () => {
   it('Signup calls signUpAccount with email + account password and navigates to /verify', async () => {
