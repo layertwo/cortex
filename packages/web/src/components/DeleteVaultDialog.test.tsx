@@ -68,7 +68,8 @@ describe('DeleteVaultDialog', () => {
       'A vault password change is in progress; wait for it to finish or pause it first',
     );
     expect(within(dialog).queryByRole('button', { name: /retry/i })).toBeNull();
-    expect(within(dialog).getByRole('button', { name: /^delete vault$/i })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: /^delete vault$/i })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeEnabled();
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -97,7 +98,8 @@ describe('DeleteVaultDialog', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: /^delete vault$/i }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(DELETE_REFUSED);
     expect(within(dialog).queryByRole('button', { name: /retry/i })).toBeNull();
-    expect(within(dialog).getByRole('button', { name: /^delete vault$/i })).toBeEnabled();
+    expect(within(dialog).getByRole('button', { name: /^delete vault$/i })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: /cancel/i })).toBeEnabled();
     expect(onClose).not.toHaveBeenCalled();
   });
 });

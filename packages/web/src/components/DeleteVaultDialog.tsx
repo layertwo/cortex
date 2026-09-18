@@ -77,7 +77,7 @@ export default function DeleteVaultDialog({ vault, onClose }: { vault: VaultEntr
                 variant="destructive"
                 type="submit"
                 form={FORM_ID}
-                isDisabled={!password || pending}
+                isDisabled={!password || pending || error?.retry === false}
               />
             </HStack>
           </LayoutFooter>
