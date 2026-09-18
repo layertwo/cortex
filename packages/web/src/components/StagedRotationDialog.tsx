@@ -86,10 +86,13 @@ export function useStagedMismatch(): { onStagedMismatch: OnStagedMismatch; stage
     },
     [],
   );
-  const onStagedMismatch = useCallback<OnStagedMismatch>(
-    (startedAt, error) => new Promise((resolve) => setPending({ startedAt, error, resolve })),
-    [],
-  );
+  const onStagedMismatch = useCallback<OnStagedMismatch>((startedAt, error) => {
+    // A new prompt supersedes any pending one, so no caller is left awaiting forever. The ref
+    // is refreshed on render, so two calls in the same synchronous tick would still orphan the
+    // first; every real call sits behind an await, so that ceiling is not reachable.
+    pendingRef.current?.resolve({ action: 'cancel' });
+    return new Promise((resolve) => setPending({ startedAt, error, resolve }));
+  }, []);
   const settle = (decision: StagedDecision) => {
     pending?.resolve(decision);
     setPending(null);

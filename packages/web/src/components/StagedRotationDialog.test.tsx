@@ -75,4 +75,25 @@ describe('useStagedMismatch', () => {
     unmount();
     await expect(decision).resolves.toEqual({ action: 'cancel' });
   });
+
+  it('a second ask cancels the first and stays pending until the dialog acts', async () => {
+    let onStagedMismatch!: ReturnType<typeof useStagedMismatch>['onStagedMismatch'];
+    render(<Probe onReady={(fn) => { onStagedMismatch = fn; }} />);
+    let first!: ReturnType<typeof onStagedMismatch>;
+    let second!: ReturnType<typeof onStagedMismatch>;
+    act(() => {
+      first = onStagedMismatch(null);
+    });
+    act(() => {
+      second = onStagedMismatch(null, 'Incorrect vault password');
+    });
+    await expect(first).resolves.toEqual({ action: 'cancel' });
+    const dialog = screen.getByRole('dialog', { name: TITLE });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Incorrect vault password');
+    // Order matters: an already-settled `second` would win the race over the resolved sentinel.
+    await expect(Promise.race([second, Promise.resolve('pending')])).resolves.toBe('pending');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await expect(second).resolves.toEqual({ action: 'cancel' });
+    expect(screen.queryByRole('dialog', { name: TITLE })).toBeNull();
+  });
 });
