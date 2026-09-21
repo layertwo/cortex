@@ -32,8 +32,6 @@ describe('RecoveryPhrase', () => {
     render(<RecoveryPhrase phrase={PHRASE} kit={{ name: 'Personal', vaultId: 'v1' }} />);
     await userEvent.click(screen.getByRole('button', { name: /download recovery kit/i }));
     expect(click).toHaveBeenCalled();
-    click.mockRestore();
-    vi.unstubAllGlobals();
   });
 
   it('has no download button without kit details', () => {

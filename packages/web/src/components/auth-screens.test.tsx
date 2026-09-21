@@ -118,8 +118,7 @@ describe('auth screens', () => {
   });
 
   it('Signup shows the proof aside on wide viewports', () => {
-    const original = window.matchMedia;
-    window.matchMedia = (query: string) =>
+    vi.stubGlobal('matchMedia', (query: string) =>
       ({
         matches: true,
         media: query,
@@ -129,16 +128,12 @@ describe('auth screens', () => {
         addEventListener() {},
         removeEventListener() {},
         dispatchEvent: () => false,
-      }) as MediaQueryList;
-    try {
-      render(
-        <MemoryRouter>
-          <Signup />
-        </MemoryRouter>,
-      );
-      expect(screen.getByText('0 bytes')).toBeInTheDocument();
-    } finally {
-      window.matchMedia = original;
-    }
+      }) as MediaQueryList);
+    render(
+      <MemoryRouter>
+        <Signup />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('0 bytes')).toBeInTheDocument();
   });
 });

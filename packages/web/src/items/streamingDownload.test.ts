@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   generateDek, wrapDek, generateNoncePrefix, buildStreamHeader, encryptChunk,
 } from '@cortex/encryption';
@@ -60,10 +60,6 @@ function fakeSink() {
 
 const meta = (contentId: string): FileMetadata =>
   ({ name: 'f.bin', contentType: 'application/octet-stream', size: 0, contentId, streamVersion: 1 });
-
-beforeEach(() => {
-  vi.unstubAllGlobals();
-});
 
 describe('downloadFileStreaming', () => {
   it.each([
