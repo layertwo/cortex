@@ -61,7 +61,6 @@ import {
 
 beforeEach(() => {
   commands.length = 0;
-  vi.unstubAllGlobals();
 });
 
 describe('items api', () => {

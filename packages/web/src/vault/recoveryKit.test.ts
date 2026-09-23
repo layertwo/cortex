@@ -30,7 +30,5 @@ describe('recovery kit', () => {
     expect(click).toHaveBeenCalled();
     const a = click.mock.instances[0] as HTMLAnchorElement;
     expect(a.download).toBe('cortex-recovery-kit-family-archive.txt');
-    click.mockRestore();
-    vi.unstubAllGlobals();
   });
 });

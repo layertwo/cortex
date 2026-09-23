@@ -1,12 +1,7 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { makeThumbnail } from './thumbnail';
 
 describe('makeThumbnail', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
   it('returns undefined for non-media files without touching the DOM', async () => {
     expect(await makeThumbnail(new File(['x'], 'a.pdf', { type: 'application/pdf' }))).toBeUndefined();
     expect(await makeThumbnail(new File(['x'], 'noext', { type: '' }))).toBeUndefined();
