@@ -59,3 +59,11 @@ if (typeof HTMLDialogElement.prototype.showModal !== 'function') {
 // jsdom defines scrollTo but only logs "Not implemented" to stderr; Dialog focus
 // management calls it, so replace it with a no-op to keep test output pristine.
 window.scrollTo = () => {};
+
+// jsdom implements no blob URLs. Vitest's jsdom compat layer bridges them by reading
+// jsdom's internal `Symbol(impl)` off the blob, and jsdom 30.1 removed that symbol, so
+// URL.createObjectURL reaches `undefined._buffer` and throws. Stub the pair: callers
+// only need a usable URL string they later revoke (and clear off an element's src).
+let blobUrlSeq = 0;
+URL.createObjectURL = () => `blob:test/${++blobUrlSeq}`;
+URL.revokeObjectURL = () => {};
