@@ -6,7 +6,7 @@ dependencies = [
     "boto3==1.43.98",
     "cryptography==50.0.1",
     "pydantic==2.13.5",
-    "fastapi==0.141.1",
+    "fastapi==0.143.0",
     "mangum==0.22.0",
     "uvicorn[standard]==0.53.0",
     "structlog==26.1.0",
