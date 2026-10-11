@@ -3,9 +3,7 @@ import { render, screen, act, waitFor } from '@testing-library/react';
 import { getCurrentUser } from 'aws-amplify/auth';
 import {
   deriveKeys,
-  deriveWrappingKey,
   generateVaultMasterKey,
-  generateRecoveryKey,
   wrapVmk,
   unwrapVmk,
   wrapDek,
