@@ -95,7 +95,7 @@ export async function rotateItems({
         }
       }
     }
-    // All retries exhausted — rethrow so the caller can set rotationState=PAUSED.
+    // All retries exhausted — rethrow so the caller leaves the rotation IN_PROGRESS.
     // The item's dekVersion is unchanged, so resume will retry it.
     if (lastErr) throw lastErr;
 
@@ -108,7 +108,7 @@ export async function rotateItems({
 // KEK version whose key encrypts the row (absent means 1); rows already at `targetVersion` were
 // re-keyed by an earlier attempt and are skipped, so the sweep resumes where it stopped. Each
 // update is retried like items (a 409 from a concurrent rename included), then rethrown so the
-// caller can pause the rotation.
+// caller leaves the rotation IN_PROGRESS to resume.
 export async function rotateCollections(
   collections: CollectionData[],
   oldMetadataKey: Uint8Array,

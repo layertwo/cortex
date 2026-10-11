@@ -37,7 +37,6 @@ const wrapKey = (pw: string) => (WRAP[pw] ?? new Uint8Array(32).fill(5)).slice()
 const { api } = vi.hoisted(() => ({
   api: {
     createVault: vi.fn(),
-    getVaultSalt: vi.fn(),
     getVault: vi.fn(),
     updateVaultPassword: vi.fn(),
     updateVaultRotation: vi.fn(),
@@ -605,6 +604,40 @@ describe('rotateEncryptionKeys', () => {
     expect(api.updateVaultRotation.mock.calls[1][0]).toMatchObject({ action: 'RELEASE' });
   });
 
+  it('resumes an IN_PROGRESS rotation: sweeps stragglers with the FROM envelope, then RELEASEs', async () => {
+    // The previous attempt ACQUIREd (server bumped to v2) but failed mid-sweep; the v1 envelope
+    // still wraps the old VMK, the v2 envelope the new one. Resume must derive the old KEK from
+    // the v1 envelope, not the (now current) v2 one, or the un-swept item never unwraps.
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName: await encryptCollectionName('Holiday', deriveKeys(VMK).metadataEncryptionKey),
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        rotationState: 'IN_PROGRESS',
+        rotationLockedAt: 1700000000,
+        vmkEnvelopes: [
+          { vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) },
+          { vmkVersion: 2, wrappedVmk: await envelope(VMK_NEW, 'vaultpw'), createdAt: new Date(0) },
+        ],
+      }),
+    );
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Holiday', currentVmkVersion: 2, rotationState: 'IN_PROGRESS' }]));
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    const item = await mediaItem(1, deriveKeys(VMK)); // still on the generation being swept from
+    vi.mocked(listAllItems).mockResolvedValueOnce([item]).mockResolvedValueOnce([]);
+    api.updateVaultRotation.mockResolvedValueOnce({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 2 });
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.rotateEncryptionKeys('vaultpw');
+    });
+    expect(api.updateVaultRotation.mock.calls.map((c) => (c[0] as { action: string }).action)).toEqual(['RELEASE']);
+    const [, , dekVersion] = vi.mocked(updateItemRotation).mock.calls[0];
+    expect(dekVersion).toBe(2);
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK_NEW));
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 2, rotationState: 'IDLE' });
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
+  });
+
   it('rejects a wrong confirmation password without ACQUIRE', async () => {
     await seedRotatableVault();
     await renderProbe();
@@ -723,6 +756,32 @@ describe('recoverVault', () => {
     expect(api.updateVaultPassword).not.toHaveBeenCalled();
   });
 
+  it('rejects a superseded phrase when only an old-generation item exists (no encryptedName)', async () => {
+    const supersededPhrase = realGenerateRecoveryKey(VMK);
+    // Current generation is 2; the only candidate is a v1 item. The superseded phrase opens it,
+    // but accepting it would overwrite the v2 envelope with the v1 VMK and break swept items.
+    vi.mocked(listItems).mockResolvedValueOnce([await mediaItem(1, deriveKeys(VMK))]);
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName: null,
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        vmkEnvelopes: [
+          { vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) },
+          { vmkVersion: 2, wrappedVmk: await envelope(VMK_NEW, 'vaultpw'), createdAt: new Date(0) },
+        ],
+      }),
+    );
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.recoverVault(supersededPhrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
   it('proves via an old-key item when the vault has no encryptedName', async () => {
     const phrase = realGenerateRecoveryKey(VMK);
     vi.mocked(listItems).mockResolvedValueOnce([await mediaItem(1, deriveKeys(VMK))]);
@@ -800,13 +859,13 @@ describe('deleteVault', () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
     api.getVault.mockResolvedValue(await serverVault());
     api.deleteVault.mockRejectedValueOnce(
-      new ConflictError({ message: 'A vault password change is in progress; wait for it to finish or pause it first', $metadata: {} }),
+      new ConflictError({ message: 'A key rotation is in progress; finish it before deleting this vault', $metadata: {} }),
     );
     await renderProbe();
     await act(async () => {
       screen.getByText('delete-v1').click();
     });
-    expect(document.title).toBe('A vault password change is in progress; wait for it to finish or pause it first');
+    expect(document.title).toBe('A key rotation is in progress; finish it before deleting this vault');
     expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
   });
 });

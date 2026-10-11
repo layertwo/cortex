@@ -511,7 +511,7 @@ class VaultService:
                 return
             logger.warning("Vault deletion blocked by rotation lock", vault_id=vault_id)
             raise ConflictError(
-                "A vault password change is in progress; wait for it to finish or pause it first"
+                "A key rotation is in progress; finish it before deleting this vault"
             ) from e
 
         logger.info(

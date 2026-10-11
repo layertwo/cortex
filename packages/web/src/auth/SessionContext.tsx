@@ -80,16 +80,18 @@ export const ROTATION_INCOMPLETE = 'Some files still need re-keying; the key rot
 export const RECOVERY_BLOCKED_BY_ROTATION = 'A key rotation is in progress; finish it before recovering this vault';
 
 // Does the phrase's metadata key open anything already stored in the vault? Used during recovery
-// to prove a phrase when the vault has no server-side encrypted name. An empty vault proves
-// nothing, and the caller must refuse: a wrong but well-formed phrase would otherwise re-wrap the
-// surviving VMK irreversibly.
+// to prove a phrase when the vault has no server-side encrypted name. Only candidates in the
+// vault's CURRENT generation count: a superseded phrase (an older VMK) still opens them, so
+// accepting an older generation would re-wrap the current envelope with the wrong VMK. An empty
+// vault proves nothing, and the caller must refuse: a wrong but well-formed phrase would
+// otherwise re-wrap the surviving VMK irreversibly.
 async function provesOwnership(vaultId: string, currentVmkVersion: number, metadataKey: Uint8Array): Promise<boolean> {
   const [items, collections] = await Promise.all([listItems(vaultId), listAllCollections(vaultId)]);
-  const oldKeyItems = items.filter(
-    (i) => i.itemType === 'MEDIA' && i.encryptedMetadata && (i.dekVersion ?? 0) <= currentVmkVersion,
+  const currentItems = items.filter(
+    (i) => i.itemType === 'MEDIA' && i.encryptedMetadata && i.dekVersion === currentVmkVersion,
   );
-  if (oldKeyItems.length) {
-    return oldKeyItems.some((i) => {
+  if (currentItems.length) {
+    return currentItems.some((i) => {
       try {
         decryptMetadata(i.encryptedMetadata!, metadataKey);
         return true;
@@ -98,7 +100,9 @@ async function provesOwnership(vaultId: string, currentVmkVersion: number, metad
       }
     });
   }
-  const withMetadata = collections.filter((c) => c.encryptedMetadata);
+  const withMetadata = collections.filter(
+    (c) => c.encryptedMetadata && (c.metadataVersion ?? 1) === currentVmkVersion,
+  );
   if (!withMetadata.length) return false; // nothing to prove against
   return withMetadata.some((c) => {
     try {
@@ -466,31 +470,54 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const vaultId = activeVaultId();
       if (!vaultId) throw new Error('No vault on this device');
       const vault = await getVault(vaultId);
+      // A fresh rotation sweeps from `currentVmkVersion` onto version +1. A resumed rotation
+      // (rotationState IN_PROGRESS) already ACQUIREd, so the server's `currentVmkVersion` is the
+      // NEW generation and the one being swept FROM is a version behind. Deriving the old KEK
+      // from the current envelope would unwrap the new VMK, so every still-old item would fail
+      // and the sweep could never finish.
+      const isResume = vault.rotationState === 'IN_PROGRESS';
+      const fromVersion = isResume ? vault.currentVmkVersion - 1 : vault.currentVmkVersion;
+      const newVersion = isResume ? vault.currentVmkVersion : vault.currentVmkVersion + 1;
       const wrappingKey = await deriveWrappingKey(currentPassword, vault.vaultSalt);
-      const current = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
       let vmkOld: Uint8Array;
       try {
-        if (!current) throw new Error(WRONG_VAULT_PASSWORD);
-        vmkOld = unwrapVmk(current.wrappedVmk, wrappingKey); // confirmation gate
+        const fromEnvelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === fromVersion);
+        if (!fromEnvelope) throw new Error(WRONG_VAULT_PASSWORD);
+        vmkOld = unwrapVmk(fromEnvelope.wrappedVmk, wrappingKey); // confirmation gate
       } catch {
         secureZeroize(wrappingKey);
         throw new Error(WRONG_VAULT_PASSWORD);
       }
-      const keysOld = deriveKeys(vmkOld);
-      const vmkNew = await generateVaultMasterKey();
-      const wrappedNewVmk = await wrapVmk(vmkNew, wrappingKey);
-      secureZeroize(wrappingKey);
-      const keysNew = deriveKeys(vmkNew);
-      const newVersion = vault.currentVmkVersion + 1;
-      await updateVaultRotation({
-        vaultId,
-        action: 'ACQUIRE',
-        expectedState: vault.rotationState,
-        expectedEnvelopeVersion: vault.envelopeVersion,
-        newVmkVersion: newVersion,
-        wrappedNewVmk,
-      });
+      let vmkNew: Uint8Array;
       try {
+        if (isResume) {
+          const newEnvelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === newVersion);
+          if (!newEnvelope) throw new Error(WRONG_VAULT_PASSWORD);
+          vmkNew = unwrapVmk(newEnvelope.wrappedVmk, wrappingKey);
+        } else {
+          vmkNew = await generateVaultMasterKey();
+        }
+      } catch {
+        secureZeroize(vmkOld);
+        secureZeroize(wrappingKey);
+        throw new Error(WRONG_VAULT_PASSWORD);
+      }
+      const keysOld = deriveKeys(vmkOld);
+      const keysNew = deriveKeys(vmkNew);
+      let acquired = isResume;
+      try {
+        if (!isResume) {
+          const wrappedNewVmk = await wrapVmk(vmkNew, wrappingKey);
+          await updateVaultRotation({
+            vaultId,
+            action: 'ACQUIRE',
+            expectedState: vault.rotationState,
+            expectedEnvelopeVersion: vault.envelopeVersion,
+            newVmkVersion: newVersion,
+            wrappedNewVmk,
+          });
+          acquired = true;
+        }
         const items = await listAllItems(vaultId);
         await rotateItems({
           vaultId,
@@ -534,14 +561,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setRotationInterrupted(false);
         return generateRecoveryKey(vmkNew);
       } catch (err) {
-        // ACQUIRE committed and the server bumped currentVmkVersion, but storeKeys was not called,
-        // so this client still holds the OLD KEK. Do NOT advance currentVmkVersion in the registry:
-        // advertising a version whose KEK the client cannot unwrap would tag uploads with an
-        // unreadable dekVersion. The next unlock reads GetVault and adopts the new keys/version.
-        patchEntry(vaultId, { rotationState: 'IN_PROGRESS', vaultSalt: vault.vaultSalt });
-        setRotationInterrupted(true);
+        // Only a committed ACQUIRE leaves the server IN_PROGRESS; a rejected ACQUIRE (conflict or
+        // wrong expected state) changed nothing. After a sweep failure storeKeys was not called, so
+        // do NOT advance currentVmkVersion in the registry: advertising a version whose KEK the
+        // client cannot unwrap would tag uploads with an unreadable dekVersion. The next unlock
+        // reads GetVault and adopts the new keys/version.
+        if (acquired) {
+          patchEntry(vaultId, { rotationState: 'IN_PROGRESS', vaultSalt: vault.vaultSalt });
+          setRotationInterrupted(true);
+        }
         throw err;
       } finally {
+        secureZeroize(wrappingKey);
         secureZeroize(vmkOld);
         secureZeroize(vmkNew);
       }
@@ -571,9 +602,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (vault.rotationState !== 'IDLE') throw new Error(RECOVERY_BLOCKED_BY_ROTATION);
 
         // Prove the phrase before any write. Normally the vault's encrypted name is the proof;
-        // when it is absent (a name write that failed, or a legacy row) fall back to an old-key
-        // item or a collection. If there is nothing at all to prove against, refuse: a wrong but
-        // well-formed phrase must never overwrite the surviving VMK.
+        // when it is absent (a name write that failed, or a legacy row) fall back to a
+        // current-generation item or collection. If there is nothing at all to prove against,
+        // refuse: a wrong but well-formed phrase must never overwrite the surviving VMK.
         let name = target?.name ?? known.find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
         if (vault.encryptedName) {
           try {

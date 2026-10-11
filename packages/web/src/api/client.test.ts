@@ -24,7 +24,6 @@ vi.mock('@cortex/client', () => {
       }
     },
     CreateVaultCommand: cmd('CreateVault'),
-    GetVaultSaltCommand: cmd('GetVaultSalt'),
     GetVaultCommand: cmd('GetVault'),
     UpdateVaultPasswordCommand: cmd('UpdateVaultPassword'),
     UpdateVaultRotationCommand: cmd('UpdateVaultRotation'),
@@ -49,7 +48,6 @@ vi.mock('../config', () => ({
 
 import {
   createVault,
-  getVaultSalt,
   getVault,
   updateVaultPassword,
   updateVaultRotation,
@@ -94,20 +92,6 @@ describe('api client', () => {
     expect(commands).toContainEqual(['CreateVault', {}]);
   });
 
-  it('getVaultSalt passes the vaultId and returns the raw salt', async () => {
-    const salt = new Uint8Array(16).fill(3);
-    sendMock.mockResolvedValueOnce({ vaultSalt: salt });
-
-    const result = await getVaultSalt('v9');
-
-    expect(result).toEqual(salt);
-    expect(commands).toContainEqual(['GetVaultSalt', { vaultId: 'v9' }]);
-  });
-
-  it('throws when the response is missing the salt', async () => {
-    sendMock.mockResolvedValueOnce({});
-    await expect(getVaultSalt('v9')).rejects.toThrow('missing salt');
-  });
 });
 
 describe('getVault', () => {

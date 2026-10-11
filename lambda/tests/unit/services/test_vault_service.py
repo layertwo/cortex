@@ -902,7 +902,7 @@ class TestVaultService:
 
         with pytest.raises(
             ConflictError,
-            match="A vault password change is in progress; wait for it to finish or pause it first",
+            match="A key rotation is in progress; finish it before deleting this vault",
         ):
             vault_service.mark_deleting(user_id="u1", vault_id="v1")
 

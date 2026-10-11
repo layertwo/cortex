@@ -1,7 +1,6 @@
 import {
   CortexClient,
   CreateVaultCommand,
-  GetVaultSaltCommand,
   GetVaultCommand,
   UpdateVaultPasswordCommand,
   UpdateVaultRotationCommand,
@@ -42,12 +41,6 @@ export async function createVault(): Promise<{ vaultId: string; vaultSalt: Uint8
   const out = await makeClient().send(new CreateVaultCommand({}));
   if (!out.vaultId || !out.vaultSalt) throw new Error('createVault: incomplete response');
   return { vaultId: out.vaultId, vaultSalt: out.vaultSalt };
-}
-
-export async function getVaultSalt(vaultId: string): Promise<Uint8Array> {
-  const out = await makeClient().send(new GetVaultSaltCommand({ vaultId }));
-  if (!out.vaultSalt) throw new Error('getVaultSalt: missing salt');
-  return out.vaultSalt;
 }
 
 export async function listVaults(

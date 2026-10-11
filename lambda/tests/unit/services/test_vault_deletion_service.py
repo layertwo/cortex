@@ -59,7 +59,7 @@ class TestMarkStep:
         )
         stub_mark_condition_failed(dynamodb_stubber, USER, VAULT, locked)
 
-        with pytest.raises(ConflictError, match="wait for it to finish or pause it first"):
+        with pytest.raises(ConflictError, match="finish it before deleting this vault"):
             vault_deletion_service.delete_vault(USER, VAULT)
 
     def test_missing_vault_raises_not_found(self, vault_deletion_service, dynamodb_stubber):

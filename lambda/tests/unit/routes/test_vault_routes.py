@@ -683,7 +683,7 @@ class TestDeleteVaultRoute:
         body = response.json()
         assert body["error"]["code"] == "CONFLICT"
         assert body["error"]["message"] == (
-            "A vault password change is in progress; wait for it to finish or pause it first"
+            "A key rotation is in progress; finish it before deleting this vault"
         )
 
     def test_idle_vault_after_vmk_rotation_is_deleted_in_one_call(self, client, dynamodb_stubber):
