@@ -183,20 +183,21 @@ export function unwrapDek(
 
   // 1. Structural validation
   if (wrappedDek.length !== WRAPPED_DEK_SIZE && wrappedDek.length !== WRAPPED_DEK_WITH_HMAC_SIZE) {
-    console.warn(`[envelope-encryption] CORRUPTED_DEK: invalid length ${wrappedDek.length} at ${new Date().toISOString()}`);
+    // Static markers only: never interpolate key-material bytes into a log (CodeQL).
+    console.warn('[envelope-encryption] CORRUPTED_DEK: invalid wrapped DEK length');
     throw new DekUnwrapError('CORRUPTED_DEK', `Invalid wrapped DEK length: expected ${WRAPPED_DEK_SIZE} or ${WRAPPED_DEK_WITH_HMAC_SIZE} bytes, got ${wrappedDek.length}`);
   }
 
   const version = getWrappedDekVersion(wrappedDek);
   if (isDekVersionDeprecated(version)) {
-    console.warn(`[envelope-encryption] DEPRECATED_DEK_VERSION: version ${version} at ${new Date().toISOString()}`);
+    console.warn('[envelope-encryption] DEPRECATED_DEK_VERSION');
     throw new DekUnwrapError(
       'WRONG_KEK_VERSION',
       `Wrapped DEK version ${version} is deprecated; re-wrap this file to migrate`
     );
   }
   if (!SUPPORTED_DEK_VERSIONS.includes(version)) {
-    console.warn(`[envelope-encryption] WRONG_KEK_VERSION: version ${version} at ${new Date().toISOString()}`);
+    console.warn('[envelope-encryption] WRONG_KEK_VERSION: unsupported wrapped DEK version');
     throw new DekUnwrapError('WRONG_KEK_VERSION', `Unsupported wrapped DEK version: ${version}`);
   }
 
