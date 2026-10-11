@@ -54,7 +54,7 @@ vi.mock('@cortex/encryption', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@cortex/encryption')>();
   return {
     ...actual,
-    deriveVaultMasterKey: vi.fn(async () => MASTER),
+    deriveVaultMasterKey: vi.fn(async () => MASTER.slice()),
     generateRecoveryKey: vi.fn(() => 'word '.repeat(24).trim()),
     storeKeys: vi.fn(async () => {}),
     clearKeys: vi.fn(async () => {}),
@@ -811,7 +811,11 @@ describe('rotation with the staged pair', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(deriveVaultMasterKey).mockImplementation(async (password: string) => MASTERS[password] ?? MASTER);
+    // Real Argon2id returns a fresh buffer per call; slice so the app can zeroize
+    // its own copy without corrupting these fixtures (and the assertions using them).
+    vi.mocked(deriveVaultMasterKey).mockImplementation(async (password: string) =>
+      (MASTERS[password] ?? MASTER).slice(),
+    );
   });
 
   // A vault this device unlocked before (local verifier blob) that the server also lists.

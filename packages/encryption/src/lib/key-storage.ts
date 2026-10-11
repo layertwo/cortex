@@ -1294,28 +1294,6 @@ export async function clearAllKeys(): Promise<void> {
 }
 
 /**
- * Registers cleanup handlers for browser events.
- * 
- * This should be called once during application initialization to ensure
- * proper cleanup on browser close or navigation.
- * 
- * @returns void
- * 
- * @example
- * // In your app initialization
- * registerCleanupHandlers();
- */
-export function registerCleanupHandlers(): void {
-  // Optional: Clear keys on browser close (best effort)
-  // Commented out by default as it may be too aggressive
-  /*
-  window.addEventListener('beforeunload', () => {
-    clearAllKeys();
-  });
-  */
-}
-
-/**
  * Cleans up expired keys from all storage mechanisms.
  * 
  * This should be called periodically (e.g., on app startup) to remove

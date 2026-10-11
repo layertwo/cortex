@@ -554,6 +554,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         patchEntry(vaultId, { rotationState: expectedState === 'IDLE' ? 'IDLE' : 'PAUSED' });
         setRotationInterrupted(expectedState !== 'IDLE');
         throw err;
+      } finally {
+        // Best-effort zeroization of the root secret(s); the derived working keys
+        // stay until the caller stores them.
+        secureZeroize(masterNew);
+        secureZeroize(inUse.master);
       }
     },
     [patchEntry],
@@ -598,6 +603,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     ) => {
       const derived = keysFromPhrase(phrase);
       if (!derived) throw new Error(PHRASE_ERROR);
+      secureZeroize(derived.master); // only the derived keys are used below
       const known = listVaults();
       const vaultId = target?.vaultId ?? identifyVaultForPhrase(phrase, known.map((v) => v.vaultId));
       if (!vaultId) throw new Error(PHRASE_ERROR);

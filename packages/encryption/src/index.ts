@@ -36,7 +36,6 @@ export {
   clearKeys,
   clearAllKeys,
   cleanupExpiredKeys,
-  registerCleanupHandlers,
   getStorageInfo,
   clearSaltHmacRecord,
   secureZeroize,

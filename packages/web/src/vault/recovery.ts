@@ -1,4 +1,4 @@
-import { validateRecoveryKey, deriveKeys, type DerivedKeys } from '@cortex/encryption';
+import { validateRecoveryKey, deriveKeys, secureZeroize, zeroizeKeys, type DerivedKeys } from '@cortex/encryption';
 import { checkVerifier, loadVerifier } from './verifier';
 
 // One message for every failure. Which word is wrong, or whether the phrase is well-formed
@@ -27,9 +27,15 @@ export function keysFromPhrase(phrase: string): { master: Uint8Array; keys: Deri
 export function identifyVaultForPhrase(phrase: string, vaultIds: string[]): string | null {
   const derived = keysFromPhrase(phrase);
   if (!derived) return null;
-  for (const id of vaultIds) {
-    const v = loadVerifier(id);
-    if (v && checkVerifier(v, derived.keys.metadataEncryptionKey)) return id;
+  try {
+    for (const id of vaultIds) {
+      const v = loadVerifier(id);
+      if (v && checkVerifier(v, derived.keys.metadataEncryptionKey)) return id;
+    }
+    return null;
+  } finally {
+    // The phrase's master key and derived keys are not kept past this check.
+    secureZeroize(derived.master);
+    zeroizeKeys(derived.keys);
   }
-  return null;
 }
