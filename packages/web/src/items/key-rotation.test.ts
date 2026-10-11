@@ -120,6 +120,22 @@ describe('stragglers', () => {
     expect(stragglers([media('old', 1), media('new', 2), note], 2).map((i) => i.itemId)).toEqual(['old']);
     expect(stragglers([media('new', 2)], 2)).toEqual([]);
   });
+
+  it('ignores MEDIA items the sweep cannot re-key (no wrappedDek/encryptedMetadata)', () => {
+    // rotateItems skips these (nothing to re-wrap), so counting them as stragglers
+    // would withhold RELEASE forever.
+    const unkeyable: ItemData = {
+      itemId: 'pending',
+      vaultId,
+      itemType: 'MEDIA',
+      encryptedMetadata: new Uint8Array([1]), // no wrappedDek: the sweep has nothing to re-wrap
+      dekVersion: 1,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      version: 1,
+    };
+    expect(stragglers([unkeyable], 2)).toEqual([]);
+  });
 });
 
 describe('rotateItems', () => {

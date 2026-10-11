@@ -28,6 +28,9 @@ logger = get_logger("vault_service")
 # DeleteVault may proceed past it (spec 4.3).
 STALE_LOCK_SECONDS = 7 * 24 * 3600
 
+# Wrapped-VMK envelope length: [version(1)][nonce(12)][ciphertext(32)+tag(16)].
+WRAPPED_VMK_BYTES = 61
+
 
 def _vault_summary(item: Dict[str, Any]) -> Dict[str, Any]:
     """Map a vault row to the fields shared by get_vault and list_user_vaults."""
@@ -561,7 +564,7 @@ class VaultService:
         user_id: str,
         vault_id: str,
         action: str,
-        expected_state: str,
+        expected_state: Optional[str] = None,
         expected_envelope_version: Optional[int] = None,
         new_vmk_version: Optional[int] = None,
         wrapped_new_vmk: Optional[bytes] = None,
@@ -673,6 +676,8 @@ class VaultService:
             raise BadRequestError("ACQUIRE requires expectedEnvelopeVersion")
         if new_vmk_version is None or wrapped_new_vmk is None:
             raise BadRequestError("ACQUIRE requires newVmkVersion and wrappedNewVmk")
+        if len(wrapped_new_vmk) != WRAPPED_VMK_BYTES:
+            raise BadRequestError(f"wrappedNewVmk must be {WRAPPED_VMK_BYTES} bytes")
 
         item = self._read(key, consistent=True)
         if not item:
@@ -717,9 +722,11 @@ class VaultService:
 
     @staticmethod
     def _release_expression(
-        expected_state: str, new_encrypted_name: Optional[bytes], now: int
+        expected_state: Optional[str], new_encrypted_name: Optional[bytes], now: int
     ) -> tuple[str, str, dict]:
         """Build the guarded RELEASE write: flip to IDLE, optionally store the name."""
+        if expected_state is None:
+            raise BadRequestError("RELEASE requires expectedState")
         update_expr = "SET rotation_state = :idle, updated_at = :now"
         values: dict = {":idle": "IDLE", ":expected": expected_state, ":now": now}
         if new_encrypted_name is not None:

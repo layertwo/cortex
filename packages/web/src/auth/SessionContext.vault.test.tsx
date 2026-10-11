@@ -3,9 +3,7 @@ import { render, screen, act, waitFor } from '@testing-library/react';
 import { getCurrentUser } from 'aws-amplify/auth';
 import {
   deriveKeys,
-  deriveWrappingKey,
   generateVaultMasterKey,
-  generateRecoveryKey,
   wrapVmk,
   unwrapVmk,
   wrapDek,
@@ -536,14 +534,33 @@ describe('rotateEncryptionKeys', () => {
       screen.getByText('rotate').click();
     });
     expect(document.title).toBe('rotated:24');
-    const acquire = api.updateVaultRotation.mock.calls[0][0] as { action: string; newVmkVersion: number; wrappedNewVmk: Uint8Array; expectedState: string };
-    expect(acquire).toMatchObject({ action: 'ACQUIRE', expectedState: 'IDLE', newVmkVersion: 2 });
+    const acquire = api.updateVaultRotation.mock.calls[0][0] as { action: string; newVmkVersion: number; wrappedNewVmk: Uint8Array };
+    expect(acquire).toMatchObject({ action: 'ACQUIRE', newVmkVersion: 2 });
+    expect(acquire).not.toHaveProperty('expectedState');
     expect(unwrapVmk(acquire.wrappedNewVmk, wrapKey('vaultpw'))).toEqual(VMK_NEW);
     const release = api.updateVaultRotation.mock.calls[1][0] as { action: string; newEncryptedName: Uint8Array };
     expect(release.action).toBe('RELEASE');
     expect(decryptCollectionName(release.newEncryptedName, deriveKeys(VMK_NEW).metadataEncryptionKey)).toBe('Holiday');
     expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK_NEW));
     expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 2, rotationState: 'IDLE', name: 'Holiday' });
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
+  });
+
+  it('a local commit failure after RELEASE leaves the registry IDLE, not IN_PROGRESS', async () => {
+    await seedRotatableVault();
+    vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());
+    api.updateVaultRotation
+      .mockResolvedValueOnce({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, currentVmkVersion: 2, envelopeVersion: 2 })
+      .mockResolvedValueOnce({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 2 });
+    // RELEASE reaches the server (IDLE), then the local key store fails.
+    vi.mocked(storeKeys).mockRejectedValueOnce(new Error('disk full'));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.rotateEncryptionKeys('vaultpw')).rejects.toThrow('disk full');
+    });
+    expect(api.updateVaultRotation.mock.calls.map((c) => (c[0] as { action: string }).action)).toEqual(['ACQUIRE', 'RELEASE']);
+    // The server is IDLE; the registry must not claim a rotation is still in progress.
+    expect(storedRegistry()[0]).toMatchObject({ rotationState: 'IDLE' });
     expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
   });
 
@@ -794,6 +811,55 @@ describe('recoverVault', () => {
     });
     expect(result).toEqual({ phrase, vaultId: 'v1', name: 'Personal' });
     expect(api.updateVaultPassword).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses when the vault has no envelope at its current version (never overwrites a superseded one)', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    localStorage.setItem(
+      'cortex_vaults:u1',
+      JSON.stringify([{ vaultId: 'v1', name: 'Personal', encryptedName: bytesToBase64(encryptedName) }]),
+    );
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName,
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        // Only a superseded v1 envelope exists; currentVmkVersion is 2. Overwriting v1 would
+        // re-key the wrong generation under the new password.
+        vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }],
+      }),
+    );
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.recoverVault(phrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('retries once on ConflictError against a fresh envelopeVersion', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    const first = await serverVault({ envelopeVersion: 1, encryptedName });
+    const fresh = await serverVault({
+      envelopeVersion: 2,
+      encryptedName,
+      vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }],
+    });
+    api.getVault.mockResolvedValueOnce(first).mockResolvedValueOnce(fresh);
+    api.updateVaultPassword
+      .mockRejectedValueOnce(new ConflictError({ message: 'conflict', $metadata: {} }))
+      .mockResolvedValueOnce({ envelopeVersion: 3 });
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.recoverVault(phrase, 'newpw', { vaultId: 'v1' });
+    });
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(2);
+    expect(api.updateVaultPassword.mock.calls[0][1]).toBe(1);
+    expect(api.updateVaultPassword.mock.calls[1][1]).toBe(2);
   });
 });
 

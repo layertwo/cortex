@@ -1,4 +1,4 @@
-import '@testing-library/jest-dom';
+import '@testing-library/jest-dom/vitest';
 
 // Node 24+ exposes a global `localStorage` that is `undefined` unless `--localstorage-file`
 // is provided, and it shadows jsdom's. Install a deterministic in-memory Storage so the

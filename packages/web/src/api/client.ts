@@ -138,7 +138,7 @@ export async function updateVaultPassword(
 export async function updateVaultRotation(args: {
   vaultId: string;
   action: 'ACQUIRE' | 'RELEASE';
-  expectedState: RotationState;
+  expectedState?: RotationState; // RELEASE only; ACQUIRE derives its guard from the lock state
   expectedEnvelopeVersion?: number;
   newVmkVersion?: number;
   wrappedNewVmk?: Uint8Array;
