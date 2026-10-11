@@ -1,5 +1,12 @@
-import { validateRecoveryKey, deriveKeys, secureZeroize, zeroizeKeys, type DerivedKeys } from '@cortex/encryption';
-import { checkVerifier, loadVerifier } from './verifier';
+import {
+  validateRecoveryKey,
+  deriveKeys,
+  secureZeroize,
+  zeroizeKeys,
+  base64ToBytes,
+  type DerivedKeys,
+} from '@cortex/encryption';
+import { decryptCollectionName } from '../items/collectionMetadata';
 
 // One message for every failure. Which word is wrong, or whether the phrase is well-formed
 // but for another vault, is deliberately not disclosed.
@@ -11,31 +18,40 @@ export function normalizePhrase(input: string | string[]): string {
   return text.trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ');
 }
 
-// The 24 words are a BIP39 encoding of the vault master key, so the phrase alone yields the
-// same derived keys the password would. Null for anything validateRecoveryKey rejects.
-export function keysFromPhrase(phrase: string): { master: Uint8Array; keys: DerivedKeys } | null {
+// The 24 words are a BIP39 encoding of the vault master key (VMK), so the phrase alone yields
+// the same VMK the password unwraps. Null for anything validateRecoveryKey rejects.
+export function keysFromPhrase(phrase: string): { vmk: Uint8Array; keys: DerivedKeys } | null {
   try {
-    const master = validateRecoveryKey(normalizePhrase(phrase));
-    return { master, keys: deriveKeys(master) };
+    const vmk = validateRecoveryKey(normalizePhrase(phrase));
+    return { vmk, keys: deriveKeys(vmk) };
   } catch {
     return null;
   }
 }
 
-// Which of this device's vaults does the phrase open? Checked against the local verifiers,
-// entirely in the browser.
-export function identifyVaultForPhrase(phrase: string, vaultIds: string[]): string | null {
+// Which of this device's vaults does the phrase open? Proven by decrypting each vault's
+// server-encrypted name with the phrase's metadata key — entirely in the browser. Vaults with
+// no encrypted name cannot be identified this way.
+export function identifyVaultForPhrase(
+  phrase: string,
+  vaults: { vaultId: string; encryptedName?: string }[],
+): string | null {
   const derived = keysFromPhrase(phrase);
   if (!derived) return null;
   try {
-    for (const id of vaultIds) {
-      const v = loadVerifier(id);
-      if (v && checkVerifier(v, derived.keys.metadataEncryptionKey)) return id;
+    for (const v of vaults) {
+      if (!v.encryptedName) continue;
+      try {
+        decryptCollectionName(base64ToBytes(v.encryptedName), derived.keys.metadataEncryptionKey);
+        return v.vaultId;
+      } catch {
+        // Not this vault.
+      }
     }
     return null;
   } finally {
-    // The phrase's master key and derived keys are not kept past this check.
-    secureZeroize(derived.master);
+    // The phrase's VMK and derived keys are not kept past this check.
+    secureZeroize(derived.vmk);
     zeroizeKeys(derived.keys);
   }
 }

@@ -15,8 +15,10 @@ export function RequireVault({ children }: { children: ReactNode }) {
   if (status === 'loading') return null;
   if (status === 'signedOut') return <Navigate to="/login" replace />;
   if (status !== 'unlocked') {
-    const hasVault = listVaults().length > 0;
-    return <Navigate to={hasVault ? '/vault/unlock' : '/vault/setup'} replace />;
+    // A vault created but never bootstrapped (currentVmkVersion 0, no envelopes) has nothing to
+    // unlock: route it to setup rather than a password prompt that cannot succeed.
+    const hasUsableVault = listVaults().some((v) => (v.currentVmkVersion ?? 0) > 0);
+    return <Navigate to={hasUsableVault ? '/vault/unlock' : '/vault/setup'} replace />;
   }
   return <>{children}</>;
 }

@@ -2,23 +2,21 @@
 // ListVaults on every sign-in (syncFromServer). Keys are namespaced by the Cognito
 // subject resolved in auth/account.ts: `cortex_vaults:<sub>` holds the list and
 // `cortex_vault_id:<sub>` is the active-vault pointer read by keyAccess.ts.
-// `vaultSalt` and `verifier` are held in memory only (salt + verifier is an offline
-// password-guessing oracle), so save() strips them; SessionContext keeps the merged
-// list, including those fields, in React state for the session.
+// `vaultSalt` is held in memory only (with a wrapped envelope it is an offline
+// password-guessing oracle), so save() strips it; SessionContext keeps the merged
+// list, including salt, in React state for the session.
 import type { RotationState, VaultSummary } from '@cortex/client';
-import { bytesToBase64, bytesToString } from '@cortex/encryption';
+import { bytesToBase64 } from '@cortex/encryption';
 import { getAccountId } from '../auth/account';
-import { loadVerifier, saveVerifier } from './verifier';
 
 export type VaultEntry = {
   vaultId: string;
   name: string; // decrypted display name; DEFAULT_VAULT_NAME until first unlock decrypts encryptedName
   lastOpened?: number;
   encryptedName?: string; // bytesToBase64(summary.encryptedName)
-  kekVersion?: number;
+  currentVmkVersion?: number;
   rotationState?: RotationState;
   vaultSalt?: Uint8Array; // memory only; stripped by save()
-  verifier?: string; // memory only; bytesToString(summary.verifier); stripped by save()
 };
 
 // upsertVault accepts a partial patch keyed by vaultId; a full VaultEntry is also a VaultPatch.
@@ -55,7 +53,6 @@ function parse(raw: string | null): VaultEntry[] {
 function persistable(entry: VaultEntry): VaultEntry {
   const copy = { ...entry };
   delete copy.vaultSalt;
-  delete copy.verifier;
   return copy;
 }
 
@@ -118,11 +115,10 @@ export function migrateLegacyRegistry(): void {
   localStorage.removeItem(LEGACY_ACTIVE_KEY);
 }
 
-// Server fields win (encryptedName, kekVersion, rotationState persisted; vaultSalt and
-// verifier in memory only); the device keeps name and lastOpened; entries the server no
-// longer lists are dropped and the active pointer is cleared if it pointed at one. When a
-// local verifier blob exists and differs from the server's, the server's replaces it (a
-// rotation happened elsewhere). Returns the merged list including the memory fields.
+// Server fields win (encryptedName, currentVmkVersion, rotationState persisted; vaultSalt
+// in memory only); the device keeps name and lastOpened; entries the server no longer lists
+// are dropped and the active pointer is cleared if it pointed at one. Returns the merged
+// list including the memory fields.
 export function syncFromServer(vaults: VaultSummary[]): VaultEntry[] {
   const account = requireAccount();
   const local = listVaults();
@@ -135,15 +131,10 @@ export function syncFromServer(vaults: VaultSummary[]): VaultEntry[] {
       vaultId: summary.vaultId,
       name: prev?.name ?? DEFAULT_VAULT_NAME,
       encryptedName: summary.encryptedName ? bytesToBase64(summary.encryptedName) : undefined,
-      kekVersion: summary.kekVersion ?? 1,
+      currentVmkVersion: summary.currentVmkVersion ?? 0,
       rotationState: summary.rotationState ?? 'IDLE',
       vaultSalt: summary.vaultSalt,
     };
-    if (summary.verifier) {
-      entry.verifier = bytesToString(summary.verifier);
-      const localBlob = loadVerifier(summary.vaultId);
-      if (localBlob !== null && localBlob !== entry.verifier) saveVerifier(summary.vaultId, entry.verifier);
-    }
     merged.push(entry);
   }
   save(merged);

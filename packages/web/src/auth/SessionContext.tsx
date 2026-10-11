@@ -12,35 +12,36 @@ import {
 import {
   deriveWrappingKey,
   deriveKeys,
+  generateVaultMasterKey,
   generateRecoveryKey,
+  wrapVmk,
+  unwrapVmk,
   storeKeys,
   clearKeys,
   retrieveKeys,
-  stringToBytes,
-  bytesToString,
   bytesToBase64,
-  base64ToBytes,
   secureZeroize,
-  zeroizeKeys,
-  type DerivedKeys,
 } from '@cortex/encryption';
 import {
   createVault,
-  getVaultSalt,
   getVault,
   updateVault,
+  updateVaultPassword,
   updateVaultRotation,
   listAllVaults,
   deleteVault as apiDeleteVault,
 } from '../api/client';
-import type { VaultRecord } from '../api/client';
-import type { RotationState } from '@cortex/client';
-import { listAllItems, listItems } from '../api/items';
+import type { VaultRecord, VmkEnvelopeRecord } from '../api/client';
+import { ConflictError } from '@cortex/client';
+import { listAllItems } from '../api/items';
 import { listAllCollections } from '../api/collections';
-import { rotateItems, rotateCollections } from '../items/key-rotation';
-import { createVerifier, checkVerifier, saveVerifier, loadVerifier } from '../vault/verifier';
-import { keysFromPhrase, identifyVaultForPhrase, PHRASE_ERROR } from '../vault/recovery';
-import { decryptMetadata } from '../items/metadata';
+import { rotateItems, rotateCollections, stragglers } from '../items/key-rotation';
+import {
+  keysFromPhrase,
+  identifyVaultForPhrase,
+  normalizePhrase,
+  PHRASE_ERROR,
+} from '../vault/recovery';
 import { encryptCollectionName, decryptCollectionName } from '../items/collectionMetadata';
 import { resolveAccount, clearAccount } from './account';
 import {
@@ -58,36 +59,24 @@ import {
 
 export type SessionStatus = 'loading' | 'signedOut' | 'signedInVaultLocked' | 'unlocked';
 
-// Thrown by unlockVault for a wrong vault password. Exported so screens can show a
-// vault-specific message instead of this generic one.
+// Thrown for a wrong vault password anywhere a password opens a VMK envelope. Exported so
+// screens can show a vault-specific message instead of this generic one.
 export const WRONG_VAULT_PASSWORD = 'Incorrect vault password';
 
-// Thrown by deleteVault when neither the server nor this device has a verifier: a
-// password-confirmed delete cannot be confirmed, so it is refused (spec §7).
-export const DELETE_REFUSED = 'Unlock this vault once on a device that knows its password';
+// Thrown by deleteVault when the vault has no envelope to check the entered password against:
+// a password-confirmed delete cannot be confirmed, so it is refused.
+export const DELETE_REFUSED = 'This vault has no key to confirm your password against';
 
-// Rotation outcomes the screens turn into copy. REKEYED_ERROR: "Start over" was refused because
-// an earlier attempt already re-wrapped files under its new password. CANCELLED_ERROR: the user
-// dismissed the resume dialog; the rotation is paused, not failed.
-export const REKEYED_ERROR =
-  "Some files were already re-keyed with the new password you started with; you need that password to finish.";
-export const CANCELLED_ERROR = 'Password change cancelled';
-// Exact server text of the ABANDON 409 that means "files were re-keyed" (rotation-abandon spec §3.2).
-const REKEYED_SERVER_MESSAGE = 'Some files were already re-keyed; finish the password change with the new password';
+// Thrown by unlockVault for a vault that was created but never bootstrapped (no envelopes).
+// The caller routes such a vault to setup rather than showing a password error.
+export const VAULT_NEEDS_SETUP = 'This vault was created but never set up';
 
-// What the resume dialog decided when the typed password does not open the staged pair.
-export type StagedDecision = { action: 'finish'; password: string } | { action: 'startOver' } | { action: 'cancel' };
-export type OnStagedMismatch = (startedAt: number | null, error?: string) => Promise<StagedDecision>;
+// Thrown by rotateEncryptionKeys when a sweep leaves items on an older dekVersion: RELEASE is
+// withheld so the rotation stays IN_PROGRESS and resumable; nothing is stranded.
+export const ROTATION_INCOMPLETE = 'Some files still need re-keying; the key rotation is paused and can be resumed';
 
-function sameBytes(a: Uint8Array | null, b: Uint8Array): boolean {
-  return a !== null && a.length === b.length && a.every((x, i) => x === b[i]);
-}
-
-// Wherever a password is checked, the server verifier (held in memory after sync) is
-// authoritative; the local blob is the offline fallback on a device that unlocked once.
-function verifierFor(entry: Pick<VaultEntry, 'vaultId' | 'verifier'>): string | null {
-  return entry.verifier ?? loadVerifier(entry.vaultId);
-}
+// Thrown by recoverVault while a key rotation holds the lock: the device cannot know the new VMK.
+export const RECOVERY_BLOCKED_BY_ROTATION = 'A key rotation is in progress; finish it before recovering this vault';
 
 export interface SessionValue {
   status: SessionStatus;
@@ -96,30 +85,27 @@ export interface SessionValue {
   resendCode(email: string): Promise<void>;
   signInAccount(email: string, password: string): Promise<void>;
   // Cognito *account* password reset (emails a code). NOT the vault password, that
-  // derives the KEK client-side and is unrecoverable except via BIP39 recovery.
+  // opens the VMK envelope client-side and is unrecoverable except via BIP39 recovery.
   requestPasswordReset(email: string): Promise<void>;
   confirmPasswordReset(email: string, code: string, newPassword: string): Promise<void>;
   // Change the signed-in account's Cognito password. The vault password and keys are
   // untouched — no re-encryption, no new recovery phrase.
   changeAccountPassword(currentPassword: string, newPassword: string): Promise<void>;
   logout(): Promise<void>;
-  // Creates the vault, then stores its encrypted name and verifier server-side; returns
-  // the BIP39 recovery phrase.
+  // Creates the vault, bootstraps its first VMK envelope server-side, stores the vault name;
+  // returns the BIP39 recovery phrase (which encodes the VMK).
   setupVault(vaultPassword: string, name?: string): Promise<string>;
-  // Checks the server verifier (local blob as the offline fallback); a legacy vault with no
-  // server verifier uploads its local one so it can be unlocked elsewhere.
+  // Unwraps the envelope matching the vault's current VMK version; unwrap success is the
+  // password check. An unbootstrapped vault (no envelopes) throws VAULT_NEEDS_SETUP.
   unlockVault(vaultPassword: string, vaultId?: string): Promise<void>;
-  // Returns the new BIP39 recovery phrase after a successful rotation sweep.
-  // Throws WRONG_VAULT_PASSWORD if currentPassword fails the verifier; REKEYED_ERROR or the
-  // server message when "Start over" is refused; CANCELLED_ERROR when the resume dialog is
-  // dismissed (the rotation is then PAUSED on the server). `onStagedMismatch` is asked when the
-  // server returns an earlier attempt's staged pair that newPassword does not open.
-  changeVaultPassword(
-    currentPassword: string,
-    newPassword: string,
-    onProgress?: (done: number, total: number) => void,
-    onStagedMismatch?: OnStagedMismatch,
-  ): Promise<string>;
+  // Re-wraps every VMK envelope under the new password. No sweep, no new phrase: the VMK (and
+  // so the recovery phrase) is unchanged. Throws WRONG_VAULT_PASSWORD on a bad current password.
+  changeVaultPassword(currentPassword: string, newPassword: string): Promise<void>;
+  // Deliberate, rare action: mint a new VMK, sweep item/collection keys onto it, and RELEASE
+  // only when zero stragglers remain. Returns the NEW recovery phrase. Throws
+  // WRONG_VAULT_PASSWORD on a bad confirmation password, or ROTATION_INCOMPLETE when a
+  // straggler keeps RELEASE withheld (the rotation stays IN_PROGRESS and is resumable).
+  rotateEncryptionKeys(currentPassword: string, onProgress?: (done: number, total: number) => void): Promise<string>;
   // True when GetVault returns rotationState !== 'IDLE' on unlock, banner trigger.
   rotationInterrupted: boolean;
   vaults: VaultEntry[];
@@ -131,22 +117,19 @@ export interface SessionValue {
   // stored server-side (UpdateVault) before the registry changes. Rejects with the server
   // message, or 'Unlock to rename' when this device holds no keys for it.
   renameVault(vaultId: string, name: string): Promise<void>;
-  // Restore access with the 24-word phrase and set a new vault password. `target` comes
-  // from a recovery kit on a device that has never opened the vault; otherwise the vault is
-  // identified from this device's verifiers. Shares the rotation path with changeVaultPassword,
-  // including the staged-pair check. Resolves with the NEW phrase.
+  // Restore access with the 24-word phrase and set a new vault password. The phrase IS the VMK,
+  // so it is proven against the vault's encrypted name before any write and is returned
+  // unchanged. `target` comes from a recovery kit on a device that has never opened the vault.
   recoverVault(
     phrase: string,
     newPassword: string,
-    onProgress?: (done: number, total: number) => void,
     target?: { vaultId: string; name?: string },
-    onStagedMismatch?: OnStagedMismatch,
   ): Promise<{ phrase: string; vaultId: string; name: string }>;
-  // Checks vaultPassword against the vault's verifier, calls DeleteVault until the server
-  // reports DELETED (or 404 on a later call), then forgets the vault on this device.
-  // Rejects with 'Unlock this vault once on a device that knows its password' when no
-  // verifier exists anywhere, with WRONG_VAULT_PASSWORD on a bad password, and with the
-  // server message on any DeleteVault failure (a 409 while a rotation lock is live).
+  // Confirms the password by unwrapping the current VMK envelope, then calls DeleteVault until
+  // the server reports DELETED (or 404 on a later call), then forgets the vault on this device.
+  // Rejects with DELETE_REFUSED when the vault has no envelope to check, WRONG_VAULT_PASSWORD
+  // on a bad password, and the server message on any DeleteVault failure (a 409 while a
+  // rotation lock is live).
   deleteVault(vaultId: string, vaultPassword: string, onProgress?: (deletedItems: number) => void): Promise<void>;
 }
 
@@ -155,9 +138,9 @@ const SessionContext = createContext<SessionValue | null>(null);
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<SessionStatus>('loading');
   const [rotationInterrupted, setRotationInterrupted] = useState(false);
-  // The registry never persists vaultSalt/verifier (salt + verifier is an offline guessing
-  // oracle); this session's copies live in `vaults`, mirrored in a ref so the callbacks
-  // below read the latest list without depending on it.
+  // The registry never persists vaultSalt (with a wrapped envelope it is an offline guessing
+  // oracle); this session's copies live in `vaults`, mirrored in a ref so the callbacks below
+  // read the latest list without depending on it.
   const vaultsRef = useRef<VaultEntry[]>([]);
   const [vaults, setVaultsState] = useState<VaultEntry[]>([]);
   const [vaultVersion, setVaultVersion] = useState(0);
@@ -168,17 +151,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setVaultsState(list);
   }, []);
 
-  // Re-read the registry and re-attach the in-memory salt/verifier of each vault, optionally
-  // replacing one vault's pair with freshly learned values.
+  // Re-read the registry and re-attach the in-memory salt of each vault, optionally replacing
+  // one vault's salt with a freshly learned value.
   const refreshVaults = useCallback(
-    (memory?: { vaultId: string; vaultSalt?: Uint8Array; verifier?: string }) => {
+    (memory?: { vaultId: string; vaultSalt?: Uint8Array }) => {
       setVaults(
         listVaults().map((v) => {
           const prev = vaultsRef.current.find((p) => p.vaultId === v.vaultId);
           const fresh = memory?.vaultId === v.vaultId ? memory : undefined;
           const vaultSalt = fresh?.vaultSalt ?? prev?.vaultSalt;
-          const verifier = fresh?.verifier ?? prev?.verifier;
-          return { ...v, ...(vaultSalt ? { vaultSalt } : {}), ...(verifier ? { verifier } : {}) };
+          return { ...v, ...(vaultSalt ? { vaultSalt } : {}) };
         }),
       );
     },
@@ -200,14 +182,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   );
 
   // Update one registry entry on disk and in state. `upsertVault` deliberately drops the
-  // memory-only fields (`vaultSalt`, `verifier`); `refreshVaults` re-reads the registry, which now
-  // carries the patch, and re-attaches them: the patch's values when given, the ones already held
-  // otherwise (so a `rotationState: 'PAUSED'` patch keeps the salt and verifier in state).
+  // memory-only salt; `refreshVaults` re-reads the registry, which now carries the patch, and
+  // re-attaches the salt: the patch's value when given, the one already held otherwise.
   const patchEntry = useCallback(
     (vaultId: string, patch: Partial<VaultEntry>) => {
       const onDisk = listVaults().find((v) => v.vaultId === vaultId) ?? { vaultId, name: DEFAULT_VAULT_NAME };
       upsertVault({ ...onDisk, ...patch });
-      refreshVaults({ vaultId, vaultSalt: patch.vaultSalt, verifier: patch.verifier });
+      refreshVaults({ vaultId, vaultSalt: patch.vaultSalt });
     },
     [refreshVaults],
   );
@@ -282,9 +263,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  // Keys and the in-memory salts/verifiers go; the registry stays so a returning user is
-  // never routed to setup. Clearing the account makes the readers return nothing until the
-  // next gate resolves a subject.
+  // Keys and the in-memory salts go; the registry stays so a returning user is never routed to
+  // setup. Clearing the account makes the readers return nothing until the next gate resolves
+  // a subject.
   const logout = useCallback(async () => {
     for (const v of listVaults()) await clearKeys(v.vaultId);
     await signOut();
@@ -298,27 +279,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     async (vaultPassword: string, name = DEFAULT_VAULT_NAME): Promise<string> => {
       const displayName = name.trim() || DEFAULT_VAULT_NAME;
       const { vaultId, vaultSalt } = await createVault();
-      const master = await deriveWrappingKey(vaultPassword, vaultSalt);
-      const keys = deriveKeys(master);
-      const verifierString = await createVerifier(keys.metadataEncryptionKey);
+      const vmk = await generateVaultMasterKey();
+      const wrappingKey = await deriveWrappingKey(vaultPassword, vaultSalt);
+      const wrappedVmk = await wrapVmk(vmk, wrappingKey);
+      const keys = deriveKeys(vmk);
       const encryptedName = await encryptCollectionName(displayName, keys.metadataEncryptionKey);
-      // Server first: a failure here leaves nothing half-configured on this device. The vault
-      // row exists either way; the next gate lists it under the default name and rename repairs it.
-      // No re-sync after setup (accepted deviation from spec §5, see the plan's Global Constraints):
-      // ListVaults is eventually consistent and a read that missed this row would drop the vault.
-      await updateVault(vaultId, { encryptedName, verifier: stringToBytes(verifierString) });
-      saveVerifier(vaultId, verifierString);
-      const recovery = generateRecoveryKey(master);
-      secureZeroize(master); // derived keys are held; the root secret is not
+      // Server first: a failure here leaves nothing half-configured on this device. The envelope
+      // bootstrap is the security-critical write; the name is written after it and, if that
+      // fails, is repaired by a rename.
+      await updateVaultPassword(vaultId, 0, [{ vmkVersion: 1, wrappedVmk, createdAt: new Date() }]);
+      await updateVault(vaultId, { encryptedName });
+      const recovery = generateRecoveryKey(vmk);
+      secureZeroize(wrappingKey);
+      secureZeroize(vmk); // the derived keys are held; the root secret is not
       await storeKeys(vaultId, keys);
       upsertVault({
         vaultId,
         name: displayName,
         encryptedName: bytesToBase64(encryptedName),
-        kekVersion: 1,
+        currentVmkVersion: 1,
         rotationState: 'IDLE',
       });
-      refreshVaults({ vaultId, vaultSalt, verifier: verifierString });
+      refreshVaults({ vaultId, vaultSalt });
       activate(vaultId);
       setStatus('unlocked');
       return recovery;
@@ -326,54 +308,47 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [activate, refreshVaults],
   );
 
+  // The password check is the VMK unwrap itself; there is no separate stored secret. An empty
+  // envelope list means the vault was created but never bootstrapped, which routes to setup.
   const unlockVault = useCallback(
     async (vaultPassword: string, vaultId = activeVaultId() ?? listVaults()[0]?.vaultId): Promise<void> => {
       if (!vaultId) throw new Error('No vault on this device, set one up first');
-      const entry = vaultsRef.current.find((v) => v.vaultId === vaultId);
-      const salt = entry?.vaultSalt ?? (await getVaultSalt(vaultId));
-      const master = await deriveWrappingKey(vaultPassword, salt);
-      const keys = deriveKeys(master);
-      secureZeroize(master); // only the derived keys are needed past this point
-      const verifier = verifierFor({ vaultId, verifier: entry?.verifier });
-      // Missing verifier is a hard failure: unlocking without it would silently accept a
-      // wrong password and store keys that decrypt nothing.
-      if (!verifier) throw new Error('Vault verifier missing on this device, re-run setup');
-      if (!checkVerifier(verifier, keys.metadataEncryptionKey)) {
+      const vault = await getVault(vaultId);
+      if (!vault.vmkEnvelopes.length) throw new Error(VAULT_NEEDS_SETUP);
+      const envelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
+      if (!envelope) throw new Error(WRONG_VAULT_PASSWORD);
+      const wrappingKey = await deriveWrappingKey(vaultPassword, vault.vaultSalt);
+      let vmk: Uint8Array;
+      try {
+        vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
+      } catch {
         throw new Error(WRONG_VAULT_PASSWORD);
+      } finally {
+        secureZeroize(wrappingKey);
       }
-      saveVerifier(vaultId, verifier);
+      const keys = deriveKeys(vmk);
+      secureZeroize(vmk); // only the derived keys are needed past this point
       await storeKeys(vaultId, keys);
-      if (entry?.encryptedName && entry.name === DEFAULT_VAULT_NAME) {
+      const entry = vaultsRef.current.find((v) => v.vaultId === vaultId);
+      if (vault.encryptedName && (entry?.name ?? DEFAULT_VAULT_NAME) === DEFAULT_VAULT_NAME) {
         // First unlock on this device of a vault discovered from the server: reveal its name.
         try {
-          renameInRegistry(vaultId, decryptCollectionName(base64ToBytes(entry.encryptedName), keys.metadataEncryptionKey));
+          renameInRegistry(vaultId, decryptCollectionName(vault.encryptedName, keys.metadataEncryptionKey));
         } catch {
           // Undecryptable name (written under other keys): keep the default.
         }
       }
-      refreshVaults({ vaultId, vaultSalt: salt, verifier });
+      patchEntry(vaultId, {
+        currentVmkVersion: vault.currentVmkVersion,
+        rotationState: vault.rotationState,
+        ...(vault.encryptedName ? { encryptedName: bytesToBase64(vault.encryptedName) } : {}),
+        vaultSalt: vault.vaultSalt,
+      });
+      setRotationInterrupted(vault.rotationState !== 'IDLE');
       activate(vaultId);
-      // Detect an interrupted rotation so the Dashboard can show a resume banner, and check
-      // whether the server truly has no verifier (not just "this session never learned one",
-      // which entry?.verifier cannot distinguish) before uploading this device's local blob.
-      try {
-        const vault = await getVault(vaultId);
-        setRotationInterrupted(vault.rotationState !== 'IDLE');
-        if (vault.verifier == null) {
-          // Legacy vault (set up before verifiers were stored server-side): upload the local one
-          // so the vault becomes unlockable on other devices. Advisory, so offline still unlocks.
-          try {
-            await updateVault(vaultId, { verifier: stringToBytes(verifier) });
-          } catch {
-            // Retried on the next unlock.
-          }
-        }
-      } catch {
-        // Non-fatal: a failed read skips both the banner and the upload, the correct default.
-      }
       setStatus('unlocked');
     },
-    [activate, refreshVaults],
+    [activate, patchEntry],
   );
 
   const switchVault = useCallback(
@@ -400,290 +375,226 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [refreshVaults],
   );
 
-  // Steps shared by change-password and phrase recovery (spec §6). The server stages the new salt
-  // and verifier on ACQUIRE and returns the pair that is actually staged; when an earlier
-  // attempt's pair comes back, its keys must be used (or the pair abandoned) so the sweep never
-  // mixes two new-key generations. Returns the new recovery phrase.
-  const rotateVault = useCallback(
-    async (
-      vaultId: string,
-      vault: VaultRecord,
-      keysOld: DerivedKeys,
-      newPassword: string,
-      onProgress?: (done: number, total: number) => void,
-      onStagedMismatch?: OnStagedMismatch,
-    ): Promise<string> => {
-      const targetDekVersion = vault.kekVersion + 1;
-
-      // 1. This attempt's new keys and verifier.
-      const newSalt = crypto.getRandomValues(new Uint8Array(16));
-      const masterNew = await deriveWrappingKey(newPassword, newSalt);
-      const keysNew = deriveKeys(masterNew);
-      const verifierNew = await createVerifier(keysNew.metadataEncryptionKey);
-
-      // What the sweep will use: this attempt's pair unless the server hands back a staged one.
-      let inUse: { keys: DerivedKeys; master: Uint8Array; salt: Uint8Array; verifier: string } = {
-        keys: keysNew,
-        master: masterNew,
-        salt: newSalt,
-        verifier: verifierNew,
-      };
-
-      // 2. ACQUIRE with the vault's current state (IDLE, or PAUSED/IN_PROGRESS on resume); after a
-      // successful ABANDON, with the state ABANDON returned.
-      let expectedState: RotationState = vault.rotationState;
-      let acquired = false; // any failure after this point pauses the rotation
-      let lockHeld = false; // PAUSE is only sent while this attempt holds the lock
-
-      try {
-        acquire: for (;;) {
-          const staged = await updateVaultRotation({
-            vaultId,
-            action: 'ACQUIRE',
-            expectedState,
-            newVaultSalt: newSalt,
-            newVerifier: stringToBytes(verifierNew),
-          });
-          acquired = true;
-          lockHeld = true;
-          if (!staged.pendingVaultSalt || !staged.pendingVerifier) {
-            // Re-keying under keys derived from a salt the server did not record would strand
-            // every other device, so stop before touching anything.
-            throw new Error('Server did not stage the new vault salt');
-          }
-
-          // 3. Returned-pair check.
-          if (sameBytes(staged.pendingVaultSalt, newSalt)) break; // this attempt owns the pair
-
-          // An earlier attempt's pair is staged: use its keys if a password opens them, else ask.
-          const stagedSalt = staged.pendingVaultSalt;
-          const stagedVerifier = bytesToString(staged.pendingVerifier);
-          let password = newPassword;
-          let error: string | undefined;
-          for (;;) {
-            const master = await deriveWrappingKey(password, stagedSalt);
-            const keys = deriveKeys(master);
-            if (checkVerifier(stagedVerifier, keys.metadataEncryptionKey)) {
-              inUse = { keys, master, salt: stagedSalt, verifier: stagedVerifier };
-              break acquire;
-            }
-            const decision: StagedDecision = onStagedMismatch
-              ? await onStagedMismatch(vault.rotationLockedAt, error)
-              : { action: 'cancel' };
-            if (decision.action === 'cancel') throw new Error(CANCELLED_ERROR);
-            if (decision.action === 'startOver') break;
-            password = decision.password;
-            error = WRONG_VAULT_PASSWORD;
-          }
-
-          // Start over: ABANDON requires PAUSED, so PAUSE first. The server refuses ABANDON when
-          // anything was already re-keyed under the staged pair; ABANDON is never retried.
-          await updateVaultRotation({ vaultId, action: 'PAUSE', expectedState: 'IN_PROGRESS' });
-          lockHeld = false;
-          expectedState = 'PAUSED'; // this attempt's own commit; ABANDON below may still overwrite it
-          let abandoned: { rotationState: RotationState };
+  // Re-wrap the whole envelope list under the new password. The VMK never changes, so the
+  // session's working keys (and the recovery phrase) stay valid. On an envelopeVersion
+  // conflict another device changed the list: refetch and retry once against the fresh list.
+  const changeVaultPassword = useCallback(
+    async (currentPassword: string, newPassword: string): Promise<void> => {
+      const vaultId = activeVaultId();
+      if (!vaultId) throw new Error('No vault on this device');
+      const vault = await getVault(vaultId);
+      const oldKey = await deriveWrappingKey(currentPassword, vault.vaultSalt);
+      const newKey = await deriveWrappingKey(newPassword, vault.vaultSalt);
+      const rewrap = async (source: VaultRecord): Promise<VmkEnvelopeRecord[]> => {
+        const out: VmkEnvelopeRecord[] = source.vmkEnvelopes.map((e) => ({
+          vmkVersion: e.vmkVersion,
+          wrappedVmk: e.wrappedVmk,
+          createdAt: e.createdAt,
+        }));
+        if (!out.length) throw new Error(WRONG_VAULT_PASSWORD);
+        for (const envelope of out) {
+          let vmk: Uint8Array;
           try {
-            abandoned = await updateVaultRotation({ vaultId, action: 'ABANDON', expectedState: 'PAUSED' });
-          } catch (err) {
-            throw err instanceof Error && err.message === REKEYED_SERVER_MESSAGE ? new Error(REKEYED_ERROR) : err;
+            vmk = unwrapVmk(envelope.wrappedVmk, oldKey); // a wrong current password fails here
+          } catch {
+            throw new Error(WRONG_VAULT_PASSWORD);
           }
-          expectedState = abandoned.rotationState;
+          envelope.wrappedVmk = await wrapVmk(vmk, newKey);
+          envelope.createdAt = new Date();
+          secureZeroize(vmk);
         }
+        return out;
+      };
+      try {
+        await updateVaultPassword(vaultId, vault.envelopeVersion, await rewrap(vault));
+      } catch (err) {
+        if (!(err instanceof ConflictError)) throw err;
+        const fresh = await getVault(vaultId);
+        await updateVaultPassword(vaultId, fresh.envelopeVersion, await rewrap(fresh));
+      } finally {
+        secureZeroize(oldKey);
+        secureZeroize(newKey);
+      }
+    },
+    [],
+  );
 
-        // 4. Sweep items, then collections, with the keys in use.
+  // Deliberate new-VMK rotation: ACQUIRE appends a freshly wrapped VMK (bumping the version),
+  // sweep item/collection keys onto it, then RELEASE only with zero stragglers left. The
+  // password is re-entered as a confirmation gate (also the wrapping key for the new envelope).
+  const rotateEncryptionKeys = useCallback(
+    async (currentPassword: string, onProgress?: (done: number, total: number) => void): Promise<string> => {
+      const vaultId = activeVaultId();
+      if (!vaultId) throw new Error('No vault on this device');
+      const vault = await getVault(vaultId);
+      const wrappingKey = await deriveWrappingKey(currentPassword, vault.vaultSalt);
+      const current = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
+      let vmkOld: Uint8Array;
+      try {
+        if (!current) throw new Error(WRONG_VAULT_PASSWORD);
+        vmkOld = unwrapVmk(current.wrappedVmk, wrappingKey); // confirmation gate
+      } catch {
+        secureZeroize(wrappingKey);
+        throw new Error(WRONG_VAULT_PASSWORD);
+      }
+      const keysOld = deriveKeys(vmkOld);
+      const vmkNew = await generateVaultMasterKey();
+      const wrappedNewVmk = await wrapVmk(vmkNew, wrappingKey);
+      secureZeroize(wrappingKey);
+      const keysNew = deriveKeys(vmkNew);
+      const newVersion = vault.currentVmkVersion + 1;
+      await updateVaultRotation({
+        vaultId,
+        action: 'ACQUIRE',
+        expectedState: vault.rotationState,
+        expectedEnvelopeVersion: vault.envelopeVersion,
+        newVmkVersion: newVersion,
+        wrappedNewVmk,
+      });
+      try {
         const items = await listAllItems(vaultId);
         await rotateItems({
           vaultId,
           items,
-          targetDekVersion,
+          targetDekVersion: newVersion,
           oldKek: keysOld.keyEncryptionKey,
-          newKek: inUse.keys.keyEncryptionKey,
+          newKek: keysNew.keyEncryptionKey,
           oldMetadataKey: keysOld.metadataEncryptionKey,
-          newMetadataKey: inUse.keys.metadataEncryptionKey,
+          newMetadataKey: keysNew.metadataEncryptionKey,
           onProgress,
         });
-        const cols = await listAllCollections(vaultId);
+        const collections = await listAllCollections(vaultId);
         await rotateCollections(
-          cols,
+          collections,
           keysOld.metadataEncryptionKey,
-          inUse.keys.metadataEncryptionKey,
+          keysNew.metadataEncryptionKey,
           vaultId,
-          targetDekVersion,
+          newVersion,
         );
 
-        // 5. The vault name travels to RELEASE re-encrypted under the keys in use. The server
-        // blob (old keys) is preferred; an unreadable or absent blob falls back to the registry name.
-        const readServerName = (): string | null => {
-          try {
-            return vault.encryptedName ? decryptCollectionName(vault.encryptedName, keysOld.metadataEncryptionKey) : null;
-          } catch {
-            return null;
-          }
-        };
-        const plaintext =
-          readServerName() ?? listVaults().find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
-        const newEncryptedName = await encryptCollectionName(plaintext, inUse.keys.metadataEncryptionKey);
-        const newPhrase = generateRecoveryKey(inUse.master);
+        // RELEASE is withheld unless the re-list shows zero items below the new version — the
+        // invariant recovery depends on (IDLE ⇒ one VMK generation referenced). A straggler
+        // (an upload that raced ACQUIRE) leaves the rotation IN_PROGRESS and resumable.
+        if (stragglers(await listAllItems(vaultId), newVersion).length) throw new Error(ROTATION_INCOMPLETE);
 
-        // RELEASE promotes the staged pair and writes the version and name: the durability
-        // commit point. No newVerifier, no newVaultSalt (the server rejects both while staged).
-        await updateVaultRotation({
-          vaultId,
-          action: 'RELEASE',
-          expectedState: 'IN_PROGRESS',
-          kekVersion: targetDekVersion,
-          newEncryptedName,
-        });
-        lockHeld = false;
+        const plaintext = vault.encryptedName
+          ? decryptCollectionName(vault.encryptedName, keysOld.metadataEncryptionKey)
+          : listVaults().find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
+        const newEncryptedName = await encryptCollectionName(plaintext, keysNew.metadataEncryptionKey);
+        await updateVaultRotation({ vaultId, action: 'RELEASE', expectedState: 'IN_PROGRESS', newEncryptedName });
 
-        // 6. Commit locally, only now that the server has.
-        saveVerifier(vaultId, inUse.verifier);
-        await storeKeys(vaultId, inUse.keys);
+        // Commit locally, only now that the server has.
+        await storeKeys(vaultId, keysNew);
         patchEntry(vaultId, {
           name: plaintext,
-          kekVersion: targetDekVersion,
+          currentVmkVersion: newVersion,
           rotationState: 'IDLE',
           encryptedName: bytesToBase64(newEncryptedName),
-          vaultSalt: inUse.salt,
-          verifier: inUse.verifier,
+          vaultSalt: vault.vaultSalt,
         });
         setRotationInterrupted(false);
-        return newPhrase;
+        return generateRecoveryKey(vmkNew);
       } catch (err) {
-        // 7. Anything after ACQUIRE (a sweep error, a cancelled dialog, a refused ABANDON) leaves
-        // the rotation PAUSED so the banner shows and a resume can pick the staged pair up — unless
-        // this attempt's own Start over already ran ABANDON to completion (expectedState is then
-        // 'IDLE') and the failure is the re-ACQUIRE itself: the server is genuinely IDLE there, so
-        // the registry must say so too, not PAUSED.
-        if (!acquired) throw err;
-        if (lockHeld) {
-          try {
-            await updateVaultRotation({ vaultId, action: 'PAUSE', expectedState: 'IN_PROGRESS' });
-          } catch {
-            // Best effort: never mask the original error.
-          }
-          expectedState = 'PAUSED';
-        }
-        patchEntry(vaultId, { rotationState: expectedState === 'IDLE' ? 'IDLE' : 'PAUSED' });
-        setRotationInterrupted(expectedState !== 'IDLE');
+        // ACQUIRE already committed and bumped currentVmkVersion; the next unlock derives the
+        // new keys. Leave the registry consistent and the rotation IN_PROGRESS (resumable).
+        patchEntry(vaultId, { currentVmkVersion: newVersion, rotationState: 'IN_PROGRESS', vaultSalt: vault.vaultSalt });
+        setRotationInterrupted(true);
         throw err;
       } finally {
-        // Best-effort zeroization of the root secret(s); the derived working keys
-        // stay until the caller stores them.
-        secureZeroize(masterNew);
-        secureZeroize(inUse.master);
+        secureZeroize(vmkOld);
+        secureZeroize(vmkNew);
       }
     },
     [patchEntry],
-  );
-
-  const changeVaultPassword = useCallback(
-    async (
-      currentPassword: string,
-      newPassword: string,
-      onProgress?: (done: number, total: number) => void,
-      onStagedMismatch?: OnStagedMismatch,
-    ): Promise<string> => {
-      const vaultId = activeVaultId();
-      if (!vaultId) throw new Error('No vault on this device');
-
-      // Verify the current password client-side (fast-fail). The server verifier is
-      // authoritative; the in-memory copy and then the local blob are the offline fallbacks.
-      const vault = await getVault(vaultId);
-      const masterOld = await deriveWrappingKey(currentPassword, vault.vaultSalt);
-      const keysOld = deriveKeys(masterOld);
-      secureZeroize(masterOld); // rotation only needs the derived old key set
-      const verifier =
-        (vault.verifier && bytesToString(vault.verifier)) ||
-        vaults.find((v) => v.vaultId === vaultId)?.verifier ||
-        loadVerifier(vaultId);
-      if (!verifier || !checkVerifier(verifier, keysOld.metadataEncryptionKey)) {
-        throw new Error(WRONG_VAULT_PASSWORD);
-      }
-      // A PAUSED or IN_PROGRESS vault resumes through the same path: ACQUIRE with its real state.
-      return rotateVault(vaultId, vault, keysOld, newPassword, onProgress, onStagedMismatch);
-    },
-    [rotateVault, vaults],
   );
 
   const recoverVault = useCallback(
     async (
       phrase: string,
       newPassword: string,
-      onProgress?: (done: number, total: number) => void,
       target?: { vaultId: string; name?: string },
-      onStagedMismatch?: OnStagedMismatch,
-    ) => {
+    ): Promise<{ phrase: string; vaultId: string; name: string }> => {
       const derived = keysFromPhrase(phrase);
       if (!derived) throw new Error(PHRASE_ERROR);
-      secureZeroize(derived.master); // only the derived keys are used below
-      const known = listVaults();
-      const vaultId = target?.vaultId ?? identifyVaultForPhrase(phrase, known.map((v) => v.vaultId));
-      if (!vaultId) throw new Error(PHRASE_ERROR);
-      const vault = await getVault(vaultId);
-      if (!loadVerifier(vaultId)) {
-        // New device: nothing local to check against, so prove the keys against whatever the
-        // rotation sweep below is actually going to touch. Items still under the OLD key (the
-        // same predicate rotateItems uses: dekVersion <= vault.kekVersion) are the real proof
-        // candidates, an item a prior, partially-completed sweep already advanced is under
-        // the NEW key and would wrongly fail a correct phrase on retry. Collections carry no
-        // version and are always swept, so they're only the fallback when there are no
-        // old-key items to check instead. This runs before any write, so a wrong phrase is
-        // caught here rather than mid-sweep. A vault with no readable candidates at all is
-        // accepted unverified: the sweep then has nothing to re-encrypt, so a wrong phrase
-        // can't corrupt anything.
-        const [items, cols] = await Promise.all([listItems(vaultId), listAllCollections(vaultId)]);
-        const oldKeyItems = items.filter(
-          (i) => i.itemType === 'MEDIA' && i.encryptedMetadata && (i.dekVersion ?? 0) <= vault.kekVersion,
-        );
-        const candidates: { encryptedMetadata?: Uint8Array }[] = oldKeyItems.length
-          ? oldKeyItems
-          : cols.filter((c) => c.encryptedMetadata);
-        const decrypt = oldKeyItems.length ? decryptMetadata : decryptCollectionName;
-        const opens = (blob: Uint8Array) => {
+      const { vmk, keys } = derived;
+      try {
+        const known = listVaults();
+        const vaultId =
+          target?.vaultId ??
+          identifyVaultForPhrase(
+            phrase,
+            known.map((v) => ({ vaultId: v.vaultId, encryptedName: v.encryptedName })),
+          );
+        if (!vaultId) throw new Error(PHRASE_ERROR);
+        const vault = await getVault(vaultId);
+        if (vault.rotationState !== 'IDLE') throw new Error(RECOVERY_BLOCKED_BY_ROTATION);
+
+        // Prove the phrase before any write: the vault was encrypted by the phrase's keys, so
+        // decrypting its name must succeed. A well-formed but wrong phrase never overwrites.
+        let name = target?.name ?? known.find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
+        if (vault.encryptedName) {
           try {
-            decrypt(blob, derived.keys.metadataEncryptionKey);
-            return true;
+            name = decryptCollectionName(vault.encryptedName, keys.metadataEncryptionKey);
           } catch {
-            return false;
+            throw new Error(PHRASE_ERROR);
           }
-        };
-        if (candidates.length && !candidates.some((c) => opens(c.encryptedMetadata!))) throw new Error(PHRASE_ERROR);
+        }
+
+        const newKey = await deriveWrappingKey(newPassword, vault.vaultSalt);
+        const newVersion = vault.currentVmkVersion || 1;
+        // The server keeps the VMK version set intact on a re-wrap, so re-wrap the current
+        // envelope with the phrase's VMK and pass any superseded generations through unchanged.
+        const envelopes: VmkEnvelopeRecord[] = vault.vmkEnvelopes.length
+          ? vault.vmkEnvelopes.map((e) => ({
+              vmkVersion: e.vmkVersion,
+              wrappedVmk: e.wrappedVmk,
+              createdAt: e.createdAt,
+            }))
+          : [{ vmkVersion: 1, wrappedVmk: new Uint8Array(0), createdAt: new Date() }];
+        const current = envelopes.find((e) => e.vmkVersion === newVersion) ?? envelopes[0];
+        current.vmkVersion = newVersion;
+        current.wrappedVmk = await wrapVmk(vmk, newKey);
+        current.createdAt = new Date();
+        secureZeroize(newKey);
+        await updateVaultPassword(vaultId, vault.envelopeVersion, envelopes);
+        await storeKeys(vaultId, keys);
+        upsertVault({
+          vaultId,
+          name,
+          ...(vault.encryptedName ? { encryptedName: bytesToBase64(vault.encryptedName) } : {}),
+          currentVmkVersion: newVersion,
+          rotationState: 'IDLE',
+        });
+        refreshVaults({ vaultId, vaultSalt: vault.vaultSalt });
+        activate(vaultId);
+        setStatus('unlocked');
+        return { phrase: normalizePhrase(phrase), vaultId, name };
+      } finally {
+        secureZeroize(vmk);
       }
-      // Steps 1 to 7 of the rotation, including the staged-pair dialog: a recovering user usually
-      // cannot know an earlier attempt's new password, so "Start over" is the expected route.
-      const newPhrase = await rotateVault(vaultId, vault, derived.keys, newPassword, onProgress, onStagedMismatch);
-      // rotateVault stored the server name; a recovery-kit name only fills in for a vault that
-      // never had one.
-      const rotated = listVaults().find((v) => v.vaultId === vaultId);
-      const name =
-        rotated && rotated.name !== DEFAULT_VAULT_NAME ? rotated.name : target?.name ?? rotated?.name ?? DEFAULT_VAULT_NAME;
-      if (name !== rotated?.name) patchEntry(vaultId, { name });
-      activate(vaultId);
-      setStatus('unlocked');
-      // No re-sync here (same decision as setupVault, see Global Constraints): rotateVault's own
-      // commit already left the registry row correct (kekVersion, rotationState, name,
-      // encryptedName); an eventually-consistent ListVaults read could overwrite it with the
-      // pre-rotation fields. The next gate syncs.
-      return { phrase: newPhrase, vaultId, name };
     },
-    [rotateVault, activate, patchEntry],
+    [activate, refreshVaults],
   );
 
-  // Password-confirmed, fail-closed delete (spec §7). The check runs before the first call;
-  // DeleteVault is a resumable sweep, so it is repeated until the server says DELETED. A 404
-  // on a later call means the vault is already gone. Nothing here retries: the dialog offers
-  // Retry and the server sweep is idempotent.
+  // Password-confirmed, fail-closed delete. Confirmation is unwrapping the current VMK envelope;
+  // DeleteVault is a resumable sweep, so it is repeated until the server says DELETED. A 404 on
+  // a later call means the vault is already gone. Nothing here retries: the dialog offers Retry
+  // and the server sweep is idempotent.
   const deleteVault = useCallback(
     async (vaultId: string, vaultPassword: string, onProgress?: (deletedItems: number) => void): Promise<void> => {
-      const entry = vaults.find((v) => v.vaultId === vaultId);
-      const verifier = entry ? verifierFor(entry) : loadVerifier(vaultId);
-      if (!verifier) throw new Error(DELETE_REFUSED);
-      const salt = entry?.vaultSalt ?? (await getVaultSalt(vaultId));
-      const keys = deriveKeys(await deriveWrappingKey(vaultPassword, salt));
-      const passwordOk = checkVerifier(verifier, keys.metadataEncryptionKey);
-      zeroizeKeys(keys); // the check is the only use of these keys
-      if (!passwordOk) throw new Error(WRONG_VAULT_PASSWORD);
+      const vault = await getVault(vaultId);
+      const envelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
+      if (!envelope) throw new Error(DELETE_REFUSED);
+      const wrappingKey = await deriveWrappingKey(vaultPassword, vault.vaultSalt);
+      let vmk: Uint8Array;
+      try {
+        vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
+      } catch {
+        throw new Error(WRONG_VAULT_PASSWORD);
+      } finally {
+        secureZeroize(wrappingKey);
+      }
+      secureZeroize(vmk); // the unwrap is the only use
 
       let removed = 0;
       for (let calls = 1; ; calls++) {
@@ -698,7 +609,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
 
       await clearKeys(vaultId);
-      localStorage.removeItem(`cortex_vault_verifier_${vaultId}`); // vault/verifier.ts STORAGE_PREFIX
       localStorage.removeItem(`cortex_welcome_done:${vaultId}`); // components/WelcomeCard.tsx key
       const wasActive = activeVaultId() === vaultId;
       removeVault(vaultId);
@@ -708,13 +618,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (next) setActiveVault(next.vaultId);
         setStatus('signedInVaultLocked');
       }
-      // No re-sync (same decision as setupVault and recoverVault, see Global Constraints):
-      // ListVaults is eventually consistent, so a read racing this delete could still include
-      // the just-deleted vault and resurrect it. refreshVaults re-reads the registry this
-      // removeVault call already updated. The next gate syncs.
+      // No re-sync (same decision as setupVault and recoverVault): ListVaults is eventually
+      // consistent, so a read racing this delete could still include the just-deleted vault and
+      // resurrect it. refreshVaults re-reads the registry this removeVault call already updated.
       refreshVaults();
     },
-    [vaults, refreshVaults],
+    [refreshVaults],
   );
 
   const value: SessionValue = {
@@ -730,6 +639,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setupVault,
     unlockVault,
     changeVaultPassword,
+    rotateEncryptionKeys,
     rotationInterrupted,
     vaults,
     activeVault,
