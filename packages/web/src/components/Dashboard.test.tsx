@@ -46,6 +46,7 @@ vi.mock('./CollectionSidebar', () => ({
 }));
 vi.mock('./TagSearch', () => ({ default: () => <div>tag-search</div> }));
 vi.mock('./ChangeVaultPassword', () => ({ default: () => <div>change-vault-password</div> }));
+vi.mock('./ChangeAccountPassword', () => ({ default: () => <div>change-account-password</div> }));
 vi.mock('./VaultSwitcher', () => ({ default: () => <div>vault-switcher</div> }));
 vi.mock('./WelcomeCard', () => ({
   default: ({ hasFiles }: { hasFiles: boolean }) => <div data-has-files={String(hasFiles)}>welcome-card</div>,
@@ -77,6 +78,11 @@ describe('Dashboard', () => {
   it('shows "Change vault password" button when unlocked', () => {
     render(<Dashboard />);
     expect(screen.getByRole('button', { name: /change vault password/i })).toBeInTheDocument();
+  });
+
+  it('shows "Change account password" button when unlocked', () => {
+    render(<Dashboard />);
+    expect(screen.getByRole('button', { name: /change account password/i })).toBeInTheDocument();
   });
 
   it('shows resume banner when rotationInterrupted is true', () => {

@@ -8,6 +8,7 @@ const amplify = vi.hoisted(() => ({
   confirmSignUp: vi.fn(async () => ({ isSignUpComplete: true })),
   signIn: vi.fn(async () => ({ isSignedIn: true })),
   signOut: vi.fn(async () => {}),
+  updatePassword: vi.fn(async () => {}),
   getCurrentUser: vi.fn(async () => {
     throw new Error('no user');
   }),
@@ -24,6 +25,7 @@ function Probe() {
     <div>
       <span data-testid="status">{s.status}</span>
       <button onClick={() => s.signInAccount('a@b.com', 'pw')}>signin</button>
+      <button onClick={() => s.changeAccountPassword('old', 'new').catch(() => {})}>change-account</button>
       <button onClick={() => s.logout()}>logout</button>
     </div>
   );
@@ -64,5 +66,23 @@ describe('SessionContext auth', () => {
     });
     expect(screen.getByTestId('status')).toHaveTextContent('signedOut');
     expect(localStorage.getItem('cortex_account')).toBeNull();
+  });
+
+  it('changeAccountPassword calls Cognito updatePassword with the old and new password', async () => {
+    render(
+      <SessionProvider>
+        <Probe />
+      </SessionProvider>,
+    );
+    await screen.findByText('change-account');
+
+    await act(async () => {
+      await userEvent.click(screen.getByText('change-account'));
+    });
+
+    expect(amplify.updatePassword).toHaveBeenCalledWith({
+      oldPassword: 'old',
+      newPassword: 'new',
+    });
   });
 });

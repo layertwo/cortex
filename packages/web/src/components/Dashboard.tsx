@@ -13,6 +13,7 @@ import FileList from './FileList';
 import CollectionSidebar, { type View } from './CollectionSidebar';
 import TagSearch from './TagSearch';
 import ChangeVaultPassword from './ChangeVaultPassword';
+import ChangeAccountPassword from './ChangeAccountPassword';
 import WelcomeCard from './WelcomeCard';
 import Wordmark from './brand/Wordmark';
 import VaultSwitcher from './VaultSwitcher';
@@ -32,6 +33,7 @@ export default function Dashboard() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [view, setView] = useState<View>({ kind: 'all' });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [changingAccountPassword, setChangingAccountPassword] = useState(false);
   const [unlocking, setUnlocking] = useState<VaultEntry | null>(null);
   const [vaultDialog, setVaultDialog] = useState<'new' | 'manage' | null>(null);
   const [counts, setCounts] = useState({ files: 0, collections: 0 });
@@ -98,6 +100,12 @@ export default function Dashboard() {
                     size="sm"
                     onClick={() => setChangingPassword(true)}
                   />
+                  <Button
+                    label="Change account password"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setChangingAccountPassword(true)}
+                  />
                   <Button label="Log out" variant="ghost" size="sm" onClick={() => void logout()} />
                 </HStack>
               </HStack>
@@ -137,6 +145,9 @@ export default function Dashboard() {
         }
       />
       {changingPassword && <ChangeVaultPassword onDone={() => setChangingPassword(false)} />}
+      {changingAccountPassword && (
+        <ChangeAccountPassword onDone={() => setChangingAccountPassword(false)} />
+      )}
       {unlocking && <UnlockVaultDialog vault={unlocking} onClose={() => setUnlocking(null)} />}
       {vaultDialog === 'new' && <NewVaultDialog onClose={() => setVaultDialog(null)} />}
       {vaultDialog === 'manage' && (

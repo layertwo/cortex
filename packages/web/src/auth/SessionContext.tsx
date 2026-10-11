@@ -7,6 +7,7 @@ import {
   resetPassword,
   confirmResetPassword,
   resendSignUpCode,
+  updatePassword,
 } from 'aws-amplify/auth';
 import {
   deriveVaultMasterKey,
@@ -98,6 +99,9 @@ export interface SessionValue {
   // derives the KEK client-side and is unrecoverable except via BIP39 recovery.
   requestPasswordReset(email: string): Promise<void>;
   confirmPasswordReset(email: string, code: string, newPassword: string): Promise<void>;
+  // Change the signed-in account's Cognito password. The vault password and keys are
+  // untouched — no re-encryption, no new recovery phrase.
+  changeAccountPassword(currentPassword: string, newPassword: string): Promise<void>;
   logout(): Promise<void>;
   // Creates the vault, then stores its encrypted name and verifier server-side; returns
   // the BIP39 recovery phrase.
@@ -265,6 +269,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const confirmPasswordReset = useCallback(
     async (email: string, code: string, newPassword: string) => {
       await confirmResetPassword({ username: email, confirmationCode: code, newPassword });
+    },
+    [],
+  );
+
+  // Cognito owns the account password; the server never sees it. Because the vault key is
+  // derived from the separate vault password, nothing encrypted needs to change.
+  const changeAccountPassword = useCallback(
+    async (currentPassword: string, newPassword: string): Promise<void> => {
+      await updatePassword({ oldPassword: currentPassword, newPassword });
     },
     [],
   );
@@ -712,6 +725,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     signInAccount,
     requestPasswordReset,
     confirmPasswordReset,
+    changeAccountPassword,
     logout,
     setupVault,
     unlockVault,
