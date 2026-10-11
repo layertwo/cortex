@@ -367,6 +367,96 @@ class VaultService:
         logger.info("Vault updated", **{"vault_id": vault_id})
         return {"vault_id": vault_id, "updated_at": now}
 
+    def update_vault_password(
+        self,
+        user_id: str,
+        vault_id: str,
+        expected_envelope_version: int,
+        envelopes: list[Dict[str, Any]],
+    ) -> Dict:
+        """
+        Replace the vault's VMK envelopes after a vault password change.
+
+        A pure re-wrap: the caller submits a fresh envelope for every version
+        already stored, changing only wrapped_vmk/created_at and leaving
+        current_vmk_version alone. Bootstrap (empty stored set and
+        expected_envelope_version 0) stores exactly one version-1 envelope and
+        enrols VMK version 1.
+
+        Args:
+            user_id: User identifier
+            vault_id: Vault identifier
+            expected_envelope_version: Envelope version the caller last read
+            envelopes: Full envelope set ({vmk_version, wrapped_vmk, created_at})
+
+        Returns:
+            Dictionary with the new envelope_version.
+
+        Raises:
+            NotFoundError: If the vault is missing or being deleted
+            ConflictError: If the submitted version set differs from the stored
+                set, bootstrap is malformed, or the guarded write loses a race
+        """
+        key = {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
+        item = self._read(key, consistent=True)
+        if not item or item.get("deletion_state"):
+            logger.warning(
+                "Vault not found",
+                **{"vault_id": vault_id, "operation": "update_vault_password"},
+            )
+            raise NotFoundError("Vault not found")
+
+        stored_versions = {int(env["vmk_version"]) for env in item.get("vmk_envelopes") or []}
+        submitted_versions = {int(env["vmk_version"]) for env in envelopes}
+
+        update_expr = "SET vmk_envelopes = :env, envelope_version = :next"
+        values: Dict[str, Any] = {
+            ":env": envelopes,
+            ":next": expected_envelope_version + 1,
+            ":expected": expected_envelope_version,
+        }
+
+        if not stored_versions:
+            if expected_envelope_version != 0 or submitted_versions != {1} or len(envelopes) != 1:
+                logger.warning(
+                    "Malformed vault password bootstrap",
+                    vault_id=vault_id,
+                )
+                raise ConflictError("Bootstrap writes exactly one version 1 envelope")
+            update_expr += ", current_vmk_version = :cur"
+            values[":cur"] = 1
+        elif submitted_versions != stored_versions:
+            logger.warning(
+                "Vault password update would change the VMK version set",
+                vault_id=vault_id,
+            )
+            raise ConflictError("A vault password change cannot add or drop a VMK version")
+
+        try:
+            self.vaults_table.update_item(
+                Key=key,
+                UpdateExpression=update_expr,
+                ConditionExpression=(
+                    "envelope_version = :expected AND attribute_not_exists(deletion_state)"
+                ),
+                ExpressionAttributeValues=values,
+            )
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                logger.error(
+                    "Failed to update vault password envelopes",
+                    **{"error": str(e), "vault_id": vault_id},
+                )
+                raise
+            logger.warning("Vault password update conflict", vault_id=vault_id)
+            raise ConflictError("Vault envelopes changed on another device") from e
+
+        logger.info(
+            "Vault password envelopes updated",
+            **{"vault_id": vault_id, "envelope_version": values[":next"]},
+        )
+        return {"envelope_version": values[":next"]}
+
     def mark_deleting(self, user_id: str, vault_id: str) -> None:
         """
         Mark the vault DELETING (spec 4.3, "DeleteVault, first call").

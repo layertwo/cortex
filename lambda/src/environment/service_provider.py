@@ -49,6 +49,7 @@ from src.api.routes.vaults import (
     GetVaultRoute,
     GetVaultSaltRoute,
     ListVaultsRoute,
+    UpdateVaultPasswordRoute,
     UpdateVaultRotationRoute,
     UpdateVaultRoute,
 )
@@ -283,6 +284,7 @@ class ServiceProvider:
             GetVaultSaltRoute(vault_service=self.vault_service),
             GetVaultRoute(vault_service=self.vault_service),
             UpdateVaultRoute(vault_service=self.vault_service),
+            UpdateVaultPasswordRoute(vault_service=self.vault_service),
             DeleteVaultRoute(vault_deletion_service=self.vault_deletion_service),
             UpdateVaultRotationRoute(
                 vault_service=self.vault_service,

@@ -1011,3 +1011,83 @@ class TestDeleteVaultRoute:
 
         assert second.status_code == 404
         assert "not found" in second.json()["error"]["message"].lower()
+
+
+class TestUpdateVaultPasswordRoute:
+    """POST /v1/vaults/{vault_id}/password: bootstrap and pure re-wrap."""
+
+    VAULT = "test-vault-1"
+
+    def test_bootstrap_returns_1(self, client, dynamodb_stubber):
+        wrapped = secrets.token_bytes(61)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": vault_row(
+                    "test-user-id",
+                    self.VAULT,
+                    envelope_version={"N": "0"},
+                    current_vmk_version={"N": "0"},
+                )
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{self.VAULT}"},
+                "ConsistentRead": True,
+            },
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{self.VAULT}"},
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+            },
+        )
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT}/password",
+            json={
+                "expectedEnvelopeVersion": 0,
+                "vmkEnvelopes": [
+                    {
+                        "vmkVersion": 1,
+                        "wrappedVmk": base64.b64encode(wrapped).decode("utf-8"),
+                        "createdAt": 1700000400,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"envelopeVersion": 1}
+
+    def test_unknown_vault_returns_404(self, client, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{self.VAULT}"},
+                "ConsistentRead": True,
+            },
+        )
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT}/password",
+            json={
+                "expectedEnvelopeVersion": 0,
+                "vmkEnvelopes": [
+                    {
+                        "vmkVersion": 1,
+                        "wrappedVmk": base64.b64encode(secrets.token_bytes(61)).decode("utf-8"),
+                        "createdAt": 1700000400,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 404

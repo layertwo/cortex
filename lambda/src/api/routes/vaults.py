@@ -29,6 +29,8 @@ from src.shared.generated.models import (
     GetVaultResponseContent,
     GetVaultSaltResponseContent,
     ListVaultsResponseContent,
+    UpdateVaultPasswordRequestContent,
+    UpdateVaultPasswordResponseContent,
     UpdateVaultRequestContent,
     UpdateVaultResponseContent,
     UpdateVaultRotationRequestContent,
@@ -347,6 +349,55 @@ class UpdateVaultRoute(BaseRoute):
             )
 
             return UpdateVaultResponseContent(**result)
+
+
+class UpdateVaultPasswordRoute(BaseRoute):
+    """Handle replacing the vault's VMK envelopes after a password change."""
+
+    def __init__(self, vault_service: VaultService):
+        """Initialize update vault password route."""
+        self.vault_service = vault_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.post(
+            "/v1/vaults/{vault_id}/password", response_model=UpdateVaultPasswordResponseContent
+        )
+        def handle(
+            vault_id: str,
+            request: UpdateVaultPasswordRequestContent,
+            user_id: str = Depends(get_current_user),
+        ):
+            """
+            Replace the vault's VMK envelopes (bootstrap or pure re-wrap).
+
+            Path Parameters:
+                vault_id: Vault identifier
+
+            Returns:
+                The new envelopeVersion.
+
+            Raises:
+                NotFoundError: If the vault is unknown or unowned (404)
+                ConflictError: If the version set would change, bootstrap is
+                    malformed, or the guarded write loses a race (409)
+            """
+            logger.info("Updating vault password envelopes", vault_id=vault_id)
+
+            result = self.vault_service.update_vault_password(
+                user_id=user_id,
+                vault_id=vault_id,
+                expected_envelope_version=request.expected_envelope_version,
+                envelopes=[
+                    {
+                        "vmk_version": int(env.vmk_version),
+                        "wrapped_vmk": to_bytes(env.wrapped_vmk),
+                        "created_at": int(env.created_at),
+                    }
+                    for env in request.vmk_envelopes
+                ],
+            )
+
+            return UpdateVaultPasswordResponseContent(envelope_version=result["envelope_version"])
 
 
 class DeleteVaultRoute(BaseRoute):

@@ -929,6 +929,195 @@ class TestVaultService:
             vault_service.delete_vault_row(user_id="u1", vault_id="v1")
 
 
+class TestUpdateVaultPassword:
+    """update_vault_password: bootstrap and pure re-wrap under an envelope-version guard."""
+
+    UPDATE = "SET vmk_envelopes = :env, envelope_version = :next"
+    CONDITION = "envelope_version = :expected AND attribute_not_exists(deletion_state)"
+
+    def _stub_read(self, dynamodb_stubber, **extra):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": vault_row("u1", "v1", **extra)},
+            {"TableName": "test-vaults-table", "Key": ROTATION_KEY, "ConsistentRead": True},
+        )
+
+    def test_update_vault_password_bootstrap_stores_first_envelope(
+        self, vault_service, dynamodb_stubber
+    ):
+        """Empty stored set + expected 0 writes one version-1 envelope and enrols VMK 1."""
+        wrapped = secrets.token_bytes(61)
+        envelopes = [{"vmk_version": 1, "wrapped_vmk": wrapped, "created_at": 1700000400}]
+        self._stub_read(
+            dynamodb_stubber,
+            envelope_version={"N": "0"},
+            current_vmk_version={"N": "0"},
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": ROTATION_KEY,
+                "UpdateExpression": self.UPDATE + ", current_vmk_version = :cur",
+                "ConditionExpression": self.CONDITION,
+                "ExpressionAttributeValues": {
+                    ":env": envelopes,
+                    ":next": 1,
+                    ":cur": 1,
+                    ":expected": 0,
+                },
+            },
+        )
+
+        result = vault_service.update_vault_password(
+            user_id="u1", vault_id="v1", expected_envelope_version=0, envelopes=envelopes
+        )
+
+        assert result == {"envelope_version": 1}
+
+    def test_update_vault_password_bootstrap_rejects_other_versions(
+        self, vault_service, dynamodb_stubber
+    ):
+        """Bootstrap requires exactly one version-1 envelope; a version 2 is a conflict."""
+        self._stub_read(
+            dynamodb_stubber,
+            envelope_version={"N": "0"},
+            current_vmk_version={"N": "0"},
+        )
+        with pytest.raises(ConflictError):
+            vault_service.update_vault_password(
+                user_id="u1",
+                vault_id="v1",
+                expected_envelope_version=0,
+                envelopes=[{"vmk_version": 2, "wrapped_vmk": b"\x02" * 61, "created_at": 1}],
+            )
+
+    def test_update_vault_password_stale_version_conflicts(self, vault_service, dynamodb_stubber):
+        """A stale expectedEnvelopeVersion fails the guarded write -> ConflictError."""
+        self._stub_read(
+            dynamodb_stubber,
+            envelope_version={"N": "2"},
+            current_vmk_version={"N": "1"},
+            vmk_envelopes={
+                "L": [
+                    {
+                        "M": {
+                            "vmk_version": {"N": "1"},
+                            "wrapped_vmk": {"B": b"\x01" * 61},
+                            "created_at": {"N": "1"},
+                        }
+                    }
+                ]
+            },
+        )
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+
+        with pytest.raises(ConflictError):
+            vault_service.update_vault_password(
+                user_id="u1",
+                vault_id="v1",
+                expected_envelope_version=1,
+                envelopes=[{"vmk_version": 1, "wrapped_vmk": b"\x02" * 61, "created_at": 2}],
+            )
+
+    def test_update_vault_password_cannot_drop_a_version(self, vault_service, dynamodb_stubber):
+        """Dropping a stored version is rejected before any write."""
+        stored_versions = [1, 2]
+        self._stub_read(
+            dynamodb_stubber,
+            envelope_version={"N": "1"},
+            current_vmk_version={"N": "2"},
+            vmk_envelopes={
+                "L": [
+                    {
+                        "M": {
+                            "vmk_version": {"N": str(v)},
+                            "wrapped_vmk": {"B": b"\x01" * 61},
+                            "created_at": {"N": "1"},
+                        }
+                    }
+                    for v in stored_versions
+                ]
+            },
+        )
+
+        with pytest.raises(ConflictError, match="version"):
+            vault_service.update_vault_password(
+                user_id="u1",
+                vault_id="v1",
+                expected_envelope_version=1,
+                envelopes=[{"vmk_version": 2, "wrapped_vmk": b"\x02" * 61, "created_at": 2}],
+            )
+
+    def test_update_vault_password_rewrap_keeps_current_vmk_version(
+        self, vault_service, dynamodb_stubber
+    ):
+        """Re-wrap of the whole stored set writes only envelopes + envelope_version."""
+        envelopes = [
+            {"vmk_version": 1, "wrapped_vmk": b"\x0a" * 61, "created_at": 10},
+            {"vmk_version": 2, "wrapped_vmk": b"\x0b" * 61, "created_at": 11},
+        ]
+        self._stub_read(
+            dynamodb_stubber,
+            envelope_version={"N": "4"},
+            current_vmk_version={"N": "2"},
+            vmk_envelopes={
+                "L": [
+                    {
+                        "M": {
+                            "vmk_version": {"N": "1"},
+                            "wrapped_vmk": {"B": b"\x01" * 61},
+                            "created_at": {"N": "1"},
+                        }
+                    },
+                    {
+                        "M": {
+                            "vmk_version": {"N": "2"},
+                            "wrapped_vmk": {"B": b"\x02" * 61},
+                            "created_at": {"N": "2"},
+                        }
+                    },
+                ]
+            },
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": ROTATION_KEY,
+                "UpdateExpression": self.UPDATE,
+                "ConditionExpression": self.CONDITION,
+                "ExpressionAttributeValues": {":env": envelopes, ":next": 5, ":expected": 4},
+            },
+        )
+
+        result = vault_service.update_vault_password(
+            user_id="u1", vault_id="v1", expected_envelope_version=4, envelopes=envelopes
+        )
+
+        assert result == {"envelope_version": 5}
+
+    def test_update_vault_password_missing_vault_is_not_found(
+        self, vault_service, dynamodb_stubber
+    ):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {"TableName": "test-vaults-table", "Key": ROTATION_KEY, "ConsistentRead": True},
+        )
+        with pytest.raises(NotFoundError, match="Vault not found"):
+            vault_service.update_vault_password(
+                user_id="u1",
+                vault_id="v1",
+                expected_envelope_version=0,
+                envelopes=[{"vmk_version": 1, "wrapped_vmk": b"\x01" * 61, "created_at": 1}],
+            )
+
+
 ROTATION_KEY = {"PK": "USER#u1", "SK": "VAULT#v1"}
 NOW = 1_700_000_000
 LOCKED_AT = 1_699_999_000
