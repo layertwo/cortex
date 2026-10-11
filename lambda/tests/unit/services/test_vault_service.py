@@ -1403,3 +1403,15 @@ class TestVaultRotation:
                 new_vmk_version=2,
                 wrapped_new_vmk=WRAPPED,
             )
+
+    def test_acquire_rejects_wrong_wrapped_vmk_length(self, vault_service):
+        """A wrapped VMK that is not the 61-byte envelope format is refused before any write."""
+        with pytest.raises(BadRequestError, match="61 bytes"):
+            self._rotate(
+                vault_service,
+                "ACQUIRE",
+                "IDLE",
+                expected_envelope_version=1,
+                new_vmk_version=2,
+                wrapped_new_vmk=b"\x01" * 60,
+            )
