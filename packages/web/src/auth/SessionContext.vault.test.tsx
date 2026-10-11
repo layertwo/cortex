@@ -880,7 +880,15 @@ describe('composed rotate → recover → change (multi-generation vault)', () =
     expect(unwrapVmk(envelopes.find((e) => e.vmkVersion === 1)!.wrappedVmk, wrapKey('vaultpw'))).toEqual(VMK);
     expect(unwrapVmk(envelopes.find((e) => e.vmkVersion === 2)!.wrappedVmk, wrapKey('recoverypw'))).toEqual(VMK_NEW);
 
-    // 3. change with the recovery password: the un-openable superseded envelope must not block it.
+    // 3. the superseded password opens only envelope 1: it must be rejected, not silently accepted.
+    const writesAfterRecovery = api.updateVaultPassword.mock.calls.length;
+    await act(async () => {
+      await expect(sessionRef.current!.changeVaultPassword('vaultpw', 'finalpw')).rejects.toThrow(WRONG_VAULT_PASSWORD);
+    });
+    expect(api.updateVaultPassword.mock.calls.length).toBe(writesAfterRecovery);
+
+    // 4. change with the recovery password (the one that opens the current envelope): the
+    //    un-openable superseded envelope must not block it.
     const supersededBefore = envelopes.find((e) => e.vmkVersion === 1)!.wrappedVmk;
     await act(async () => {
       await expect(sessionRef.current!.changeVaultPassword('recoverypw', 'finalpw')).resolves.toBeUndefined();

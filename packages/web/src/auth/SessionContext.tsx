@@ -423,24 +423,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           wrappedVmk: e.wrappedVmk,
           createdAt: e.createdAt,
         }));
-        if (!out.length) throw new Error(WRONG_VAULT_PASSWORD);
-        let opened = false;
+        const currentVersion = source.currentVmkVersion;
+        if (!out.length || !out.some((e) => e.vmkVersion === currentVersion)) {
+          throw new Error(WRONG_VAULT_PASSWORD);
+        }
         for (const envelope of out) {
           let vmk: Uint8Array;
           try {
             vmk = unwrapVmk(envelope.wrappedVmk, oldKey);
           } catch {
-            // A superseded generation (e.g. wrapped before a recovery on another device) that the
-            // current password no longer opens: leave it unchanged rather than blocking the
-            // change forever. The server only requires the version set to be preserved.
+            // The current password is whatever opens the CURRENT-version envelope; a superseded
+            // generation it cannot open (e.g. wrapped before a recovery elsewhere) is left
+            // unchanged rather than blocking the change. The server preserves the version set.
+            if (envelope.vmkVersion === currentVersion) throw new Error(WRONG_VAULT_PASSWORD);
             continue;
           }
-          opened = true;
           envelope.wrappedVmk = await wrapVmk(vmk, newKey);
           envelope.createdAt = new Date();
           secureZeroize(vmk);
         }
-        if (!opened) throw new Error(WRONG_VAULT_PASSWORD); // no envelope opened ⇒ wrong password
         return out;
       };
       try {
