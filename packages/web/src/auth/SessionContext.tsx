@@ -516,7 +516,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           await updateVaultRotation({
             vaultId,
             action: 'ACQUIRE',
-            expectedState: vault.rotationState,
             expectedEnvelopeVersion: vault.envelopeVersion,
             newVmkVersion: newVersion,
             wrappedNewVmk,

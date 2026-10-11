@@ -294,8 +294,7 @@ structure UpdateVaultRotationInput {
     @documentation("ACQUIRE to lock; RELEASE to commit the re-keyed envelopes")
     action: RotationAction
 
-    @required
-    @documentation("Expected current rotation state (conditional write guard)")
+    @documentation("Expected current rotation state; required for RELEASE (its conditional-write guard), ignored by ACQUIRE")
     expectedState: RotationState
 
     @documentation("Expected current envelope version (conditional write guard)")

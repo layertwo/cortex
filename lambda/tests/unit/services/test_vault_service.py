@@ -1415,3 +1415,10 @@ class TestVaultRotation:
                 new_vmk_version=2,
                 wrapped_new_vmk=b"\x01" * 60,
             )
+
+    def test_release_requires_expected_state(self, vault_service):
+        """RELEASE is the action that reads expectedState; omitting it is a bad request."""
+        with pytest.raises(BadRequestError, match="RELEASE requires expectedState"):
+            vault_service.update_vault_rotation(
+                user_id="u1", vault_id="v1", action="RELEASE", expected_state=None
+            )

@@ -534,8 +534,9 @@ describe('rotateEncryptionKeys', () => {
       screen.getByText('rotate').click();
     });
     expect(document.title).toBe('rotated:24');
-    const acquire = api.updateVaultRotation.mock.calls[0][0] as { action: string; newVmkVersion: number; wrappedNewVmk: Uint8Array; expectedState: string };
-    expect(acquire).toMatchObject({ action: 'ACQUIRE', expectedState: 'IDLE', newVmkVersion: 2 });
+    const acquire = api.updateVaultRotation.mock.calls[0][0] as { action: string; newVmkVersion: number; wrappedNewVmk: Uint8Array };
+    expect(acquire).toMatchObject({ action: 'ACQUIRE', newVmkVersion: 2 });
+    expect(acquire).not.toHaveProperty('expectedState');
     expect(unwrapVmk(acquire.wrappedNewVmk, wrapKey('vaultpw'))).toEqual(VMK_NEW);
     const release = api.updateVaultRotation.mock.calls[1][0] as { action: string; newEncryptedName: Uint8Array };
     expect(release.action).toBe('RELEASE');

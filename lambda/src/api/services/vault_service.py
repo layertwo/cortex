@@ -564,7 +564,7 @@ class VaultService:
         user_id: str,
         vault_id: str,
         action: str,
-        expected_state: str,
+        expected_state: Optional[str] = None,
         expected_envelope_version: Optional[int] = None,
         new_vmk_version: Optional[int] = None,
         wrapped_new_vmk: Optional[bytes] = None,
@@ -722,9 +722,11 @@ class VaultService:
 
     @staticmethod
     def _release_expression(
-        expected_state: str, new_encrypted_name: Optional[bytes], now: int
+        expected_state: Optional[str], new_encrypted_name: Optional[bytes], now: int
     ) -> tuple[str, str, dict]:
         """Build the guarded RELEASE write: flip to IDLE, optionally store the name."""
+        if expected_state is None:
+            raise BadRequestError("RELEASE requires expectedState")
         update_expr = "SET rotation_state = :idle, updated_at = :now"
         values: dict = {":idle": "IDLE", ":expected": expected_state, ":now": now}
         if new_encrypted_name is not None:
