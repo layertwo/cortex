@@ -52,7 +52,7 @@ class TestCreateShare:
             "put_item", {}, {"TableName": "test-shares-table", "Item": ANY}
         )
 
-        request = CreateShareRequest(item_id=item_id)
+        request = CreateShareRequest(item_id=item_id, encrypted_metadata=b"share-meta")
         response = share_service.create_share(user_id, request)
 
         assert response.share_id is not None
@@ -87,7 +87,9 @@ class TestCreateShare:
             "put_item", {}, {"TableName": "test-shares-table", "Item": ANY}
         )
 
-        request = CreateShareRequest(item_id=item_id, expires_at=expires_at)
+        request = CreateShareRequest(
+            item_id=item_id, encrypted_metadata=b"share-meta", expires_at=expires_at
+        )
         response = share_service.create_share(user_id, request)
 
         assert response.share_id is not None
@@ -98,7 +100,7 @@ class TestCreateShare:
         # Stub get_item returning empty (item not found)
         dynamodb_stubber.add_response("get_item", {}, {"TableName": "test-items-table", "Key": ANY})
 
-        request = CreateShareRequest(item_id="nonexistent-item")
+        request = CreateShareRequest(item_id="nonexistent-item", encrypted_metadata=b"share-meta")
 
         with pytest.raises(NotFoundError, match="Item not found"):
             share_service.create_share("user-123", request)
@@ -122,7 +124,7 @@ class TestCreateShare:
             {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
 
-        request = CreateShareRequest(item_id=item_id)
+        request = CreateShareRequest(item_id=item_id, encrypted_metadata=b"share-meta")
 
         with pytest.raises(NotFoundError, match="Item not found"):
             share_service.create_share("user-123", request)
@@ -182,6 +184,7 @@ class TestGetShare:
                     "is_revoked": {"BOOL": False},
                     "access_count": {"N": "0"},
                     "created_at": {"N": str(int(time.time()))},
+                    "encrypted_metadata": {"B": b"share-meta"},
                 }
             },
             {
@@ -228,6 +231,8 @@ class TestGetShare:
         assert response.download_url is not None
         assert response.url_expires_at > 0
         assert response.expires_at is None
+        # The stored share metadata (not the item's vault-encrypted blob) is returned.
+        assert response.encrypted_metadata == b"share-meta"
 
     def test_get_share_revoked(self, share_service, dynamodb_stubber):
         """Test accessing a revoked share raises ShareRevokedError."""

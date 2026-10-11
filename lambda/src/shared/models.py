@@ -418,6 +418,9 @@ class CreateShareRequest(BaseModel):
     """Request model for creating a share."""
 
     item_id: str = Field(..., description="Item to share")
+    encrypted_metadata: bytes = Field(
+        ..., description="Share-key-encrypted file metadata (opaque to the server)"
+    )
     expires_at: Optional[int] = Field(default=None, description="Expiration timestamp (Unix epoch)")
 
 

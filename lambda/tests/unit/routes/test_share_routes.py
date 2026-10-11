@@ -54,7 +54,7 @@ class TestCreateShareRoute:
 
         response = client.post(
             "/v1/shares",
-            json={"item_id": item_id},
+            json={"item_id": item_id, "encryptedMetadata": "c2hhcmUtbWV0YQ=="},
         )
 
         assert response.status_code == 200
@@ -126,6 +126,7 @@ class TestGetShareRoute:
                     "created_at": {"N": str(now)},
                     "is_revoked": {"BOOL": False},
                     "access_count": {"N": "0"},
+                    "encrypted_metadata": {"B": b"share-meta"},
                 }
             },
             expected_params={
@@ -186,6 +187,8 @@ class TestGetShareRoute:
         assert isinstance(body["downloadUrl"], str), "downloadUrl should be a string"
         assert s3_key in body["downloadUrl"], "downloadUrl should contain the S3 key"
         assert isinstance(body["urlExpiresAt"], (int, float)), "urlExpiresAt should be a number"
+        # The share's own (share-key-encrypted) metadata is what the recipient decrypts.
+        assert body["encryptedMetadata"] == "c2hhcmUtbWV0YQ=="
 
 
 class TestRevokeShareRoute:

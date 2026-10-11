@@ -105,6 +105,9 @@ class ShareService:
             "item_id": request.item_id,
             "vault_id": item.get("vault_id", ""),
             "user_id": user_id,
+            # Share-key-encrypted file metadata, stored verbatim. The server
+            # cannot read it; only the password-holding recipient can.
+            "encrypted_metadata": bytes(request.encrypted_metadata),
             "created_at": now,
             "is_revoked": False,
             "access_count": 0,
@@ -217,7 +220,7 @@ class ShareService:
             item_id=item_id,
             download_url=download_url,
             url_expires_at=url_expires_at,
-            encrypted_metadata=_encode_binary(item["encrypted_metadata"]),
+            encrypted_metadata=_encode_binary(share["encrypted_metadata"]),
             expires_at=int(expires_at) if expires_at is not None else None,
         )
 

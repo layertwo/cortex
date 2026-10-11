@@ -68,6 +68,10 @@ structure CreateShareInput {
     @documentation("Item identifier to share")
     itemId: String
 
+    @required
+    @documentation("File metadata encrypted with the share key (name, contentType, size, contentId); the server never sees plaintext")
+    encryptedMetadata: Blob
+
     @documentation("Share expiration timestamp (optional)")
     expiresAt: Timestamp
 }

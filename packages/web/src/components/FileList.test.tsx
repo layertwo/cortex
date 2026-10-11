@@ -86,6 +86,14 @@ describe('FileList', () => {
     );
   });
 
+  it('the row menu opens the share dialog for a media row', async () => {
+    render(<FileList view={ALL} refreshKey={0} />);
+    await screen.findByText('cat.png');
+    await openRowMenu();
+    await userEvent.click(screen.getByRole('menuitem', { name: /^share$/i }));
+    expect(await screen.findByText(/create share link/i)).toBeInTheDocument();
+  });
+
   it('add-to-collection lists collections then adds the item', async () => {
     h.listAllCollections.mockResolvedValueOnce([
       { collectionId: 'c9', vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), itemCount: 0, createdAt: new Date(0), updatedAt: new Date(0) },
