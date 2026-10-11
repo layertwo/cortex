@@ -6,6 +6,7 @@ Tests DynamoDB and S3 repository operations using botocore stubbers.
 
 import base64
 import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -836,3 +837,15 @@ class TestQueryWithAttributeNames:
         )
 
         assert len(result["Items"]) == 1
+
+
+class TestDynamoDBRetryConfig:
+    """Throttled DynamoDB calls retry with backoff instead of surfacing as 500s (spec 21.1)."""
+
+    def test_repository_builds_resource_with_adaptive_retries(self, boto_session):
+        with patch.object(boto_session, "resource") as resource:
+            resource.return_value.Table.return_value = MagicMock()
+            DynamoDBRepository(session=boto_session, table_name="test-table")
+
+        _, kwargs = resource.call_args
+        assert kwargs["config"].retries == {"max_attempts": 5, "mode": "adaptive"}

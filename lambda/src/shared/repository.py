@@ -14,12 +14,18 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import boto3
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from src.shared.exceptions import BadRequestError
 from src.shared.logger import get_logger
 
 logger = get_logger("repository")
+
+# DynamoDB throttling: retry with jittered exponential backoff (spec 21.1) so a
+# ThrottlingException doesn't surface to the client as a 500. 'adaptive' adds
+# client-side rate limiting on top, which is what DynamoDB recommends under load.
+DYNAMODB_RETRY_CONFIG = Config(retries={"max_attempts": 5, "mode": "adaptive"})
 
 
 class DynamoDBRepository:
@@ -32,7 +38,7 @@ class DynamoDBRepository:
         Args:
             table_name: DynamoDB table name (defaults to env variable)
         """
-        self._resource = session.resource("dynamodb")
+        self._resource = session.resource("dynamodb", config=DYNAMODB_RETRY_CONFIG)
         self.table_name = table_name
         self.table = self._resource.Table(table_name)
 
