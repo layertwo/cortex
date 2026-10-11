@@ -1,8 +1,8 @@
 """
 Vault management route handlers for Cortex API.
 
-This module implements vault-related endpoints: create, list, name/verifier
-update, retrieval, salt retrieval, and the password-rotation lock.
+This module implements vault-related endpoints: create, list, name update,
+retrieval, salt retrieval, and the password-rotation lock.
 
 Request/response shapes come from the Smithy-generated models
 (src.shared.generated.models): snake_case attrs with camelCase aliases, so
@@ -34,11 +34,24 @@ from src.shared.generated.models import (
     UpdateVaultRotationRequestContent,
     UpdateVaultRotationResponseContent,
     VaultSummary,
+    VmkEnvelope,
 )
 from src.shared.logger import get_logger
 from src.shared.util import _encode_binary, to_bytes
 
 logger = get_logger("vault_routes")
+
+
+def _vmk_envelopes(vault: dict) -> list[VmkEnvelope]:
+    """Build the wire VmkEnvelope list from the service's envelope dicts."""
+    return [
+        VmkEnvelope(
+            vmk_version=env["vmk_version"],
+            wrapped_vmk=_encode_binary(env.get("wrapped_vmk")),
+            created_at=float(env["created_at"]),
+        )
+        for env in vault.get("vmk_envelopes") or []
+    ]
 
 
 class CreateVaultRoute(BaseRoute):
@@ -164,12 +177,11 @@ class GetVaultRoute(BaseRoute):
                 vault_id=vault["vault_id"],
                 vault_salt=base64.b64encode(vault["vault_salt"]),
                 encrypted_name=_encode_binary(vault.get("encrypted_name")),
-                verifier=_encode_binary(vault.get("verifier")),
-                pending_vault_salt=_encode_binary(vault.get("pending_vault_salt")),
-                pending_verifier=_encode_binary(vault.get("pending_verifier")),
                 created_at=vault["created_at"],
                 updated_at=vault["updated_at"],
-                kek_version=vault.get("kek_version"),
+                current_vmk_version=vault["current_vmk_version"],
+                envelope_version=vault["envelope_version"],
+                vmk_envelopes=_vmk_envelopes(vault),
                 rotation_state=vault.get("rotation_state"),
                 rotation_locked_at=vault.get("rotation_locked_at"),
             )
@@ -280,10 +292,9 @@ class ListVaultsRoute(BaseRoute):
                     vault_id=vault["vault_id"],
                     vault_salt=_encode_binary(vault["vault_salt"]),
                     encrypted_name=_encode_binary(vault.get("encrypted_name")),
-                    verifier=_encode_binary(vault.get("verifier")),
                     created_at=float(vault["created_at"]),
                     updated_at=float(vault["updated_at"]),
-                    kek_version=int(vault["kek_version"]),
+                    current_vmk_version=int(vault["current_vmk_version"]),
                     rotation_state=vault["rotation_state"],
                 )
                 for vault in vaults
@@ -295,7 +306,7 @@ class ListVaultsRoute(BaseRoute):
 
 
 class UpdateVaultRoute(BaseRoute):
-    """Handle storing the encrypted vault name and/or the password verifier."""
+    """Handle storing the encrypted vault name."""
 
     def __init__(self, vault_service: VaultService):
         """Initialize update vault route."""
@@ -309,9 +320,9 @@ class UpdateVaultRoute(BaseRoute):
             user_id: str = Depends(get_current_user),
         ):
             """
-            Store the encrypted vault name and/or the password verifier.
+            Store the encrypted vault name.
 
-            At least one of encryptedName, verifier is required (400 otherwise).
+            encryptedName is required (400 otherwise).
 
             Path Parameters:
                 vault_id: Vault identifier
@@ -320,12 +331,12 @@ class UpdateVaultRoute(BaseRoute):
                 Vault identifier and the new updatedAt timestamp.
 
             Raises:
-                BadRequestError: If neither field is supplied (400)
+                BadRequestError: If encryptedName is missing (400)
                 NotFoundError: If the vault is unknown or unowned (404)
                 ConflictError: If the vault is being deleted (409)
             """
-            if request.encrypted_name is None and request.verifier is None:
-                raise BadRequestError("Provide encryptedName or verifier")
+            if request.encrypted_name is None:
+                raise BadRequestError("Provide encryptedName")
 
             logger.info("Updating vault", vault_id=vault_id)
 
@@ -333,7 +344,6 @@ class UpdateVaultRoute(BaseRoute):
                 user_id=user_id,
                 vault_id=vault_id,
                 encrypted_name=to_bytes(request.encrypted_name),
-                verifier=to_bytes(request.verifier),
             )
 
             return UpdateVaultResponseContent(**result)

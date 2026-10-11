@@ -3,7 +3,7 @@ Vault service layer for Cortex API.
 
 This module implements business logic for vault management including
 vault creation with salt generation, vault reads and listing, vault name
-and verifier updates, deletion marks, and the rotation lock state machine.
+updates, deletion marks, and the rotation lock state machine.
 
 Requirements: 14.4, 22.1, 22.2, 22.3, 22.4, 22.5
 """
@@ -35,12 +35,11 @@ def _vault_summary(item: Dict[str, Any]) -> Dict[str, Any]:
         "vault_id": item["vault_id"],
         "vault_salt": to_bytes(item.get("vault_salt")),
         "encrypted_name": to_bytes(item.get("encrypted_name")),
-        "verifier": to_bytes(item.get("verifier")),
         "created_at": int(item["created_at"]),
         "updated_at": int(item.get("updated_at", item["created_at"])),
-        "kek_version": int(item["kek_version"]) if item.get("kek_version") is not None else 1,
+        "current_vmk_version": int(item.get("current_vmk_version", 0)),
+        "envelope_version": int(item.get("envelope_version", 0)),
         "rotation_state": item.get("rotation_state", "IDLE"),
-        "rotation_generation": int(item.get("rotation_generation", 0)),
     }
 
 
@@ -114,6 +113,10 @@ class VaultService:
             "vault_salt": vault_salt,
             "created_at": created_at,
             "updated_at": created_at,
+            # A fresh vault has no VMK enrolment yet; setup writes the first envelope
+            # through UpdateVaultPassword. Both counters start at 0.
+            "current_vmk_version": 0,
+            "envelope_version": 0,
         }
 
         try:
@@ -277,17 +280,17 @@ class VaultService:
 
     def get_vault(self, user_id: str, vault_id: str) -> Dict:
         """
-        Retrieve the vault record, including rotation state and any staged rotation pair.
+        Retrieve the vault record, including its VMK envelopes and rotation state.
 
         Args:
             user_id: User identifier
             vault_id: Vault identifier
 
         Returns:
-            Dictionary with vault_id, vault_salt, encrypted_name, verifier,
-            pending_vault_salt, pending_verifier, created_at, updated_at,
-            kek_version, rotation_state, rotation_locked_at, and
-            rotation_generation.
+            Dictionary with vault_id, vault_salt, encrypted_name, created_at,
+            updated_at, current_vmk_version, envelope_version, vmk_envelopes
+            (list of {vmk_version, wrapped_vmk, created_at}), rotation_state,
+            and rotation_locked_at.
 
         Raises:
             NotFoundError: If the vault is missing, unowned, or being deleted
@@ -302,8 +305,14 @@ class VaultService:
             raise NotFoundError("Vault not found")
 
         vault = _vault_summary(item)
-        vault["pending_vault_salt"] = to_bytes(item.get("pending_vault_salt"))
-        vault["pending_verifier"] = to_bytes(item.get("pending_verifier"))
+        vault["vmk_envelopes"] = [
+            {
+                "vmk_version": int(env["vmk_version"]),
+                "wrapped_vmk": to_bytes(env.get("wrapped_vmk")),
+                "created_at": int(env["created_at"]),
+            }
+            for env in item.get("vmk_envelopes") or []
+        ]
         vault["rotation_locked_at"] = (
             int(item["rotation_locked_at"]) if item.get("rotation_locked_at") is not None else None
         )
@@ -314,16 +323,14 @@ class VaultService:
         user_id: str,
         vault_id: str,
         encrypted_name: Optional[bytes] = None,
-        verifier: Optional[bytes] = None,
     ) -> Dict:
         """
-        Store the encrypted vault name and/or the password verifier.
+        Store the encrypted vault name.
 
         Args:
             user_id: User identifier
             vault_id: Vault identifier
             encrypted_name: Vault name encrypted under the vault metadata key
-            verifier: Password verifier ciphertext
 
         Returns:
             Dictionary with vault_id and updated_at.
@@ -339,9 +346,6 @@ class VaultService:
         if encrypted_name is not None:
             update_expr += ", encrypted_name = :name"
             values[":name"] = encrypted_name
-        if verifier is not None:
-            update_expr += ", verifier = :ver"
-            values[":ver"] = verifier
 
         try:
             self.vaults_table.update_item(

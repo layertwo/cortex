@@ -325,7 +325,6 @@ class TestVaultService:
         salt1 = secrets.token_bytes(16)
         salt2 = secrets.token_bytes(16)
         name2 = secrets.token_bytes(24)
-        verifier2 = secrets.token_bytes(48)
 
         dynamodb_stubber.add_response(
             "query",
@@ -346,12 +345,11 @@ class TestVaultService:
                         "user_id": {"S": user_id},
                         "vault_salt": {"B": salt2},
                         "encrypted_name": {"B": name2},
-                        "verifier": {"B": verifier2},
                         "created_at": {"N": "1234567891"},
                         "updated_at": {"N": "1234567999"},
-                        "kek_version": {"N": "3"},
-                        "rotation_state": {"S": "PAUSED"},
-                        "rotation_generation": {"N": "2"},
+                        "current_vmk_version": {"N": "3"},
+                        "envelope_version": {"N": "2"},
+                        "rotation_state": {"S": "IN_PROGRESS"},
                     },
                 ]
             },
@@ -372,20 +370,19 @@ class TestVaultService:
             "vault_id": "vault-1",
             "vault_salt": salt1,
             "encrypted_name": None,
-            "verifier": None,
             "created_at": 1234567890,
             "updated_at": 1234567890,
-            "kek_version": 1,
+            "current_vmk_version": 0,
+            "envelope_version": 0,
             "rotation_state": "IDLE",
-            "rotation_generation": 0,
         }
+        assert "verifier" not in vaults[0]
         assert vaults[1]["vault_salt"] == salt2
         assert vaults[1]["encrypted_name"] == name2
-        assert vaults[1]["verifier"] == verifier2
         assert vaults[1]["updated_at"] == 1234567999
-        assert vaults[1]["kek_version"] == 3
-        assert vaults[1]["rotation_state"] == "PAUSED"
-        assert vaults[1]["rotation_generation"] == 2
+        assert vaults[1]["current_vmk_version"] == 3
+        assert vaults[1]["envelope_version"] == 2
+        assert vaults[1]["rotation_state"] == "IN_PROGRESS"
 
     def test_list_user_vaults_pagination_token_round_trip(self, vault_service, dynamodb_stubber):
         """LastEvaluatedKey becomes next_token; feeding it back sends ExclusiveStartKey."""
@@ -515,8 +512,10 @@ class TestVaultService:
         # Verify salt has sufficient entropy (not all same byte)
         assert len(set(salt)) > 1, "Salt should have sufficient entropy"
 
-    def test_get_vault_returns_vault_with_rotation_fields(self, vault_service, dynamodb_stubber):
-        """Test that get_vault returns the vault record including rotation fields."""
+    def test_get_vault_fresh_vault_defaults_versions_and_envelopes(
+        self, vault_service, dynamodb_stubber
+    ):
+        """A fresh vault reads back with VMK version 0 and an empty envelope list."""
         user_id = "u1"
         vault_id = "v1"
         dynamodb_stubber.add_response(
@@ -529,7 +528,6 @@ class TestVaultService:
                     "user_id": {"S": user_id},
                     "vault_salt": {"B": b"\x00" * 16},
                     "created_at": {"N": "1700000000"},
-                    "kek_version": {"N": "1"},
                     "rotation_state": {"S": "IDLE"},
                 }
             },
@@ -540,9 +538,12 @@ class TestVaultService:
         )
         result = vault_service.get_vault(user_id=user_id, vault_id=vault_id)
         assert result["vault_id"] == vault_id
-        assert result["kek_version"] == 1
+        assert result["current_vmk_version"] == 0
+        assert result["envelope_version"] == 0
+        assert result["vmk_envelopes"] == []
         assert result["rotation_state"] == "IDLE"
         assert result["rotation_locked_at"] is None
+        assert "verifier" not in result
 
     def test_get_vault_raises_not_found(self, vault_service, dynamodb_stubber):
         """Test that get_vault raises NotFoundError when vault doesn't exist."""
@@ -554,8 +555,8 @@ class TestVaultService:
         with pytest.raises(NotFoundError):
             vault_service.get_vault(user_id="u1", vault_id="v1")
 
-    def test_create_vault_writes_updated_at(self, vault_service, dynamodb_stubber):
-        """create_vault stamps updated_at alongside created_at on the new row."""
+    def test_create_vault_writes_updated_at_and_vmk_versions(self, vault_service, dynamodb_stubber):
+        """create_vault stamps updated_at and initialises both version counters."""
         salt = secrets.token_bytes(16)
         dynamodb_stubber.add_response(
             "put_item",
@@ -570,6 +571,8 @@ class TestVaultService:
                     "vault_salt": salt,
                     "created_at": ANY,
                     "updated_at": ANY,
+                    "current_vmk_version": 0,
+                    "envelope_version": 0,
                 },
                 "ConditionExpression": "attribute_not_exists(PK) AND attribute_not_exists(SK)",
             },
@@ -579,12 +582,11 @@ class TestVaultService:
 
         assert result["vault_salt"] == salt
 
-    def test_get_vault_returns_name_verifier_and_staged_pair(self, vault_service, dynamodb_stubber):
-        """get_vault surfaces encrypted_name, verifier, and the staged rotation pair."""
+    def test_get_vault_returns_vmk_envelopes(self, vault_service, dynamodb_stubber):
+        """get_vault surfaces encrypted_name, the version counters, and every VMK envelope."""
         name = secrets.token_bytes(24)
-        verifier = secrets.token_bytes(48)
-        pending_salt = secrets.token_bytes(16)
-        pending_verifier = secrets.token_bytes(48)
+        wrapped1 = secrets.token_bytes(61)
+        wrapped2 = secrets.token_bytes(61)
         dynamodb_stubber.add_response(
             "get_item",
             {
@@ -593,13 +595,29 @@ class TestVaultService:
                     "v1",
                     vault_salt={"B": b"\x01" * 16},
                     encrypted_name={"B": name},
-                    verifier={"B": verifier},
-                    pending_vault_salt={"B": pending_salt},
-                    pending_verifier={"B": pending_verifier},
                     updated_at={"N": "1700000500"},
-                    kek_version={"N": "2"},
+                    current_vmk_version={"N": "2"},
+                    envelope_version={"N": "1"},
+                    vmk_envelopes={
+                        "L": [
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "1"},
+                                    "wrapped_vmk": {"B": wrapped1},
+                                    "created_at": {"N": "1700000400"},
+                                }
+                            },
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "2"},
+                                    "wrapped_vmk": {"B": wrapped2},
+                                    "created_at": {"N": "1700000500"},
+                                }
+                            },
+                        ]
+                    },
                     rotation_state={"S": "IN_PROGRESS"},
-                    rotation_locked_at={"N": "1700000400"},
+                    rotation_locked_at={"N": "1700000500"},
                 )
             },
             {"TableName": "test-vaults-table", "Key": {"PK": "USER#u1", "SK": "VAULT#v1"}},
@@ -609,16 +627,19 @@ class TestVaultService:
 
         assert result["vault_salt"] == b"\x01" * 16
         assert result["encrypted_name"] == name
-        assert result["verifier"] == verifier
-        assert result["pending_vault_salt"] == pending_salt
-        assert result["pending_verifier"] == pending_verifier
+        assert result["current_vmk_version"] == 2
+        assert result["envelope_version"] == 1
+        assert result["vmk_envelopes"] == [
+            {"vmk_version": 1, "wrapped_vmk": wrapped1, "created_at": 1700000400},
+            {"vmk_version": 2, "wrapped_vmk": wrapped2, "created_at": 1700000500},
+        ]
         assert result["updated_at"] == 1700000500
-        assert result["kek_version"] == 2
         assert result["rotation_state"] == "IN_PROGRESS"
-        assert result["rotation_locked_at"] == 1700000400
+        assert result["rotation_locked_at"] == 1700000500
+        assert "verifier" not in result
 
-    def test_get_vault_defaults_optional_fields_to_none(self, vault_service, dynamodb_stubber):
-        """A legacy row without name, verifier, or staged pair reads back as None."""
+    def test_get_vault_defaults_optional_fields(self, vault_service, dynamodb_stubber):
+        """A row without a name, envelopes, or version counters reads back with defaults."""
         dynamodb_stubber.add_response(
             "get_item",
             {
@@ -637,12 +658,12 @@ class TestVaultService:
         result = vault_service.get_vault(user_id="u1", vault_id="v1")
 
         assert result["encrypted_name"] is None
-        assert result["verifier"] is None
-        assert result["pending_vault_salt"] is None
-        assert result["pending_verifier"] is None
+        assert result["current_vmk_version"] == 0
+        assert result["envelope_version"] == 0
+        assert result["vmk_envelopes"] == []
         assert result["updated_at"] == 1700000000
-        assert result["kek_version"] == 1
         assert result["rotation_state"] == "IDLE"
+        assert "verifier" not in result
 
     def test_get_vault_raises_not_found_when_deleting(self, vault_service, dynamodb_stubber):
         """A row carrying deletion_state is treated as not found."""
@@ -703,32 +724,25 @@ class TestVaultService:
         with pytest.raises(NotFoundError, match="Vault not found"):
             vault_service.get_vault_salt(user_id="u1", vault_id="v1")
 
-    def test_update_vault_writes_name_and_verifier(
+    def test_update_vault_writes_encrypted_name_only(
         self, vault_service, dynamodb_stubber, monkeypatch
     ):
-        """update_vault pins the SET expression and the exists/not-deleting guard."""
+        """update_vault pins the SET expression (name only) and the exists/not-deleting guard."""
         monkeypatch.setattr(time, "time", lambda: 1_700_000_000)
         name = secrets.token_bytes(24)
-        verifier = secrets.token_bytes(48)
         dynamodb_stubber.add_response(
             "update_item",
             {},
             {
                 "TableName": "test-vaults-table",
                 "Key": {"PK": "USER#u1", "SK": "VAULT#v1"},
-                "UpdateExpression": "SET updated_at = :now, encrypted_name = :name, verifier = :ver",
+                "UpdateExpression": "SET updated_at = :now, encrypted_name = :name",
                 "ConditionExpression": "attribute_exists(PK) AND attribute_not_exists(deletion_state)",
-                "ExpressionAttributeValues": {
-                    ":now": 1_700_000_000,
-                    ":name": name,
-                    ":ver": verifier,
-                },
+                "ExpressionAttributeValues": {":now": 1_700_000_000, ":name": name},
             },
         )
 
-        result = vault_service.update_vault(
-            user_id="u1", vault_id="v1", encrypted_name=name, verifier=verifier
-        )
+        result = vault_service.update_vault(user_id="u1", vault_id="v1", encrypted_name=name)
 
         assert result == {"vault_id": "v1", "updated_at": 1_700_000_000}
 
@@ -764,7 +778,7 @@ class TestVaultService:
         )
 
         with pytest.raises(NotFoundError, match="Vault not found"):
-            vault_service.update_vault(user_id="u1", vault_id="v1", verifier=b"v" * 32)
+            vault_service.update_vault(user_id="u1", vault_id="v1", encrypted_name=b"n" * 24)
 
     def test_update_vault_deleting_vault_is_conflict(self, vault_service, dynamodb_stubber):
         """Condition failure plus a row with deletion_state means 409."""
@@ -785,14 +799,14 @@ class TestVaultService:
         )
 
         with pytest.raises(ConflictError):
-            vault_service.update_vault(user_id="u1", vault_id="v1", verifier=b"v" * 32)
+            vault_service.update_vault(user_id="u1", vault_id="v1", encrypted_name=b"n" * 24)
 
     def test_update_vault_reraises_other_errors(self, vault_service, dynamodb_stubber):
         """A non-conditional DynamoDB error propagates unchanged."""
         dynamodb_stubber.add_client_error("update_item", service_error_code="ServiceUnavailable")
 
         with pytest.raises(ClientError):
-            vault_service.update_vault(user_id="u1", vault_id="v1", verifier=b"v" * 32)
+            vault_service.update_vault(user_id="u1", vault_id="v1", encrypted_name=b"n" * 24)
 
     def test_mark_deleting_pins_condition(self, vault_service, dynamodb_stubber, monkeypatch):
         """mark_deleting writes the DELETING mark guarded by the spec 4.3 condition."""

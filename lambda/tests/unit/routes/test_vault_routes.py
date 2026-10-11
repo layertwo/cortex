@@ -143,6 +143,7 @@ class TestGetVaultRoute:
         # get_current_user to return (see tests/conftest.py).
         user_id = "test-user-id"
         vault_id = "test-vault-1"
+        wrapped = secrets.token_bytes(61)
         dynamodb_stubber.add_response(
             "get_item",
             {
@@ -154,7 +155,19 @@ class TestGetVaultRoute:
                     "vault_salt": {"B": b"\xaa" * 16},
                     "created_at": {"N": "1700000000"},
                     "updated_at": {"N": "1700000000"},
-                    "kek_version": {"N": "1"},
+                    "current_vmk_version": {"N": "1"},
+                    "envelope_version": {"N": "1"},
+                    "vmk_envelopes": {
+                        "L": [
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "1"},
+                                    "wrapped_vmk": {"B": wrapped},
+                                    "created_at": {"N": "1700000000"},
+                                }
+                            }
+                        ]
+                    },
                     "rotation_state": {"S": "IDLE"},
                 }
             },
@@ -168,20 +181,28 @@ class TestGetVaultRoute:
         body = response.json()
         assert body["vaultId"] == vault_id
         assert body["rotationState"] == "IDLE"
-        assert body["kekVersion"] == 1
-        # Nothing stored or staged on this row: the optional blobs are null.
+        assert body["currentVmkVersion"] == 1
+        assert body["envelopeVersion"] == 1
+        assert body["vmkEnvelopes"] == [
+            {
+                "vmkVersion": 1,
+                "wrappedVmk": base64.b64encode(wrapped).decode("utf-8"),
+                "createdAt": 1700000000,
+            }
+        ]
+        # Nothing stored on this row: the optional name is null.
         assert body["encryptedName"] is None
-        assert body["verifier"] is None
-        assert body["pendingVaultSalt"] is None
-        assert body["pendingVerifier"] is None
+        assert "verifier" not in body
+        assert "kekVersion" not in body
+        assert "pendingVaultSalt" not in body
+        assert "pendingVerifier" not in body
 
-    def test_get_vault_returns_verifier_and_staged_pair(self, client, dynamodb_stubber):
+    def test_get_vault_returns_vmk_envelopes(self, client, dynamodb_stubber):
         user_id = "test-user-id"
         vault_id = "test-vault-1"
         encrypted_name = secrets.token_bytes(40)
-        verifier = secrets.token_bytes(48)
-        pending_salt = secrets.token_bytes(16)
-        pending_verifier = secrets.token_bytes(48)
+        wrapped1 = secrets.token_bytes(61)
+        wrapped2 = secrets.token_bytes(61)
         dynamodb_stubber.add_response(
             "get_item",
             {
@@ -189,11 +210,27 @@ class TestGetVaultRoute:
                     user_id,
                     vault_id,
                     encrypted_name={"B": encrypted_name},
-                    verifier={"B": verifier},
-                    pending_vault_salt={"B": pending_salt},
-                    pending_verifier={"B": pending_verifier},
+                    current_vmk_version={"N": "2"},
+                    envelope_version={"N": "1"},
+                    vmk_envelopes={
+                        "L": [
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "1"},
+                                    "wrapped_vmk": {"B": wrapped1},
+                                    "created_at": {"N": "1700000000"},
+                                }
+                            },
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "2"},
+                                    "wrapped_vmk": {"B": wrapped2},
+                                    "created_at": {"N": "1700000500"},
+                                }
+                            },
+                        ]
+                    },
                     updated_at={"N": "1700000500"},
-                    kek_version={"N": "1"},
                     rotation_state={"S": "IN_PROGRESS"},
                     rotation_locked_at={"N": "1700000500"},
                 )
@@ -209,9 +246,12 @@ class TestGetVaultRoute:
         assert body["rotationState"] == "IN_PROGRESS"
         assert body["rotationLockedAt"] == 1700000500
         assert base64.b64decode(body["encryptedName"]) == encrypted_name
-        assert base64.b64decode(body["verifier"]) == verifier
-        assert base64.b64decode(body["pendingVaultSalt"]) == pending_salt
-        assert base64.b64decode(body["pendingVerifier"]) == pending_verifier
+        assert body["currentVmkVersion"] == 2
+        assert body["envelopeVersion"] == 1
+        envelopes = body["vmkEnvelopes"]
+        assert [e["vmkVersion"] for e in envelopes] == [1, 2]
+        assert base64.b64decode(envelopes[0]["wrappedVmk"]) == wrapped1
+        assert base64.b64decode(envelopes[1]["wrappedVmk"]) == wrapped2
 
 
 class TestUpdateVaultRotationRoute:
@@ -660,7 +700,6 @@ class TestListVaultsRoute:
         salt_a = secrets.token_bytes(16)
         salt_b = secrets.token_bytes(16)
         name_a = secrets.token_bytes(40)
-        verifier_a = secrets.token_bytes(48)
         dynamodb_stubber.add_response(
             "query",
             {
@@ -672,11 +711,10 @@ class TestListVaultsRoute:
                         "user_id": {"S": user_id},
                         "vault_salt": {"B": salt_a},
                         "encrypted_name": {"B": name_a},
-                        "verifier": {"B": verifier_a},
                         "created_at": {"N": "1700000000"},
                         "updated_at": {"N": "1700000900"},
-                        "kek_version": {"N": "2"},
-                        "rotation_state": {"S": "PAUSED"},
+                        "current_vmk_version": {"N": "2"},
+                        "rotation_state": {"S": "IN_PROGRESS"},
                     },
                     {
                         "PK": {"S": f"USER#{user_id}"},
@@ -686,7 +724,7 @@ class TestListVaultsRoute:
                         "vault_salt": {"B": salt_b},
                         "created_at": {"N": "1700001000"},
                         "updated_at": {"N": "1700001000"},
-                        "kek_version": {"N": "1"},
+                        "current_vmk_version": {"N": "1"},
                         "rotation_state": {"S": "IDLE"},
                     },
                 ],
@@ -709,14 +747,13 @@ class TestListVaultsRoute:
         first, second = body["vaults"]
         assert base64.b64decode(first["vaultSalt"]) == salt_a
         assert base64.b64decode(first["encryptedName"]) == name_a
-        assert base64.b64decode(first["verifier"]) == verifier_a
-        assert first["kekVersion"] == 2
-        assert first["rotationState"] == "PAUSED"
+        assert first["currentVmkVersion"] == 2
+        assert first["rotationState"] == "IN_PROGRESS"
         assert first["createdAt"] == 1700000000
         assert first["updatedAt"] == 1700000900
+        assert "verifier" not in first
         assert second["encryptedName"] is None
-        assert second["verifier"] is None
-        assert second["kekVersion"] == 1
+        assert second["currentVmkVersion"] == 1
         assert second["rotationState"] == "IDLE"
         # The token is the base64 JSON of LastEvaluatedKey.
         assert json.loads(base64.b64decode(body["nextToken"])) == {
@@ -824,28 +861,16 @@ class TestUpdateVaultRoute:
         assert body["vaultId"] == vault_id
         assert isinstance(body["updatedAt"], (int, float))
 
-    def test_update_vault_verifier_only(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        verifier = secrets.token_bytes(48)
-        dynamodb_stubber.add_response(
-            "update_item",
-            {"Attributes": {"vault_id": {"S": vault_id}, "updated_at": {"N": "1700000100"}}},
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-                "UpdateExpression": "SET updated_at = :now, verifier = :ver",
-                "ConditionExpression": self.UPDATE_CONDITION,
-                "ExpressionAttributeValues": ANY,
-            },
-        )
-
+    def test_update_vault_verifier_only_is_rejected(self, client):
+        # `verifier` is gone from the contract: an unknown field is ignored, so the
+        # route sees no encryptedName and rejects before touching DynamoDB.
         response = client.put(
-            f"/v1/vaults/{vault_id}",
-            json={"verifier": base64.b64encode(verifier).decode("utf-8")},
+            "/v1/vaults/test-vault-1",
+            json={"verifier": base64.b64encode(secrets.token_bytes(48)).decode("utf-8")},
         )
 
-        assert response.status_code == 200
-        assert response.json()["vaultId"] == vault_id
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "Provide encryptedName"
 
     def test_update_vault_empty_body_returns_400(self, client):
         # No stub: the route rejects before touching DynamoDB.
@@ -854,7 +879,7 @@ class TestUpdateVaultRoute:
         assert response.status_code == 400
         body = response.json()
         assert body["error"]["code"] == "BAD_REQUEST"
-        assert body["error"]["message"] == "Provide encryptedName or verifier"
+        assert body["error"]["message"] == "Provide encryptedName"
 
     def test_update_vault_missing_vault_returns_404(self, client, dynamodb_stubber):
         vault_id = "nonexistent-vault"
@@ -907,7 +932,7 @@ class TestUpdateVaultRoute:
 
         response = client.put(
             f"/v1/vaults/{vault_id}",
-            json={"verifier": base64.b64encode(secrets.token_bytes(48)).decode("utf-8")},
+            json={"encryptedName": base64.b64encode(secrets.token_bytes(40)).decode("utf-8")},
         )
 
         assert response.status_code == 409
