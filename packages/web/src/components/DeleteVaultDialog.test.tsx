@@ -91,7 +91,7 @@ describe('DeleteVaultDialog', () => {
     expect(session.deleteVault).not.toHaveBeenCalled();
   });
 
-  it('a fail-closed refusal (no verifier anywhere) offers no Retry', async () => {
+  it('a fail-closed refusal (no envelope to confirm against) offers no Retry', async () => {
     session.deleteVault.mockRejectedValueOnce(new Error(DELETE_REFUSED));
     const { dialog, onClose } = setup();
     await userEvent.type(within(dialog).getByLabelText(/vault password/i), 'pw');
