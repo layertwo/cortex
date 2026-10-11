@@ -811,6 +811,55 @@ describe('recoverVault', () => {
     expect(result).toEqual({ phrase, vaultId: 'v1', name: 'Personal' });
     expect(api.updateVaultPassword).toHaveBeenCalledTimes(1);
   });
+
+  it('refuses when the vault has no envelope at its current version (never overwrites a superseded one)', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    localStorage.setItem(
+      'cortex_vaults:u1',
+      JSON.stringify([{ vaultId: 'v1', name: 'Personal', encryptedName: bytesToBase64(encryptedName) }]),
+    );
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName,
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        // Only a superseded v1 envelope exists; currentVmkVersion is 2. Overwriting v1 would
+        // re-key the wrong generation under the new password.
+        vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }],
+      }),
+    );
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.recoverVault(phrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('retries once on ConflictError against a fresh envelopeVersion', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    const first = await serverVault({ envelopeVersion: 1, encryptedName });
+    const fresh = await serverVault({
+      envelopeVersion: 2,
+      encryptedName,
+      vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }],
+    });
+    api.getVault.mockResolvedValueOnce(first).mockResolvedValueOnce(fresh);
+    api.updateVaultPassword
+      .mockRejectedValueOnce(new ConflictError({ message: 'conflict', $metadata: {} }))
+      .mockResolvedValueOnce({ envelopeVersion: 3 });
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.recoverVault(phrase, 'newpw', { vaultId: 'v1' });
+    });
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(2);
+    expect(api.updateVaultPassword.mock.calls[0][1]).toBe(1);
+    expect(api.updateVaultPassword.mock.calls[1][1]).toBe(2);
+  });
 });
 
 describe('deleteVault', () => {

@@ -631,14 +631,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const newVersion = vault.currentVmkVersion || 1;
         // The server keeps the VMK version set intact on a re-wrap, so re-wrap the current
         // envelope with the phrase's VMK and pass any superseded generations through unchanged.
-        const envelopes: VmkEnvelopeRecord[] = vault.vmkEnvelopes.length
-          ? cloneEnvelopes(vault.vmkEnvelopes)
-          : [{ vmkVersion: 1, wrappedVmk: new Uint8Array(0), createdAt: new Date() }];
-        const current = envelopes.find((e) => e.vmkVersion === newVersion) ?? envelopes[0];
-        current.wrappedVmk = await wrapVmk(vmk, newKey);
-        current.createdAt = new Date();
-        secureZeroize(newKey);
-        await updateVaultPassword(vaultId, vault.envelopeVersion, envelopes);
+        const buildEnvelopes = async (source: VaultRecord): Promise<VmkEnvelopeRecord[]> => {
+          const version = source.currentVmkVersion || 1;
+          const list = source.vmkEnvelopes.length
+            ? cloneEnvelopes(source.vmkEnvelopes)
+            : [{ vmkVersion: version, wrappedVmk: new Uint8Array(0), createdAt: new Date() }];
+          const current = list.find((e) => e.vmkVersion === version);
+          // An inconsistent vault (currentVmkVersion with no matching envelope) must not be
+          // "repaired" by overwriting a superseded generation under the new password.
+          if (!current) throw new Error(PHRASE_ERROR);
+          current.wrappedVmk = await wrapVmk(vmk, newKey);
+          current.createdAt = new Date();
+          return list;
+        };
+        try {
+          await updateVaultPassword(vaultId, vault.envelopeVersion, await buildEnvelopes(vault));
+        } catch (err) {
+          if (!(err instanceof ConflictError)) throw err;
+          const fresh = await getVault(vaultId);
+          await updateVaultPassword(vaultId, fresh.envelopeVersion, await buildEnvelopes(fresh));
+        } finally {
+          secureZeroize(newKey);
+        }
         await storeKeys(vaultId, keys);
         upsertVault({
           vaultId,
