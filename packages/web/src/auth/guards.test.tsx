@@ -45,11 +45,18 @@ describe('guards', () => {
     expect(screen.getByText('setup-screen')).toBeInTheDocument();
   });
 
-  it('RequireVault redirects locked user to /vault/unlock when the account registry has a vault', () => {
+  it('RequireVault redirects locked user to /vault/unlock when the account registry has a bootstrapped vault', () => {
     state.status = 'signedInVaultLocked';
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', currentVmkVersion: 1 }]));
     renderAt('/secret', <RequireVault><div>vault-content</div></RequireVault>);
     expect(screen.getByText('unlock-screen')).toBeInTheDocument();
+  });
+
+  it('RequireVault routes an unbootstrapped vault (no VMK envelope) to /vault/setup', () => {
+    state.status = 'signedInVaultLocked';
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', currentVmkVersion: 0 }]));
+    renderAt('/secret', <RequireVault><div>vault-content</div></RequireVault>);
+    expect(screen.getByText('setup-screen')).toBeInTheDocument();
   });
 
   it('RequireVault ignores another account\'s registry and legacy keys', () => {

@@ -7,7 +7,7 @@
 
 import * as fc from 'fast-check';
 import {
-  deriveVaultMasterKey,
+  deriveWrappingKey,
   deriveKeys,
   generateRecoveryKey,
   validateRecoveryKey,
@@ -30,8 +30,8 @@ describe('Key Management Property Tests', () => {
       ];
 
       for (const { password, salt } of testCases) {
-        const masterKey1 = await deriveVaultMasterKey(password, salt);
-        const masterKey2 = await deriveVaultMasterKey(password, salt);
+        const masterKey1 = await deriveWrappingKey(password, salt);
+        const masterKey2 = await deriveWrappingKey(password, salt);
         
         expect(masterKey1).toEqual(masterKey2);
         expect(masterKey1.length).toBe(32);
@@ -43,8 +43,8 @@ describe('Key Management Property Tests', () => {
       const password1 = 'MySecurePassword123!';
       const password2 = 'DifferentPassword456$';
       
-      const masterKey1 = await deriveVaultMasterKey(password1, salt);
-      const masterKey2 = await deriveVaultMasterKey(password2, salt);
+      const masterKey1 = await deriveWrappingKey(password1, salt);
+      const masterKey2 = await deriveWrappingKey(password2, salt);
       
       expect(masterKey1).not.toEqual(masterKey2);
     });
@@ -54,8 +54,8 @@ describe('Key Management Property Tests', () => {
       const salt1 = new Uint8Array(16).fill(1);
       const salt2 = new Uint8Array(16).fill(2);
       
-      const masterKey1 = await deriveVaultMasterKey(password, salt1);
-      const masterKey2 = await deriveVaultMasterKey(password, salt2);
+      const masterKey1 = await deriveWrappingKey(password, salt1);
+      const masterKey2 = await deriveWrappingKey(password, salt2);
       
       expect(masterKey1).not.toEqual(masterKey2);
     });
@@ -381,7 +381,7 @@ describe('Key Management Property Tests', () => {
       const password = 'MySecurePassword123!';
       const salt = new Uint8Array(16).fill(1);
       
-      const masterKey = await deriveVaultMasterKey(password, salt);
+      const masterKey = await deriveWrappingKey(password, salt);
       const keys = deriveKeys(masterKey);
       
       const masterKeyStr = Array.from(masterKey).join(',');

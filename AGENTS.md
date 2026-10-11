@@ -6,10 +6,11 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **B2C Single-User Architecture:**
 - Individual users, not organizations or teams
-- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name and password verifier), `UpdateVaultRotation` with a staged salt/verifier pair (`ACQUIRE`, `PAUSE`, `RELEASE`, `ABANDON`) and a resumable `DeleteVault` (see PRs #287, #290 and #291). The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the Cognito sub, `cortex_vaults:<sub>` the entries (name, `encryptedName`, `kekVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, salts and verifiers stay in memory, and `cortex_vault_verifier_<vaultId>` is written only after a successful unlock.
+- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name), `UpdateVaultPassword` (the password-wrapped VMK envelopes, guarded by `envelopeVersion`), `UpdateVaultRotation` (`ACQUIRE` then `RELEASE` only) and a resumable `DeleteVault` (see PRs #287, #290 and #291). Each vault holds a random 256-bit VMK; the vault password never reaches the server and only unwraps the VMK's envelope. The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the Cognito sub, `cortex_vaults:<sub>` the entries (name, `encryptedName`, `currentVmkVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, and salts stay in memory.
 - No multi-tenancy or team collaboration features
 - Simplified security model focused on personal data protection
 - Usage tracking and quotas per individual user
+- Clean break: the VMK model replaces the previous verifier / salt-derived master key outright; nothing is deployed yet, so no data migration is needed.
 
 ## Critical Architecture Constraints
 
@@ -28,8 +29,9 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - **Account Password**: Used for AWS Cognito authentication, can be changed without re-encrypting vault data
 - **Vault Password**: Used exclusively for deriving vault encryption keys, never transmitted to server
 - Separation allows flexible credential management without expensive re-encryption
-- Vault password + server-stored vault salt → Argon2id → Vault master key (256-bit)
-- HKDF derives multiple keys from vault master key: KEK (Key Encryption Key), metadata encryption key, share key derivation key
+- Vault password + server-stored vault salt → Argon2id → wrapping key; that key wraps (or unwraps) a *random* 256-bit vault master key (VMK), stored server-side only as an envelope
+- A vault may hold several VMK generations (`vmkEnvelopes`, `currentVmkVersion`); the current one is the live VMK
+- HKDF derives multiple keys from the VMK: KEK (Key Encryption Key), metadata encryption key, share key derivation key
 
 **Envelope Encryption (Media Files):**
 - Each media file encrypted with unique DEK (Data Encryption Key) via ChaCha20-Poly1305
@@ -47,13 +49,14 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
   - Per-file key isolation: compromise of one DEK doesn't affect others
 
 **Key Management:**
-- Vault master key derived from vault password using Argon2id (64MB memory, 3 iterations, 4 parallelism)
+- Vault master key (VMK) is a *random* 256-bit secret, unique per vault; the vault password unwraps it via an Argon2id-derived wrapping key (64MB memory, 3 iterations, 4 parallelism)
 - Vault salt stored on server (non-secret, enables multi-device key derivation)
+- VMK envelopes (`vmkEnvelopes`) are stored on the server, one per vault-key generation, each wrapping the VMK under a password-derived wrapping key; `currentVmkVersion` names the live generation and `envelopeVersion` guards envelope writes
 - Keys never transmitted to or stored on backend
-- Multi-device support via vault password + vault salt (derive same keys on any device)
-- Vault recovery key (24-word BIP39 mnemonic) enables complete offline vault recovery without server dependency
+- Multi-device support via vault password + vault salt (unwraps the same VMK on any device)
+- Vault recovery key (24-word BIP39 mnemonic) encodes the 256-bit VMK and enables complete offline vault recovery without server dependency
 - Account recovery codes (10 per user) enable account password reset
-- Automatic key rotation every 90 days - only re-wraps DEKs, no file re-encryption needed
+- A deliberate rotation (`rotateEncryptionKeys`) mints a new VMK and re-wraps only per-file DEKs; file content is never re-encrypted
 
 ## Core Stack
 
@@ -100,9 +103,9 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **Key Derivation**: Argon2id + HKDF
 - Argon2id: 64MB memory, 3 iterations, 4 parallelism
-- Input: vault password + vault salt (16 bytes)
-- Output: 256-bit vault master key
-- HKDF derives multiple keys from vault master key:
+- Input: vault password + vault salt (16 bytes) → wrapping key
+- The wrapping key wraps/unwraps the vault's random 256-bit VMK (`wrapVmk`/`unwrapVmk`), stored server-side as envelopes
+- HKDF derives multiple keys from the VMK (`deriveKeys`):
   - KEK (Key Encryption Key) for wrapping per-file DEKs (context: "cortex-kek-v1")
   - Metadata encryption key (context: "cortex-metadata-encryption-v1")
   - Share key derivation key (context: "cortex-share-key-derivation-v1")
@@ -322,8 +325,8 @@ cortex/
 - Tests query by role and label (`getByRole`, `getByLabelText`, `findByRole('alert')`), never by class name. Do not use `isRequired` on inputs whose labels tests match exactly.
 - jsdom needs `matchMedia`, `HTMLDialogElement` methods, and `window.scrollTo` polyfills; they live in `packages/web/src/test-setup.ts`.
 - Web tests reset mock state before every test (`mockReset`, `restoreMocks`, `unstubGlobals`, `unstubEnvs` in `packages/web/vite.config.ts`). Put a mock's default in the `vi.fn(impl)` argument or in `beforeEach`, never chained at construction or at module scope. Install `vi.spyOn`, `vi.stubGlobal` and `vi.stubEnv` in `beforeEach` or inside the test, never at module scope or in `beforeAll`.
-- Async submit handlers in auth and vault screens use the shared `useAsyncAction` hook in `components/common`; `ChangeVaultPassword` keeps its staged flow.
-- Dialogs compose `Dialog > Layout(header=<DialogHeader/>, content=<LayoutContent/>, footer=<LayoutFooter/>)` (Dialog has no title/footer props) and `AlertDialog.onAction` never closes the dialog by itself. Vault dialogs: `StagedRotationDialog` (finish, start over or cancel an interrupted password change; opened by `ChangeVaultPassword` and `RecoverVault` through `onStagedMismatch`) and `DeleteVaultDialog` (password-confirmed, loops `DeleteVault` until `DELETED`; opened from `ManageVaultsDialog`). Astryx live regions live on `<body>`, so tests scope `role="status"`/`"alert"` with `within()`.
+- Async submit handlers in auth and vault screens use the shared `useAsyncAction` hook in `components/common`; `ChangeVaultPassword` and `RotateKeysDialog` are plain two-field re-wrap/rotate dialogs.
+- Dialogs compose `Dialog > Layout(header=<DialogHeader/>, content=<LayoutContent/>, footer=<LayoutFooter/>)` (Dialog has no title/footer props) and `AlertDialog.onAction` never closes the dialog by itself. Vault dialogs: `ChangeVaultPassword` (a pure VMK envelope re-wrap), `RotateKeysDialog` (mint a new VMK and sweep file keys), and `DeleteVaultDialog` (password-confirmed, loops `DeleteVault` until `DELETED`; opened from `ManageVaultsDialog`). Astryx live regions live on `<body>`, so tests scope `role="status"`/`"alert"` with `within()`.
 - Theme: `packages/web/src/theme/cortex.theme.ts` (Astryx `defineTheme`, extends neutral). After editing run `npm run theme:build` from `packages/web` and commit the regenerated `cortex.css/js/d.ts`. Fonts are self-hosted via `@fontsource-variable/inter` (family "Inter Variable"); never add third-party font requests.
 - Brand: `src/components/brand/Mark.tsx` (hex-fold SVG) and `Wordmark.tsx`. App-level CSS lives only in `src/app.css` and uses theme tokens.
 - Recovery: `src/vault/recovery.ts` + `recoveryKit.ts`; phrase entry never validates words or shows per-word feedback (see PHRASE_ERROR).
@@ -356,15 +359,15 @@ packages/web/src/
 ├── auth/              # SessionContext (Cognito + vault keys), route guards
 ├── api/               # Smithy client wrappers (client, items, collections)
 ├── items/             # metadata, streaming upload/download, key rotation
-├── vault/             # key access, verifier, rotation bridge
+├── vault/             # key access, VMK envelopes, rotation bridge
 ├── App.tsx            # Theme > SessionProvider > BrowserRouter > LinkProvider > Routes
 └── main.tsx           # Amplify config + Astryx CSS imports
 ```
 
 **Encryption Flow:**
 1. User enters vault password in React frontend (never sent to server)
-2. React frontend uses `@cortex/encryption` to derive vault master key (Argon2id + vault salt)
-3. React frontend uses `@cortex/encryption` to derive encryption keys (HKDF)
+2. React frontend uses `@cortex/encryption` to derive the wrapping key (Argon2id + vault salt) and unwrap the vault's VMK from its envelope
+3. React frontend uses `@cortex/encryption` to derive encryption keys from the VMK (HKDF)
 4. React frontend uses `@cortex/encryption` to encrypt file/metadata (ChaCha20-Poly1305)
 5. React frontend uploads encrypted data to S3 via presigned URL
 6. React frontend stores encrypted metadata via API
@@ -478,7 +481,8 @@ Environments: `dev`, `staging`, `prod`
 
 **Vaults Table:**
 - PK: `USER#{userId}`, SK: `VAULT#{vaultId}`
-- Stores: vaultId, userId, vaultSalt (binary, non-secret), createdAt, updatedAt, kekVersion (absent means 1), rotationState (IDLE/IN_PROGRESS/PAUSED), rotationLockedAt, verifier (binary, returned to the owner only), encryptedName (binary), pendingVaultSalt and pendingVerifier (binary, staged together by rotation ACQUIRE, promoted and removed by RELEASE, kept by PAUSE), deletionState (`DELETING` while a DeleteVault sweep is in progress; the row is removed when the sweep finishes), deletionStartedAt
+- Stores: vaultId, userId, vaultSalt (binary, non-secret), createdAt, updatedAt, currentVmkVersion (absent means 0/unbootstrapped), envelopeVersion (optimistic-write guard for the envelope set), vmkEnvelopes (list of {vmkVersion, wrappedVmk, createdAt}, one per VMK generation; each wrappedVmk is the VMK wrapped under a password-derived wrapping key), rotationState (IDLE/IN_PROGRESS), rotationLockedAt, encryptedName (binary), deletionState (`DELETING` while a DeleteVault sweep is in progress; the row is removed when the sweep finishes), deletionStartedAt
+- A vault's VMK generation is one row field `currentVmkVersion`; an item/collection records the generation its key material belongs to (`dekVersion`/`metadataVersion`), and rotation RELEASEs only once every such row matches `currentVmkVersion`
 - A row with deletionState reads as not found everywhere (`vault_exists`, `get_vault`, ListVaults filter `attribute_not_exists(deletion_state)`); UpdateVault and rotation return 409 for it
 
 **Items Table (single-table design within Data Table):**
@@ -491,7 +495,7 @@ Environments: `dev`, `staging`, `prod`
 
 **Collections Table:**
 - PK: `VAULT#{vaultId}`, SK: `COLLECTION#{collectionId}`
-- Stores: collectionId, vaultId, userId, encryptedMetadata (binary), metadataVersion (KEK version whose metadata key encrypts encryptedMetadata; absent means 1; UpdateCollection with expectedMetadataVersion is a conditional write, 409 on mismatch), timestamps, itemCount
+- Stores: collectionId, vaultId, userId, encryptedMetadata (binary), metadataVersion (VMK generation whose metadata key encrypts encryptedMetadata; absent means 1; UpdateCollection with expectedMetadataVersion is a conditional write, 409 on mismatch), timestamps, itemCount
 
 **Item-Collection Association Table:**
 - PK: `COLLECTION#{collectionId}`, SK: `ITEM#{itemId}`
@@ -836,7 +840,7 @@ logger.info("File uploaded", extra={
 - Account recovery codes: 10 per user, 16 characters, format: XXXX-XXXX-XXXX-XXXX
 - Codes hashed with SHA-256 before server storage
 - One-time use (invalidated after successful recovery)
-- Vault recovery key: 24-word BIP39 mnemonic encoding full 256-bit master key
+- Vault recovery key: 24-word BIP39 mnemonic encoding the 256-bit VMK
 - Enables complete offline vault recovery without server dependency (no vault salt needed)
 - Display recovery keys once with secure offline storage guidance
 
@@ -848,11 +852,12 @@ logger.info("File uploaded", extra={
 - `POST /v1/auth/recover` - Account recovery with recovery code
 - `POST /v1/vaults` - Create vault (empty body; the server generates the 16-byte vault salt)
 - `GET /v1/vaults` - List the caller's vaults (pageSize 10-100, nextToken; vaults being deleted are omitted, so a page may be empty while nextToken is present)
-- `GET /v1/vaults/{id}` - Get vault: vaultSalt, kekVersion, rotationState, verifier, encryptedName, and pendingVaultSalt/pendingVerifier while a rotation is open
-- `PUT /v1/vaults/{id}` - Store the encrypted vault name and/or the password verifier (at least one required; 409 while deleting)
+- `GET /v1/vaults/{id}` - Get vault: vaultSalt, currentVmkVersion, envelopeVersion, rotationState, vmkEnvelopes (the wrapped-VMK envelope set), encryptedName
+- `PUT /v1/vaults/{id}` - Store the encrypted vault name (409 while deleting)
 - `DELETE /v1/vaults/{id}` - Delete a vault and everything in it. Resumable: each call does a bounded batch and returns deletionState; call until it is DELETED, and treat a later 404 as done. 409 while a rotation lock is live
-- `GET /v1/vaults/{id}/salt` - Retrieve vault salt for key derivation
-- `POST /v1/vaults/{id}/rotation` - KEK rotation lock: ACQUIRE (stages newVaultSalt + newVerifier), PAUSE (records an interrupted sweep), RELEASE (commits kekVersion, newEncryptedName, and promotes the staged pair), ABANDON (discards a staged pair when expectedState is PAUSED and nothing has been re-keyed)
+- `GET /v1/vaults/{id}/salt` - Retrieve vault salt for wrapping-key derivation
+- `POST /v1/vaults/{id}/password` - `UpdateVaultPassword`: replace the whole VMK envelope set under a new password, guarded by `expectedEnvelopeVersion` (409 on mismatch; no version add/drop)
+- `POST /v1/vaults/{id}/rotation` - VMK rotation lock, two actions only: ACQUIRE (appends a freshly wrapped VMK, bumps currentVmkVersion/envelopeVersion, takes the lock) and RELEASE (returns to IDLE, optionally storing newEncryptedName). A resumed sweep re-derives the from-generation envelope until zero stragglers remain
 
 **Item Operations (Generic for all types: MEDIA, NOTE, TASK, EVENT):**
 - `POST /v1/items` - Create item (NOTE, TASK, EVENT with inline content)

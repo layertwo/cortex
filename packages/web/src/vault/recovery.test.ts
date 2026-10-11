@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { deriveKeys, generateRecoveryKey } from '@cortex/encryption';
-import { createVerifier, saveVerifier } from './verifier';
+import { deriveKeys, generateRecoveryKey, bytesToBase64 } from '@cortex/encryption';
+import { encryptCollectionName } from '../items/collectionMetadata';
 import { keysFromPhrase, identifyVaultForPhrase, normalizePhrase, PHRASE_ERROR } from './recovery';
 
 const MASTER = new Uint8Array(32).fill(5);
@@ -14,9 +14,9 @@ describe('recovery', () => {
     expect(normalizePhrase(['a', ' b', 'C'])).toBe('a b c');
   });
 
-  it('derives the same keys from the phrase as from the master key', () => {
+  it('derives the VMK and the same keys from the phrase as from the master key', () => {
     const r = keysFromPhrase(PHRASE)!;
-    expect(r.master).toEqual(MASTER);
+    expect(r.vmk).toEqual(MASTER);
     expect(r.keys.metadataEncryptionKey).toEqual(deriveKeys(MASTER).metadataEncryptionKey);
   });
 
@@ -25,12 +25,17 @@ describe('recovery', () => {
     expect(keysFromPhrase(PHRASE.split(' ').slice(0, 12).join(' '))).toBeNull();
   });
 
-  it('identifies the vault whose verifier the phrase opens', async () => {
-    saveVerifier('v1', await createVerifier(deriveKeys(new Uint8Array(32).fill(9)).metadataEncryptionKey));
-    saveVerifier('v2', await createVerifier(deriveKeys(MASTER).metadataEncryptionKey));
-    expect(identifyVaultForPhrase(PHRASE, ['v1', 'v2'])).toBe('v2');
-    expect(identifyVaultForPhrase(PHRASE, ['v1'])).toBeNull();
-    expect(identifyVaultForPhrase('garbage', ['v2'])).toBeNull();
+  it('identifies the vault whose encrypted name the phrase decrypts', async () => {
+    const other = await encryptCollectionName('Other', deriveKeys(new Uint8Array(32).fill(9)).metadataEncryptionKey);
+    const mine = await encryptCollectionName('Mine', deriveKeys(MASTER).metadataEncryptionKey);
+    const vaults = [
+      { vaultId: 'v1', encryptedName: bytesToBase64(other) },
+      { vaultId: 'v2', encryptedName: bytesToBase64(mine) },
+    ];
+    expect(identifyVaultForPhrase(PHRASE, vaults)).toBe('v2');
+    expect(identifyVaultForPhrase(PHRASE, [vaults[0]])).toBeNull();
+    expect(identifyVaultForPhrase(PHRASE, [{ vaultId: 'v3' }])).toBeNull(); // no name to prove against
+    expect(identifyVaultForPhrase('garbage', vaults)).toBeNull();
   });
 
   it('exposes one generic error string', () => {

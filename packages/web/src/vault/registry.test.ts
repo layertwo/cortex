@@ -11,7 +11,6 @@ import {
   syncFromServer,
 } from './registry';
 
-const utf8 = (s: string) => new TextEncoder().encode(s);
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 
 function summary(vaultId: string, extra: Partial<VaultSummary> = {}): VaultSummary {
@@ -20,7 +19,7 @@ function summary(vaultId: string, extra: Partial<VaultSummary> = {}): VaultSumma
     vaultSalt: new Uint8Array(16).fill(7),
     createdAt: new Date(0),
     updatedAt: new Date(0),
-    kekVersion: 1,
+    currentVmkVersion: 1,
     rotationState: 'IDLE',
     ...extra,
   };
@@ -58,16 +57,15 @@ describe('vault registry', () => {
   });
 
   it('renameInRegistry changes only the name', () => {
-    upsertVault({ vaultId: 'a', name: 'Personal', lastOpened: 3, kekVersion: 2 });
+    upsertVault({ vaultId: 'a', name: 'Personal', lastOpened: 3, currentVmkVersion: 2 });
     renameInRegistry('a', 'Me');
-    expect(listVaults()).toEqual([{ vaultId: 'a', name: 'Me', lastOpened: 3, kekVersion: 2 }]);
+    expect(listVaults()).toEqual([{ vaultId: 'a', name: 'Me', lastOpened: 3, currentVmkVersion: 2 }]);
   });
 
-  it('never persists vaultSalt or verifier', () => {
-    upsertVault({ vaultId: 'a', name: 'Personal', vaultSalt: new Uint8Array(16), verifier: 'blob' });
+  it('never persists vaultSalt', () => {
+    upsertVault({ vaultId: 'a', name: 'Personal', vaultSalt: new Uint8Array(16) });
     const raw = localStorage.getItem('cortex_vaults:u1')!;
     expect(raw).not.toContain('vaultSalt');
-    expect(raw).not.toContain('verifier');
     expect(listVaults()).toEqual([{ vaultId: 'a', name: 'Personal' }]);
   });
 
@@ -157,10 +155,10 @@ describe('migrateLegacyRegistry', () => {
 
 describe('syncFromServer', () => {
   it('server fields win, device keeps name and lastOpened, memory fields are returned but not persisted', () => {
-    upsertVault({ vaultId: 'v1', name: 'Me', lastOpened: 42, kekVersion: 1, rotationState: 'IDLE' });
+    upsertVault({ vaultId: 'v1', name: 'Me', lastOpened: 42, currentVmkVersion: 1, rotationState: 'IDLE' });
     const encryptedName = new Uint8Array([1, 2, 3]);
     const merged = syncFromServer([
-      summary('v1', { encryptedName, verifier: utf8('VER1'), kekVersion: 3, rotationState: 'PAUSED' }),
+      summary('v1', { encryptedName, currentVmkVersion: 3, rotationState: 'IN_PROGRESS' }),
     ]);
     expect(merged).toEqual([
       {
@@ -168,27 +166,23 @@ describe('syncFromServer', () => {
         name: 'Me',
         lastOpened: 42,
         encryptedName: b64(encryptedName),
-        kekVersion: 3,
-        rotationState: 'PAUSED',
+        currentVmkVersion: 3,
+        rotationState: 'IN_PROGRESS',
         vaultSalt: new Uint8Array(16).fill(7),
-        verifier: 'VER1',
       },
     ]);
     expect(listVaults()).toEqual([
-      { vaultId: 'v1', name: 'Me', lastOpened: 42, encryptedName: b64(encryptedName), kekVersion: 3, rotationState: 'PAUSED' },
+      { vaultId: 'v1', name: 'Me', lastOpened: 42, encryptedName: b64(encryptedName), currentVmkVersion: 3, rotationState: 'IN_PROGRESS' },
     ]);
-    const raw = localStorage.getItem('cortex_vaults:u1')!;
-    expect(raw).not.toContain('vaultSalt');
-    expect(raw).not.toContain('verifier');
+    expect(localStorage.getItem('cortex_vaults:u1')).not.toContain('vaultSalt');
   });
 
-  it('adds unknown vaults with the default name and no memory verifier when the server has none', () => {
+  it('adds unknown vaults with the default name when the server has none', () => {
     const merged = syncFromServer([summary('v2')]);
     expect(merged).toEqual([
-      { vaultId: 'v2', name: 'Personal', kekVersion: 1, rotationState: 'IDLE', vaultSalt: new Uint8Array(16).fill(7) },
+      { vaultId: 'v2', name: 'Personal', currentVmkVersion: 1, rotationState: 'IDLE', vaultSalt: new Uint8Array(16).fill(7) },
     ]);
-    expect(merged[0].verifier).toBeUndefined();
-    expect(listVaults()).toEqual([{ vaultId: 'v2', name: 'Personal', kekVersion: 1, rotationState: 'IDLE' }]);
+    expect(listVaults()).toEqual([{ vaultId: 'v2', name: 'Personal', currentVmkVersion: 1, rotationState: 'IDLE' }]);
   });
 
   it('drops entries the server no longer lists and clears the active pointer if it pointed at one', () => {
@@ -205,19 +199,6 @@ describe('syncFromServer', () => {
     setActiveVault('kept');
     syncFromServer([summary('kept')]);
     expect(activeVaultId()).toBe('kept');
-  });
-
-  it('overwrites a stale local verifier blob and leaves a matching or absent one alone', () => {
-    localStorage.setItem('cortex_vault_verifier_v1', 'OLD');
-    localStorage.setItem('cortex_vault_verifier_v2', 'SAME');
-    syncFromServer([
-      summary('v1', { verifier: utf8('NEW') }),
-      summary('v2', { verifier: utf8('SAME') }),
-      summary('v3', { verifier: utf8('V3') }),
-    ]);
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBe('NEW');
-    expect(localStorage.getItem('cortex_vault_verifier_v2')).toBe('SAME');
-    expect(localStorage.getItem('cortex_vault_verifier_v3')).toBeNull();
   });
 
   it('skips malformed summaries without an id or salt', () => {

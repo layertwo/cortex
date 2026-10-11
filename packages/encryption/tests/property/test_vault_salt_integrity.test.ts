@@ -8,12 +8,12 @@
  */
 
 import * as fc from 'fast-check';
-import { deriveVaultMasterKey, deriveKeys } from '../../src/lib/key-management';
+import { deriveWrappingKey, deriveKeys } from '../../src/lib/key-management';
 import { computeSaltHmac, verifySaltHmac } from '../../src/lib/vault-salt-integrity';
 
 /**
  * Reduced from the package-wide default of 100 because each property run
- * invokes deriveVaultMasterKey (Argon2id, 64MB memory, 3 iterations,
+ * invokes deriveWrappingKey (Argon2id, 64MB memory, 3 iterations,
  * ~100ms/call). At 100 runs × 3 properties this suite would take ~5 minutes;
  * at 25 runs it takes ~30 seconds and the mathematical guarantee for
  * HMAC tamper detection is already overwhelming (2^-256 collision).
@@ -34,7 +34,7 @@ describe('Property 27b: Salt HMAC binds salt to vault master key (REQ 22.6-22.12
   it('verify succeeds when the salt is unchanged', async () => {
     await fc.assert(
       fc.asyncProperty(arbPassword, arbSalt, async (password, salt) => {
-        const masterKey = await deriveVaultMasterKey(password, salt);
+        const masterKey = await deriveWrappingKey(password, salt);
         const { saltHmacKey } = deriveKeys(masterKey);
         const mac = computeSaltHmac(saltHmacKey, salt);
         expect(verifySaltHmac(saltHmacKey, salt, mac)).toBe(true);
@@ -53,7 +53,7 @@ describe('Property 27b: Salt HMAC binds salt to vault master key (REQ 22.6-22.12
     await fc.assert(
       fc.asyncProperty(arbPassword, arbSalt, arbSalt, async (password, originalSalt, swappedSalt) => {
         fc.pre(!Buffer.from(originalSalt).equals(Buffer.from(swappedSalt)));
-        const masterKey = await deriveVaultMasterKey(password, originalSalt);
+        const masterKey = await deriveWrappingKey(password, originalSalt);
         const { saltHmacKey } = deriveKeys(masterKey);
         const mac = computeSaltHmac(saltHmacKey, originalSalt);
         expect(verifySaltHmac(saltHmacKey, swappedSalt, mac)).toBe(false);
@@ -71,7 +71,7 @@ describe('Property 27b: Salt HMAC binds salt to vault master key (REQ 22.6-22.12
   it('verify fails when the HMAC is tampered with', async () => {
     await fc.assert(
       fc.asyncProperty(arbPassword, arbSalt, arbMac, async (password, salt, tamperedMac) => {
-        const masterKey = await deriveVaultMasterKey(password, salt);
+        const masterKey = await deriveWrappingKey(password, salt);
         const { saltHmacKey } = deriveKeys(masterKey);
         const realMac = computeSaltHmac(saltHmacKey, salt);
         fc.pre(!Buffer.from(realMac).equals(Buffer.from(tamperedMac)));

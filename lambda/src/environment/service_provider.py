@@ -49,12 +49,12 @@ from src.api.routes.vaults import (
     GetVaultRoute,
     GetVaultSaltRoute,
     ListVaultsRoute,
+    UpdateVaultPasswordRoute,
     UpdateVaultRotationRoute,
     UpdateVaultRoute,
 )
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
-from src.api.services.rotation_abandon_service import RotationAbandonService
 from src.api.services.share_service import ShareService
 from src.api.services.vault_deletion_service import VaultDeletionService
 from src.api.services.vault_service import VaultService
@@ -210,16 +210,6 @@ class ServiceProvider:
         )
 
     @cached_property
-    def rotation_abandon_service(self) -> RotationAbandonService:
-        """Create rotation abandon service (the ABANDON re-keyed-row safety check)."""
-        return RotationAbandonService(
-            session=self.session,
-            vault_service=self.vault_service,
-            collection_service=self.collection_service,
-            items_table_name=self.items_table_name,
-        )
-
-    @cached_property
     def app(self) -> FastAPI:
         """
         Create FastAPI app with all routes, middleware, and exception handlers.
@@ -283,11 +273,9 @@ class ServiceProvider:
             GetVaultSaltRoute(vault_service=self.vault_service),
             GetVaultRoute(vault_service=self.vault_service),
             UpdateVaultRoute(vault_service=self.vault_service),
+            UpdateVaultPasswordRoute(vault_service=self.vault_service),
             DeleteVaultRoute(vault_deletion_service=self.vault_deletion_service),
-            UpdateVaultRotationRoute(
-                vault_service=self.vault_service,
-                rotation_abandon_service=self.rotation_abandon_service,
-            ),
+            UpdateVaultRotationRoute(vault_service=self.vault_service),
             CreateItemRoute(item_service=self.item_service, vault_service=self.vault_service),
             InitiateUploadRoute(item_service=self.item_service, vault_service=self.vault_service),
             CompleteUploadRoute(item_service=self.item_service),

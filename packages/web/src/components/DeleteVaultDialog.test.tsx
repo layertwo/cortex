@@ -57,7 +57,7 @@ describe('DeleteVaultDialog', () => {
 
   it('stops on a 409 with the server message and offers no Retry', async () => {
     session.deleteVault.mockRejectedValueOnce(
-      Object.assign(new Error('A vault password change is in progress; wait for it to finish or pause it first'), {
+      Object.assign(new Error('A key rotation is in progress; finish it before deleting this vault'), {
         name: 'ConflictError',
       }),
     );
@@ -65,7 +65,7 @@ describe('DeleteVaultDialog', () => {
     await userEvent.type(within(dialog).getByLabelText(/vault password/i), 'pw');
     await userEvent.click(within(dialog).getByRole('button', { name: /^delete vault$/i }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(
-      'A vault password change is in progress; wait for it to finish or pause it first',
+      'A key rotation is in progress; finish it before deleting this vault',
     );
     expect(within(dialog).queryByRole('button', { name: /retry/i })).toBeNull();
     expect(within(dialog).getByRole('button', { name: /^delete vault$/i })).toBeDisabled();
@@ -91,7 +91,7 @@ describe('DeleteVaultDialog', () => {
     expect(session.deleteVault).not.toHaveBeenCalled();
   });
 
-  it('a fail-closed refusal (no verifier anywhere) offers no Retry', async () => {
+  it('a fail-closed refusal (no envelope to confirm against) offers no Retry', async () => {
     session.deleteVault.mockRejectedValueOnce(new Error(DELETE_REFUSED));
     const { dialog, onClose } = setup();
     await userEvent.type(within(dialog).getByLabelText(/vault password/i), 'pw');

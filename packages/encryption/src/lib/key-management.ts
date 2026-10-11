@@ -78,21 +78,22 @@ const HKDF_CONTEXTS = {
 };
 
 /**
- * Derives a 256-bit vault master key from a vault password and salt using Argon2id.
+ * Derives the 256-bit wrapping key from a vault password and salt using Argon2id.
  *
  * This function uses memory-hard key derivation to protect against brute-force attacks.
- * The same password and salt will always produce the same master key (deterministic).
+ * The same password and salt will always produce the same wrapping key (deterministic).
  *
  * @param password - The vault password (string)
  * @param salt - The vault salt (Uint8Array, 16 bytes minimum)
- * @returns Promise<Uint8Array> - The 256-bit (32-byte) vault master key
+ * @returns Promise<Uint8Array> - The 256-bit (32-byte) wrapping key
  *
  * @example
  * const password = 'my-secure-vault-password';
  * const salt = crypto.getRandomValues(new Uint8Array(16));
- * const masterKey = await deriveVaultMasterKey(password, salt);
+ * const wrappingKey = await deriveWrappingKey(password, salt);
+ * // wrappingKey unwraps the vault's stored VMK envelope (unwrapVmk)
  */
-export async function deriveVaultMasterKey(
+export async function deriveWrappingKey(
   password: string,
   salt: Uint8Array
 ): Promise<Uint8Array> {
@@ -109,7 +110,7 @@ export async function deriveVaultMasterKey(
     // matching the previous TextEncoder().encode(password) behavior byte-for-byte.
     return await argon2id({ password, salt, ...ARGON2_PARAMS, outputType: 'binary' });
   } catch (error) {
-    throw new Error(`Failed to derive vault master key: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to derive wrapping key: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -136,12 +137,13 @@ export interface DerivedKeys {
  * domain separation. This provides two independent layers of cryptographic separation.
  * All derived keys are 256 bits (32 bytes) for use with ChaCha20-Poly1305.
  *
- * @param vaultMasterKey - The 256-bit vault master key (from deriveVaultMasterKey)
+ * @param vaultMasterKey - The 256-bit VMK (the unwrapped vault master key)
  * @returns DerivedKeys - Object containing all derived encryption keys
  *
  * @example
- * const masterKey = await deriveVaultMasterKey(password, salt);
- * const keys = deriveKeys(masterKey);
+ * const wrappingKey = await deriveWrappingKey(password, salt);
+ * const vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
+ * const keys = deriveKeys(vmk);
  * // Use keys.keyEncryptionKey as the KEK to wrap per-file DEKs (envelope encryption)
  * // Use keys.metadataEncryptionKey for encrypting metadata
  */
@@ -224,22 +226,22 @@ export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
 }
 
 /**
- * Generates a BIP39 mnemonic recovery key from the vault master key.
+ * Generates a BIP39 mnemonic recovery key from the Vault Master Key (VMK).
  *
  * The recovery key is a 24-word mnemonic phrase that encodes the FULL 256-bit
- * vault master key. This enables complete offline vault recovery without requiring
- * the vault salt from the server. The user can recover their vault with ONLY
- * this 24-word phrase.
+ * Vault Master Key (VMK). This enables complete offline vault recovery without
+ * requiring the vault salt from the server. The user can recover their vault
+ * with ONLY this 24-word phrase.
  *
  * SECURITY: This should be displayed to the user ONCE during vault creation with
  * instructions to store it securely offline (paper backup, password manager, etc.).
  *
- * @param vaultMasterKey - The 256-bit vault master key
+ * @param vaultMasterKey - The 256-bit Vault Master Key (VMK)
  * @returns string - A 24-word BIP39 mnemonic phrase
  *
  * @example
- * const masterKey = await deriveVaultMasterKey(password, salt);
- * const recoveryKey = generateRecoveryKey(masterKey);
+ * const vmk = await generateVaultMasterKey();
+ * const recoveryKey = generateRecoveryKey(vmk);
  * console.log('IMPORTANT: Store this 24-word recovery key securely:', recoveryKey);
  */
 export function generateRecoveryKey(vaultMasterKey: Uint8Array): string {
@@ -259,29 +261,28 @@ export function generateRecoveryKey(vaultMasterKey: Uint8Array): string {
 }
 
 /**
- * Validates a recovery key and recovers the full vault master key from it.
+ * Validates a recovery key and recovers the full Vault Master Key (VMK) from it.
  *
- * This function is used during vault password reset. The user provides their
+ * This function is used during vault recovery. The user provides their
  * recovery key (24-word mnemonic), and this function validates it and returns
- * the complete 256-bit vault master key.
+ * the complete 256-bit Vault Master Key (VMK).
  *
  * SECURITY: This enables complete offline vault recovery. The user does NOT need
  * the vault salt from the server - the 24-word phrase contains everything needed
  * to recover full vault access.
  *
  * After recovery, the user can:
- * 1. Use the recovered master key directly to decrypt their vault
- * 2. Set a new vault password and derive a new vault salt
- * 3. Re-encrypt the vault with the new password (optional)
+ * 1. Use the recovered VMK to unwrap their vault
+ * 2. Set a new vault password and wrap the VMK with the new wrapping key
  *
  * @param recoveryKey - The 24-word BIP39 mnemonic phrase
- * @returns Uint8Array - The complete 256-bit vault master key (32 bytes)
+ * @returns Uint8Array - The complete 256-bit Vault Master Key (VMK) (32 bytes)
  * @throws Error if the recovery key is invalid
  *
  * @example
  * const recoveryKey = 'word1 word2 word3 ... word24';
- * const recoveredMasterKey = validateRecoveryKey(recoveryKey);
- * const keys = deriveKeys(recoveredMasterKey);
+ * const vmk = validateRecoveryKey(recoveryKey);
+ * const keys = deriveKeys(vmk);
  * // Now you can decrypt vault data with keys.keyEncryptionKey, etc.
  */
 export function validateRecoveryKey(recoveryKey: string): Uint8Array {

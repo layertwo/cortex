@@ -1,8 +1,8 @@
 import {
   CortexClient,
   CreateVaultCommand,
-  GetVaultSaltCommand,
   GetVaultCommand,
+  UpdateVaultPasswordCommand,
   UpdateVaultRotationCommand,
   ListVaultsCommand,
   UpdateVaultCommand,
@@ -43,12 +43,6 @@ export async function createVault(): Promise<{ vaultId: string; vaultSalt: Uint8
   return { vaultId: out.vaultId, vaultSalt: out.vaultSalt };
 }
 
-export async function getVaultSalt(vaultId: string): Promise<Uint8Array> {
-  const out = await makeClient().send(new GetVaultSaltCommand({ vaultId }));
-  if (!out.vaultSalt) throw new Error('getVaultSalt: missing salt');
-  return out.vaultSalt;
-}
-
 export async function listVaults(
   pageSize = 50,
   nextToken?: string,
@@ -71,14 +65,9 @@ export async function listAllVaults(): Promise<VaultSummary[]> {
   return all;
 }
 
-export async function updateVault(
-  vaultId: string,
-  fields: { encryptedName?: Uint8Array; verifier?: Uint8Array },
-): Promise<void> {
-  if (!fields.encryptedName && !fields.verifier) throw new Error('updateVault: nothing to update');
-  await makeClient().send(
-    new UpdateVaultCommand({ vaultId, encryptedName: fields.encryptedName, verifier: fields.verifier }),
-  );
+export async function updateVault(vaultId: string, fields: { encryptedName?: Uint8Array }): Promise<void> {
+  if (!fields.encryptedName) throw new Error('updateVault: nothing to update');
+  await makeClient().send(new UpdateVaultCommand({ vaultId, encryptedName: fields.encryptedName }));
 }
 
 export async function deleteVault(vaultId: string): Promise<{
@@ -97,16 +86,22 @@ export async function deleteVault(vaultId: string): Promise<{
   };
 }
 
+// One VMK generation, wrapped under the vault key derived from a given vault password.
+export interface VmkEnvelopeRecord {
+  vmkVersion: number;
+  wrappedVmk: Uint8Array;
+  createdAt: Date;
+}
+
 export interface VaultRecord {
   vaultId: string;
   vaultSalt: Uint8Array;
-  kekVersion: number;
+  encryptedName: Uint8Array | null;
+  currentVmkVersion: number;
+  envelopeVersion: number;
+  vmkEnvelopes: VmkEnvelopeRecord[];
   rotationState: RotationState;
   rotationLockedAt: number | null;
-  encryptedName: Uint8Array | null;
-  verifier: Uint8Array | null;
-  pendingVaultSalt: Uint8Array | null;
-  pendingVerifier: Uint8Array | null;
 }
 
 export async function getVault(vaultId: string): Promise<VaultRecord> {
@@ -115,37 +110,50 @@ export async function getVault(vaultId: string): Promise<VaultRecord> {
   return {
     vaultId: out.vaultId,
     vaultSalt: out.vaultSalt,
-    kekVersion: out.kekVersion ?? 1,
+    encryptedName: out.encryptedName ?? null,
+    currentVmkVersion: out.currentVmkVersion ?? 0,
+    envelopeVersion: out.envelopeVersion ?? 0,
+    vmkEnvelopes: (out.vmkEnvelopes ?? []).flatMap((e) =>
+      e.vmkVersion == null || !e.wrappedVmk
+        ? []
+        : [{ vmkVersion: e.vmkVersion, wrappedVmk: e.wrappedVmk, createdAt: e.createdAt ?? new Date(0) }],
+    ),
     rotationState: out.rotationState ?? 'IDLE',
     rotationLockedAt: out.rotationLockedAt ?? null,
-    encryptedName: out.encryptedName ?? null,
-    verifier: out.verifier ?? null,
-    pendingVaultSalt: out.pendingVaultSalt ?? null,
-    pendingVerifier: out.pendingVerifier ?? null,
   };
 }
 
-export type RotationActionName = 'ACQUIRE' | 'PAUSE' | 'RELEASE' | 'ABANDON';
+// Replace the whole envelope list under an optimistic guard on envelopeVersion. Setup bootstraps
+// with expectedEnvelopeVersion 0 and a single envelope at vmkVersion 1.
+export async function updateVaultPassword(
+  vaultId: string,
+  expectedEnvelopeVersion: number,
+  vmkEnvelopes: VmkEnvelopeRecord[],
+): Promise<{ envelopeVersion: number }> {
+  const out = await makeClient().send(new UpdateVaultPasswordCommand({ vaultId, expectedEnvelopeVersion, vmkEnvelopes }));
+  if (out.envelopeVersion == null) throw new Error('updateVaultPassword: incomplete response');
+  return { envelopeVersion: out.envelopeVersion };
+}
 
 export async function updateVaultRotation(args: {
   vaultId: string;
-  action: RotationActionName;
+  action: 'ACQUIRE' | 'RELEASE';
   expectedState: RotationState;
-  kekVersion?: number;
-  newVerifier?: Uint8Array;
-  newVaultSalt?: Uint8Array;
+  expectedEnvelopeVersion?: number;
+  newVmkVersion?: number;
+  wrappedNewVmk?: Uint8Array;
   newEncryptedName?: Uint8Array;
 }): Promise<{
   rotationState: RotationState;
   rotationLockedAt: number | null;
-  pendingVaultSalt: Uint8Array | null;
-  pendingVerifier: Uint8Array | null;
+  currentVmkVersion: number;
+  envelopeVersion: number;
 }> {
   const out = await makeClient().send(new UpdateVaultRotationCommand(args));
   return {
     rotationState: out.rotationState ?? 'IDLE',
     rotationLockedAt: out.rotationLockedAt ?? null,
-    pendingVaultSalt: out.pendingVaultSalt ?? null,
-    pendingVerifier: out.pendingVerifier ?? null,
+    currentVmkVersion: out.currentVmkVersion ?? 0,
+    envelopeVersion: out.envelopeVersion ?? 0,
   };
 }

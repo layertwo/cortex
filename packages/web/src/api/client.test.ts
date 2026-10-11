@@ -24,8 +24,8 @@ vi.mock('@cortex/client', () => {
       }
     },
     CreateVaultCommand: cmd('CreateVault'),
-    GetVaultSaltCommand: cmd('GetVaultSalt'),
     GetVaultCommand: cmd('GetVault'),
+    UpdateVaultPasswordCommand: cmd('UpdateVaultPassword'),
     UpdateVaultRotationCommand: cmd('UpdateVaultRotation'),
     ListVaultsCommand: cmd('ListVaults'),
     UpdateVaultCommand: cmd('UpdateVault'),
@@ -48,8 +48,8 @@ vi.mock('../config', () => ({
 
 import {
   createVault,
-  getVaultSalt,
   getVault,
+  updateVaultPassword,
   updateVaultRotation,
   listVaults,
   listAllVaults,
@@ -63,7 +63,7 @@ const summary = (vaultId: string) => ({
   vaultSalt: SALT,
   createdAt: new Date(0),
   updatedAt: new Date(0),
-  kekVersion: 1,
+  currentVmkVersion: 1,
   rotationState: 'IDLE' as const,
 });
 
@@ -92,127 +92,107 @@ describe('api client', () => {
     expect(commands).toContainEqual(['CreateVault', {}]);
   });
 
-  it('getVaultSalt passes the vaultId and returns the raw salt', async () => {
-    const salt = new Uint8Array(16).fill(3);
-    sendMock.mockResolvedValueOnce({ vaultSalt: salt });
-
-    const result = await getVaultSalt('v9');
-
-    expect(result).toEqual(salt);
-    expect(commands).toContainEqual(['GetVaultSalt', { vaultId: 'v9' }]);
-  });
-
-  it('throws when the response is missing the salt', async () => {
-    sendMock.mockResolvedValueOnce({});
-    await expect(getVaultSalt('v9')).rejects.toThrow('missing salt');
-  });
 });
 
 describe('getVault', () => {
-  it('maps the name, verifier and staged pair, defaulting absent fields to null', async () => {
+  it('defaults absent fields and maps the VMK envelopes', async () => {
     sendMock.mockResolvedValueOnce({ vaultId: 'v1', vaultSalt: SALT, createdAt: new Date(0), updatedAt: new Date(0) });
 
     expect(await getVault('v1')).toEqual({
       vaultId: 'v1',
       vaultSalt: SALT,
-      kekVersion: 1,
+      encryptedName: null,
+      currentVmkVersion: 0,
+      envelopeVersion: 0,
+      vmkEnvelopes: [],
       rotationState: 'IDLE',
       rotationLockedAt: null,
-      encryptedName: null,
-      verifier: null,
-      pendingVaultSalt: null,
-      pendingVerifier: null,
     });
     expect(commands).toContainEqual(['GetVault', { vaultId: 'v1' }]);
+  });
 
+  it('maps the name, current version and envelopes', async () => {
     const name = new Uint8Array([1]);
-    const verifier = new Uint8Array([2]);
-    const pendingSalt = new Uint8Array(16).fill(4);
-    const pendingVerifier = new Uint8Array([5]);
+    const wrappedVmk = new Uint8Array([2]);
     sendMock.mockResolvedValueOnce({
       vaultId: 'v1',
       vaultSalt: SALT,
-      kekVersion: 3,
-      rotationState: 'PAUSED',
-      rotationLockedAt: 1700000000,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
       encryptedName: name,
-      verifier,
-      pendingVaultSalt: pendingSalt,
-      pendingVerifier,
+      currentVmkVersion: 2,
+      envelopeVersion: 5,
+      rotationState: 'IN_PROGRESS',
+      rotationLockedAt: 1700000000,
+      vmkEnvelopes: [{ vmkVersion: 2, wrappedVmk, createdAt: new Date(1000) }],
     });
 
     expect(await getVault('v1')).toEqual({
       vaultId: 'v1',
       vaultSalt: SALT,
-      kekVersion: 3,
-      rotationState: 'PAUSED',
-      rotationLockedAt: 1700000000,
       encryptedName: name,
-      verifier,
-      pendingVaultSalt: pendingSalt,
-      pendingVerifier,
+      currentVmkVersion: 2,
+      envelopeVersion: 5,
+      vmkEnvelopes: [{ vmkVersion: 2, wrappedVmk, createdAt: new Date(1000) }],
+      rotationState: 'IN_PROGRESS',
+      rotationLockedAt: 1700000000,
     });
   });
 });
 
+describe('updateVaultPassword', () => {
+  it('sends the expected version and envelopes and returns the new envelope version', async () => {
+    const wrappedVmk = new Uint8Array([9]);
+    const createdAt = new Date(1000);
+    sendMock.mockResolvedValueOnce({ envelopeVersion: 3 });
+
+    const out = await updateVaultPassword('v1', 2, [{ vmkVersion: 1, wrappedVmk, createdAt }]);
+
+    expect(out).toEqual({ envelopeVersion: 3 });
+    expect(commands).toContainEqual([
+      'UpdateVaultPassword',
+      { vaultId: 'v1', expectedEnvelopeVersion: 2, vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk, createdAt }] },
+    ]);
+  });
+
+  it('throws when the response omits envelopeVersion', async () => {
+    sendMock.mockResolvedValueOnce({});
+    await expect(updateVaultPassword('v1', 0, [])).rejects.toThrow('updateVaultPassword: incomplete response');
+  });
+});
+
 describe('updateVaultRotation', () => {
-  it('passes the staged pair and name through and maps the pending fields', async () => {
-    const newSalt = new Uint8Array(16).fill(8);
-    const newVerifier = new Uint8Array([9]);
-    sendMock.mockResolvedValueOnce({
-      rotationState: 'IN_PROGRESS',
-      rotationLockedAt: 1700000000,
-      pendingVaultSalt: newSalt,
-      pendingVerifier: newVerifier,
-    });
+  it('passes ACQUIRE inputs and maps the version fields', async () => {
+    const wrappedNewVmk = new Uint8Array([8]);
+    sendMock.mockResolvedValueOnce({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, currentVmkVersion: 2, envelopeVersion: 6 });
 
     const acquired = await updateVaultRotation({
       vaultId: 'v1',
       action: 'ACQUIRE',
       expectedState: 'IDLE',
-      newVaultSalt: newSalt,
-      newVerifier,
+      expectedEnvelopeVersion: 5,
+      newVmkVersion: 2,
+      wrappedNewVmk,
     });
 
-    expect(acquired).toEqual({
-      rotationState: 'IN_PROGRESS',
-      rotationLockedAt: 1700000000,
-      pendingVaultSalt: newSalt,
-      pendingVerifier: newVerifier,
-    });
+    expect(acquired).toEqual({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, currentVmkVersion: 2, envelopeVersion: 6 });
     expect(commands).toContainEqual([
       'UpdateVaultRotation',
-      { vaultId: 'v1', action: 'ACQUIRE', expectedState: 'IDLE', newVaultSalt: newSalt, newVerifier },
-    ]);
-
-    const newName = new Uint8Array([3]);
-    sendMock.mockResolvedValueOnce({ rotationState: 'IDLE' });
-
-    const released = await updateVaultRotation({
-      vaultId: 'v1',
-      action: 'RELEASE',
-      expectedState: 'IN_PROGRESS',
-      kekVersion: 2,
-      newEncryptedName: newName,
-    });
-
-    expect(released).toEqual({ rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null });
-    expect(commands).toContainEqual([
-      'UpdateVaultRotation',
-      { vaultId: 'v1', action: 'RELEASE', expectedState: 'IN_PROGRESS', kekVersion: 2, newEncryptedName: newName },
+      { vaultId: 'v1', action: 'ACQUIRE', expectedState: 'IDLE', expectedEnvelopeVersion: 5, newVmkVersion: 2, wrappedNewVmk },
     ]);
   });
 
-  it('sends PAUSE and ABANDON with their expected states', async () => {
-    sendMock.mockResolvedValueOnce({ rotationState: 'PAUSED', rotationLockedAt: 1 });
-    sendMock.mockResolvedValueOnce({ rotationState: 'IDLE' });
+  it('passes RELEASE with the re-encrypted name', async () => {
+    const newName = new Uint8Array([3]);
+    sendMock.mockResolvedValueOnce({ rotationState: 'IDLE', currentVmkVersion: 2, envelopeVersion: 6 });
 
-    await updateVaultRotation({ vaultId: 'v1', action: 'PAUSE', expectedState: 'IN_PROGRESS' });
-    const abandoned = await updateVaultRotation({ vaultId: 'v1', action: 'ABANDON', expectedState: 'PAUSED' });
+    const released = await updateVaultRotation({ vaultId: 'v1', action: 'RELEASE', expectedState: 'IN_PROGRESS', newEncryptedName: newName });
 
-    expect(commands).toContainEqual(['UpdateVaultRotation', { vaultId: 'v1', action: 'PAUSE', expectedState: 'IN_PROGRESS' }]);
-    expect(commands).toContainEqual(['UpdateVaultRotation', { vaultId: 'v1', action: 'ABANDON', expectedState: 'PAUSED' }]);
-    expect(abandoned.rotationState).toBe('IDLE');
+    expect(released).toEqual({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 6 });
+    expect(commands).toContainEqual([
+      'UpdateVaultRotation',
+      { vaultId: 'v1', action: 'RELEASE', expectedState: 'IN_PROGRESS', newEncryptedName: newName },
+    ]);
   });
 });
 
@@ -246,19 +226,16 @@ describe('listVaults', () => {
 });
 
 describe('updateVault', () => {
-  it('sends the encrypted name and/or verifier', async () => {
+  it('sends the encrypted name', async () => {
     sendMock.mockResolvedValue({ vaultId: 'v1', updatedAt: new Date(0) });
     const encryptedName = new Uint8Array([1]);
-    const verifier = new Uint8Array([2]);
 
-    await updateVault('v1', { encryptedName, verifier });
-    await updateVault('v1', { verifier });
+    await updateVault('v1', { encryptedName });
 
-    expect(commands).toContainEqual(['UpdateVault', { vaultId: 'v1', encryptedName, verifier }]);
-    expect(commands).toContainEqual(['UpdateVault', { vaultId: 'v1', encryptedName: undefined, verifier }]);
+    expect(commands).toContainEqual(['UpdateVault', { vaultId: 'v1', encryptedName }]);
   });
 
-  it('rejects without sending when both fields are absent', async () => {
+  it('rejects without sending when the name is absent', async () => {
     await expect(updateVault('v1', {})).rejects.toThrow('updateVault: nothing to update');
     expect(sendMock).not.toHaveBeenCalled();
   });

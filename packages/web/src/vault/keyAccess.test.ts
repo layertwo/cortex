@@ -13,7 +13,7 @@ beforeEach(() => {
 describe('getVaultKeys', () => {
   it('returns vaultId + kek + metadataKey from key-storage and kekVersion from the registry', async () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', kekVersion: 3 }]));
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', currentVmkVersion: 3 }]));
     retrieveKeys.mockResolvedValueOnce({
       keyEncryptionKey: new Uint8Array(32).fill(1),
       metadataEncryptionKey: new Uint8Array(32).fill(2),

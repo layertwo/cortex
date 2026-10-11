@@ -19,6 +19,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 
 const WRAPPED_DEK_SIZE = 65;
 const WRAPPED_DEK_WITH_HMAC_SIZE = 97;
+const WRAPPED_VMK_SIZE = 61;
 const VERSION = 0x01;
 const DEK_SIZE = 32;
 
@@ -182,20 +183,21 @@ export function unwrapDek(
 
   // 1. Structural validation
   if (wrappedDek.length !== WRAPPED_DEK_SIZE && wrappedDek.length !== WRAPPED_DEK_WITH_HMAC_SIZE) {
-    console.warn(`[envelope-encryption] CORRUPTED_DEK: invalid length ${wrappedDek.length} at ${new Date().toISOString()}`);
+    // Static markers only: never interpolate key-material bytes into a log (CodeQL).
+    console.warn('[envelope-encryption] CORRUPTED_DEK: invalid wrapped DEK length');
     throw new DekUnwrapError('CORRUPTED_DEK', `Invalid wrapped DEK length: expected ${WRAPPED_DEK_SIZE} or ${WRAPPED_DEK_WITH_HMAC_SIZE} bytes, got ${wrappedDek.length}`);
   }
 
   const version = getWrappedDekVersion(wrappedDek);
   if (isDekVersionDeprecated(version)) {
-    console.warn(`[envelope-encryption] DEPRECATED_DEK_VERSION: version ${version} at ${new Date().toISOString()}`);
+    console.warn('[envelope-encryption] DEPRECATED_DEK_VERSION');
     throw new DekUnwrapError(
       'WRONG_KEK_VERSION',
       `Wrapped DEK version ${version} is deprecated; re-wrap this file to migrate`
     );
   }
   if (!SUPPORTED_DEK_VERSIONS.includes(version)) {
-    console.warn(`[envelope-encryption] WRONG_KEK_VERSION: version ${version} at ${new Date().toISOString()}`);
+    console.warn('[envelope-encryption] WRONG_KEK_VERSION: unsupported wrapped DEK version');
     throw new DekUnwrapError('WRONG_KEK_VERSION', `Unsupported wrapped DEK version: ${version}`);
   }
 
@@ -247,6 +249,98 @@ export function unwrapDek(
   }
 
   return dek;
+}
+
+// --- Vault Master Key (VMK) wrapping ---
+
+/**
+ * Generate a random 32-byte Vault Master Key via CSPRNG.
+ *
+ * The VMK is the root vault key; the vault password only wraps it. Unlike the
+ * old password-derived key, it is never derived from user input and does not
+ * change when the password changes.
+ */
+export async function generateVaultMasterKey(): Promise<Uint8Array> {
+  // A VMK is 32 random bytes like a DEK; the distinct name marks its role.
+  return generateDek();
+}
+
+/**
+ * Wrap (encrypt) a VMK with the password-derived wrapping key.
+ *
+ * 61-byte format: `[version(1)][nonce(12)][ciphertext(32) + tag(16)]`. There is
+ * no HMAC binding: the VMK is not bound to a specific file.
+ *
+ * **Caller responsibility:** The caller must zero the VMK after use.
+ *
+ * @param vmk - The 32-byte Vault Master Key to wrap
+ * @param wrappingKey - The 32-byte password-derived wrapping key
+ * @returns Wrapped VMK in binary format
+ */
+export async function wrapVmk(
+  vmk: Uint8Array,
+  wrappingKey: Uint8Array
+): Promise<Uint8Array> {
+  if (vmk.length !== DEK_SIZE) {
+    throw new Error(`Invalid VMK size: expected ${DEK_SIZE} bytes, got ${vmk.length} bytes`);
+  }
+  if (wrappingKey.length !== DEK_SIZE) {
+    throw new Error(`Invalid wrapping key size: expected ${DEK_SIZE} bytes, got ${wrappingKey.length} bytes`);
+  }
+
+  const nonce = await getRandomBytes(NONCE_SIZE);
+  const cipher = chacha20poly1305(wrappingKey, nonce);
+  const encrypted = cipher.encrypt(vmk);
+  // encrypted = ciphertext(32) + authTag(16) = 48 bytes
+
+  const result = new Uint8Array(WRAPPED_VMK_SIZE);
+  result[0] = VERSION;
+  result.set(nonce, 1);
+  result.set(encrypted, 1 + NONCE_SIZE);
+
+  return result;
+}
+
+/**
+ * Unwrap (decrypt) a wrapped VMK using the password-derived wrapping key.
+ *
+ * Validation order mirrors unwrapDek: length → version byte → ChaCha decrypt.
+ *
+ * @param wrappedVmk - The wrapped VMK (61 bytes)
+ * @param wrappingKey - The 32-byte password-derived wrapping key
+ * @returns The unwrapped 32-byte VMK
+ * @throws DekUnwrapError on failure
+ */
+export function unwrapVmk(
+  wrappedVmk: Uint8Array,
+  wrappingKey: Uint8Array
+): Uint8Array {
+  if (wrappingKey.length !== DEK_SIZE) {
+    throw new Error(`Invalid wrapping key size: expected ${DEK_SIZE} bytes, got ${wrappingKey.length} bytes`);
+  }
+
+  if (wrappedVmk.length !== WRAPPED_VMK_SIZE) {
+    // Static marker only: never interpolate key-material bytes into a log.
+    console.warn('[envelope-encryption] CORRUPTED_DEK: invalid wrapped VMK length');
+    throw new DekUnwrapError('CORRUPTED_DEK', `Invalid wrapped VMK length: expected ${WRAPPED_VMK_SIZE} bytes, got ${wrappedVmk.length}`);
+  }
+
+  const version = wrappedVmk[0];
+  if (!SUPPORTED_DEK_VERSIONS.includes(version)) {
+    console.warn('[envelope-encryption] WRONG_KEK_VERSION: unsupported VMK version');
+    throw new DekUnwrapError('WRONG_KEK_VERSION', `Unsupported wrapped VMK version: ${version}`);
+  }
+
+  const nonce = wrappedVmk.slice(1, 1 + NONCE_SIZE);
+  const encryptedWithTag = wrappedVmk.slice(1 + NONCE_SIZE);
+
+  try {
+    const cipher = chacha20poly1305(wrappingKey, nonce);
+    return cipher.decrypt(encryptedWithTag);
+  } catch {
+    console.warn('[envelope-encryption] AUTHENTICATION_FAILED');
+    throw new DekUnwrapError('AUTHENTICATION_FAILED', 'ChaCha20-Poly1305 authentication failed');
+  }
 }
 
 // --- File-level convenience functions ---

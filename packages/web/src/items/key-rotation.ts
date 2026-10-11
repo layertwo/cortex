@@ -37,6 +37,12 @@ export interface RotateItemsArgs {
   onProgress?: (done: number, total: number) => void;
 }
 
+// MEDIA items still wrapped under an older KEK generation than `targetDekVersion`. The sweep
+// is complete (and RELEASE may fire) only when this is empty.
+export function stragglers(items: ItemData[], targetDekVersion: number): ItemData[] {
+  return items.filter((it) => it.itemType === 'MEDIA' && (it.dekVersion ?? 0) < targetDekVersion);
+}
+
 // Sweep: for each item at dekVersion < targetDekVersion, re-wrap DEK and
 // re-encrypt metadata + tags under the new keys. Retries each item ITEM_RETRIES times.
 export async function rotateItems({
@@ -50,9 +56,7 @@ export async function rotateItems({
   onProgress,
 }: RotateItemsArgs): Promise<void> {
   let done = 0;
-  const pending = items.filter(
-    (it) => it.itemType === 'MEDIA' && (it.dekVersion ?? 0) < targetDekVersion,
-  );
+  const pending = stragglers(items, targetDekVersion);
 
   for (const item of pending) {
     if (!item.wrappedDek || !item.encryptedMetadata) {
@@ -89,7 +93,7 @@ export async function rotateItems({
         }
       }
     }
-    // All retries exhausted — rethrow so the caller can set rotationState=PAUSED.
+    // All retries exhausted — rethrow so the caller leaves the rotation IN_PROGRESS.
     // The item's dekVersion is unchanged, so resume will retry it.
     if (lastErr) throw lastErr;
 
@@ -102,7 +106,7 @@ export async function rotateItems({
 // KEK version whose key encrypts the row (absent means 1); rows already at `targetVersion` were
 // re-keyed by an earlier attempt and are skipped, so the sweep resumes where it stopped. Each
 // update is retried like items (a 409 from a concurrent rename included), then rethrown so the
-// caller can pause the rotation.
+// caller leaves the rotation IN_PROGRESS to resume.
 export async function rotateCollections(
   collections: CollectionData[],
   oldMetadataKey: Uint8Array,

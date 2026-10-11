@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from src.api.services.collection_service import CollectionService
 from src.api.services.item_service import ItemService
-from src.api.services.rotation_abandon_service import RotationAbandonService
 from src.api.services.share_service import ShareService
 from src.api.services.vault_deletion_service import VaultDeletionService
 from src.api.services.vault_service import VaultService
@@ -132,22 +131,6 @@ def vault_deletion_service(
         items_table_name=items_table_name,
         shares_table_name=shares_table_name,
         s3_bucket_name=files_bucket_name,
-    )
-
-
-@pytest.fixture
-def rotation_abandon_service(
-    boto_session,
-    vault_service,
-    collection_service,
-    items_table_name,
-):
-    """Create a RotationAbandonService over the stubbed session and the real services."""
-    return RotationAbandonService(
-        session=boto_session,
-        vault_service=vault_service,
-        collection_service=collection_service,
-        items_table_name=items_table_name,
     )
 
 

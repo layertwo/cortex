@@ -11,6 +11,6 @@ export async function getVaultKeys(): Promise<{
   if (!vaultId) throw new Error('Vault is locked, unlock it again');
   const keys = await retrieveKeys(vaultId);
   if (!keys) throw new Error('Vault is locked, unlock it again');
-  const kekVersion = listVaults().find((v) => v.vaultId === vaultId)?.kekVersion ?? 1;
+  const kekVersion = listVaults().find((v) => v.vaultId === vaultId)?.currentVmkVersion ?? 1;
   return { vaultId, kek: keys.keyEncryptionKey, metadataKey: keys.metadataEncryptionKey, kekVersion };
 }

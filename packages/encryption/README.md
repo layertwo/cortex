@@ -2,6 +2,8 @@
 
 Zero-knowledge encryption library for the Cortex productivity suite. All encryption and decryption happens client-side.
 
+> Clean break: the VMK model replaces the previous verifier / salt-derived master key outright. Nothing is deployed yet, so no data migration is needed.
+
 ## Vault Salt Integrity
 
 The vault salt is fetched from the server every time keys are derived. To detect a malicious server swapping the salt — which would cause the client to derive a totally different vault master key and present a corrupted vault as legitimate — the client binds the salt to the vault master key locally via an HMAC.
@@ -28,13 +30,14 @@ The salt HMAC is stored in a **separate, plaintext, non-expiring per-vault recor
 
 ```typescript
 import {
-  deriveVaultMasterKey, deriveKeys,
+  deriveWrappingKey, unwrapVmk, deriveKeys,
   bindSaltHmac, resetSaltHmac, getStoredSaltHmac, verifySaltHmac,
   SaltIntegrityError,
 } from '@cortex/encryption';
 
-const masterKey = await deriveVaultMasterKey(password, salt);
-const { saltHmacKey } = deriveKeys(masterKey);
+const wrappingKey = await deriveWrappingKey(password, salt);
+const vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
+const { saltHmacKey } = deriveKeys(vmk);
 
 const stored = await getStoredSaltHmac(vaultId);
 if (stored === null) {

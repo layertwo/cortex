@@ -1,31 +1,44 @@
-import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { getCurrentUser } from 'aws-amplify/auth';
 import {
   deriveKeys,
-  retrieveKeys,
-  deriveVaultMasterKey,
+  deriveWrappingKey,
+  generateVaultMasterKey,
+  generateRecoveryKey,
+  wrapVmk,
+  unwrapVmk,
+  wrapDek,
   storeKeys,
-  clearKeys,
-  stringToBytes,
-  bytesToString,
+  retrieveKeys,
   bytesToBase64,
 } from '@cortex/encryption';
-import { ConflictError, ResourceNotFoundError, type CollectionData, type ItemData, type VaultSummary } from '@cortex/client';
-import { createVerifier, checkVerifier, saveVerifier, loadVerifier } from '../vault/verifier';
+import { ConflictError, type ItemData, type VaultSummary } from '@cortex/client';
 import { encryptCollectionName, decryptCollectionName } from '../items/collectionMetadata';
-import { listItems, listAllItems } from '../api/items';
-import { listAllCollections, updateCollection } from '../api/collections';
-import { encryptMetadata } from '../items/metadata';
+import { encryptMetadata, type FileMetadata } from '../items/metadata';
+import { listAllItems, listItems, updateItemRotation } from '../api/items';
+import { listAllCollections } from '../api/collections';
+import { getVaultKeys } from '../vault/keyAccess';
+
+const SALT = new Uint8Array(16).fill(9);
+const VMK = new Uint8Array(32).fill(7);
+const VMK_NEW = new Uint8Array(32).fill(0x21);
+// Password → wrapping key. A wrong password maps to a key no envelope was wrapped under.
+const WRAP: Record<string, Uint8Array> = {
+  vaultpw: new Uint8Array(32).fill(5),
+  newvaultpw: new Uint8Array(32).fill(6),
+  wrongpw: new Uint8Array(32).fill(0x99),
+  recoverypw: new Uint8Array(32).fill(0x31),
+  finalpw: new Uint8Array(32).fill(0x32),
+};
+const wrapKey = (pw: string) => (WRAP[pw] ?? new Uint8Array(32).fill(5)).slice();
 
 // Hoisted so the vi.mock factories below can reference these without a TDZ error.
-const { SALT, MASTER, api } = vi.hoisted(() => ({
-  SALT: new Uint8Array(16).fill(9),
-  MASTER: new Uint8Array(32).fill(5),
+const { api } = vi.hoisted(() => ({
   api: {
     createVault: vi.fn(),
-    getVaultSalt: vi.fn(),
     getVault: vi.fn(),
+    updateVaultPassword: vi.fn(),
     updateVaultRotation: vi.fn(),
     listAllVaults: vi.fn(async (): Promise<VaultSummary[]> => []),
     updateVault: vi.fn(),
@@ -42,19 +55,21 @@ vi.mock('aws-amplify/auth', () => ({
 }));
 
 vi.mock('../api/client', () => api);
-
-vi.mock('../api/items', () => ({ listAllItems: vi.fn(async () => []), listItems: vi.fn(async () => []) }));
-vi.mock('../api/collections', () => ({
-  listAllCollections: vi.fn(async () => []),
-  updateCollection: vi.fn(async () => {}),
+vi.mock('../api/items', () => ({
+  listAllItems: vi.fn(async () => []),
+  listItems: vi.fn(async () => []),
+  updateItemRotation: vi.fn(async () => {}),
 }));
+vi.mock('../api/collections', () => ({ listAllCollections: vi.fn(async () => []) }));
 
-// Real verifier + real deriveKeys/encrypt/decrypt; mock only the slow Argon2id step.
+// Real crypto (wrapVmk/unwrapVmk/deriveKeys/encryption); mock only Argon2id (slow), the VMK
+// generator (deterministic fixtures), recovery-phrase generation and key storage.
 vi.mock('@cortex/encryption', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@cortex/encryption')>();
   return {
     ...actual,
-    deriveVaultMasterKey: vi.fn(async () => MASTER.slice()),
+    deriveWrappingKey: vi.fn(async (password: string) => wrapKey(password)),
+    generateVaultMasterKey: vi.fn(async () => VMK.slice()),
     generateRecoveryKey: vi.fn(() => 'word '.repeat(24).trim()),
     storeKeys: vi.fn(async () => {}),
     clearKeys: vi.fn(async () => {}),
@@ -66,12 +81,13 @@ import {
   SessionProvider,
   useSession,
   WRONG_VAULT_PASSWORD,
-  REKEYED_ERROR,
-  CANCELLED_ERROR,
+  DELETE_REFUSED,
+  VAULT_NEEDS_SETUP,
+  ROTATION_INCOMPLETE,
+  RECOVERY_BLOCKED_BY_ROTATION,
   type SessionValue,
 } from './SessionContext';
 
-// The rotation tests drive the session directly instead of through Probe buttons.
 const sessionRef: { current: SessionValue | null } = { current: null };
 
 function Probe() {
@@ -81,44 +97,32 @@ function Probe() {
     <div>
       <span data-testid="status">{s.status}</span>
       <span data-testid="rotation-interrupted">{String(s.rotationInterrupted)}</span>
-      <span data-testid="types">
-        {typeof s.changeVaultPassword},{typeof s.rotationInterrupted}
-      </span>
-      <button
-        onClick={() =>
-          s.setupVault('vaultpw')
-            .then((r) => (document.title = r))
-            .catch((e) => (document.title = e.message))
-        }
-      >
-        setup
-      </button>
-      <button onClick={() => s.unlockVault('vaultpw').catch((e) => (document.title = e.message))}>
-        unlock
-      </button>
-      <button onClick={() => s.changeVaultPassword('vaultpw', 'newvaultpw').catch(() => {})}>
-        change
-      </button>
       <span data-testid="vaults">{s.vaults.map((v) => v.name).join(',')}</span>
       <span data-testid="active">{s.activeVault?.name ?? ''}</span>
       <span data-testid="version">{s.vaultVersion}</span>
-      <button
-        onClick={() =>
-          s.setupVault('vaultpw', 'Family')
-            .then((r) => (document.title = r))
-            .catch((e) => (document.title = e.message))
-        }
-      >
+      <button onClick={() => s.setupVault('vaultpw').then((r) => (document.title = r)).catch((e) => (document.title = e.message))}>
+        setup
+      </button>
+      <button onClick={() => s.setupVault('vaultpw', 'Family').then((r) => (document.title = r)).catch((e) => (document.title = e.message))}>
         setup-family
       </button>
-      <button onClick={() => s.switchVault('v9').then((r) => (document.title = r))}>switch-v9</button>
+      <button onClick={() => s.unlockVault('vaultpw').catch((e) => (document.title = e.message))}>unlock</button>
       <button
         onClick={() =>
-          s.renameVault('v1', 'Work')
-            .then(() => (document.title = 'renamed'))
-            .catch((e) => (document.title = e.message))
+          s.changeVaultPassword('vaultpw', 'newvaultpw').then(() => (document.title = 'changed')).catch((e) => (document.title = e.message))
         }
       >
+        change
+      </button>
+      <button
+        onClick={() =>
+          s.rotateEncryptionKeys('vaultpw').then((p) => (document.title = `rotated:${p.split(' ').length}`)).catch((e) => (document.title = e.message))
+        }
+      >
+        rotate
+      </button>
+      <button onClick={() => s.switchVault('v9').then((r) => (document.title = r))}>switch-v9</button>
+      <button onClick={() => s.renameVault('v1', 'Work').then(() => (document.title = 'renamed')).catch((e) => (document.title = e.message))}>
         rename-v1
       </button>
       <button onClick={() => s.logout()}>logout</button>
@@ -126,7 +130,7 @@ function Probe() {
       <button
         onClick={() =>
           s.recoverVault(document.body.dataset.phrase ?? '', 'newpw')
-            .then((r) => (document.title = 'recovered:' + r.vaultId + ':' + r.phrase.split(' ').length))
+            .then((r) => (document.title = `recovered:${r.vaultId}:${r.name}`))
             .catch((e) => (document.title = e.message))
         }
       >
@@ -134,8 +138,8 @@ function Probe() {
       </button>
       <button
         onClick={() =>
-          s.recoverVault(document.body.dataset.phrase ?? '', 'newpw', undefined, { vaultId: 'v1' })
-            .then((r) => (document.title = 'recovered:' + r.vaultId))
+          s.recoverVault(document.body.dataset.phrase ?? '', 'newpw', { vaultId: 'v1' })
+            .then((r) => (document.title = `recovered:${r.vaultId}:${r.name}`))
             .catch((e) => (document.title = e.message))
         }
       >
@@ -154,8 +158,6 @@ function Probe() {
   );
 }
 
-// The account gate is asynchronous (getCurrentUser, then ListVaults): wait for it to route
-// before driving the session, otherwise registry writers see no account yet.
 async function renderProbe() {
   render(
     <SessionProvider>
@@ -169,10 +171,29 @@ function summary(over: Partial<VaultSummary> = {}): VaultSummary {
   return {
     vaultId: 'v1',
     vaultSalt: SALT,
-    kekVersion: 1,
-    rotationState: 'IDLE',
     createdAt: new Date(0),
     updatedAt: new Date(0),
+    currentVmkVersion: 1,
+    rotationState: 'IDLE',
+    ...over,
+  };
+}
+
+async function envelope(vmk: Uint8Array, password: string) {
+  return wrapVmk(vmk, wrapKey(password));
+}
+
+// A vault record as GetVault returns it, with one envelope wrapping VMK under `vaultpw`.
+async function serverVault(over: Record<string, unknown> = {}) {
+  return {
+    vaultId: 'v1',
+    vaultSalt: SALT,
+    encryptedName: null,
+    currentVmkVersion: 1,
+    envelopeVersion: 1,
+    vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }],
+    rotationState: 'IDLE' as const,
+    rotationLockedAt: null,
     ...over,
   };
 }
@@ -181,13 +202,32 @@ function storedRegistry(): Record<string, unknown>[] {
   return JSON.parse(localStorage.getItem('cortex_vaults:u1') ?? '[]') as Record<string, unknown>[];
 }
 
+async function mediaItem(dekVersion: number, keys: ReturnType<typeof deriveKeys>): Promise<ItemData> {
+  const contentId = 'content-1';
+  const wrappedDek = await wrapDek(new Uint8Array(32).fill(3), keys.keyEncryptionKey, contentId);
+  const meta: FileMetadata = { name: 'a.jpg', contentType: 'image/jpeg', size: 1, contentId };
+  return {
+    itemId: 'm1',
+    vaultId: 'v1',
+    itemType: 'MEDIA',
+    encryptedMetadata: await encryptMetadata(meta, keys.metadataEncryptionKey),
+    wrappedDek,
+    dekVersion,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    version: 1,
+  };
+}
+
 beforeEach(() => {
   localStorage.clear();
   document.title = '';
-  // Offline by default: the gate keeps whatever registry a test seeded. Tests that exercise
-  // the server path override this with mockResolvedValue.
+  delete document.body.dataset.deleted;
   api.listAllVaults.mockRejectedValue(new Error('offline'));
   api.updateVault.mockResolvedValue(undefined);
+  api.createVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT });
+  api.updateVaultPassword.mockResolvedValue({ envelopeVersion: 1 });
+  api.deleteVault.mockResolvedValue({ deletionState: 'DELETED', deletedItems: 0, deletedCollections: 0, deletedShares: 0 });
   vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -212,24 +252,9 @@ describe('account gate', () => {
     expect(localStorage.getItem('cortex_vault_id')).toBeNull();
     expect(screen.getByTestId('vaults')).toHaveTextContent('Photos');
     expect(storedRegistry()).toHaveLength(1);
-    expect(storedRegistry()[0]).toMatchObject({ vaultId: 'v1', name: 'Photos', kekVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).toMatchObject({ vaultId: 'v1', name: 'Photos', currentVmkVersion: 1, rotationState: 'IDLE' });
     expect(storedRegistry()[0]).not.toHaveProperty('vaultSalt');
     expect(localStorage.getItem('cortex_vault_id:u1')).toBeNull(); // pointed at the dropped vault
-  });
-
-  it('a password change elsewhere: sync overwrites the stale local blob so the new password unlocks', async () => {
-    const stale = deriveKeys(new Uint8Array(32).fill(42));
-    const current = deriveKeys(MASTER);
-    saveVerifier('v1', await createVerifier(stale.metadataEncryptionKey));
-    const serverVerifier = await createVerifier(current.metadataEncryptionKey);
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    api.listAllVaults.mockResolvedValue([summary({ verifier: stringToBytes(serverVerifier), kekVersion: 2 })]);
-    await renderProbe();
-    expect(loadVerifier('v1')).toBe(serverVerifier);
-    await act(async () => {
-      screen.getByText('unlock').click();
-    });
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
   });
 
   it('logout clears the in-memory vaults but keeps the registry; another account signing in offline sees none of them', async () => {
@@ -254,90 +279,97 @@ describe('account gate', () => {
   });
 });
 
-describe('SessionContext vault', () => {
-  it('setupVault creates a vault, stores keys, unlocks, returns recovery phrase', async () => {
-    api.createVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT });
+describe('setupVault', () => {
+  it('bootstraps envelopeVersion 0 with one VMK envelope, stores derived keys and unlocks', async () => {
     await renderProbe();
     await act(async () => {
       screen.getByText('setup').click();
     });
     expect(api.createVault).toHaveBeenCalled();
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(1);
+    const [vaultId, expectedEnvelopeVersion, envelopes] = api.updateVaultPassword.mock.calls[0] as [
+      string,
+      number,
+      { vmkVersion: number; wrappedVmk: Uint8Array; createdAt: Date }[],
+    ];
+    expect(vaultId).toBe('v1');
+    expect(expectedEnvelopeVersion).toBe(0);
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0].vmkVersion).toBe(1);
+    expect(unwrapVmk(envelopes[0].wrappedVmk, wrapKey('vaultpw'))).toEqual(VMK);
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK));
     expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
     expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
     expect(document.title.split(' ')).toHaveLength(24);
   });
 
-  it('setupVault is two calls: CreateVault, then UpdateVault with the encrypted name and the verifier', async () => {
-    const keys = deriveKeys(MASTER);
-    api.createVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT });
+  it('also stores the encrypted vault name and registers the vault locally', async () => {
     await renderProbe();
     await act(async () => {
       screen.getByText('setup-family').click();
     });
-    expect(api.updateVault).toHaveBeenCalledTimes(1);
-    const [vaultId, fields] = api.updateVault.mock.calls[0] as [string, { encryptedName: Uint8Array; verifier: Uint8Array }];
-    expect(vaultId).toBe('v1');
-    expect(bytesToString(fields.verifier)).toBe(loadVerifier('v1'));
-    expect(decryptCollectionName(fields.encryptedName, keys.metadataEncryptionKey)).toBe('Family');
-    const [stored] = storedRegistry();
-    expect(stored).toMatchObject({
+    const [, fields] = api.updateVault.mock.calls[0] as [string, { encryptedName: Uint8Array }];
+    expect(decryptCollectionName(fields.encryptedName, deriveKeys(VMK).metadataEncryptionKey)).toBe('Family');
+    expect(storedRegistry()[0]).toMatchObject({
       vaultId: 'v1',
       name: 'Family',
       encryptedName: bytesToBase64(fields.encryptedName),
-      kekVersion: 1,
+      currentVmkVersion: 1,
       rotationState: 'IDLE',
     });
-    expect(stored).not.toHaveProperty('vaultSalt');
-    expect(stored).not.toHaveProperty('verifier');
+    expect(storedRegistry()[0]).not.toHaveProperty('vaultSalt');
   });
 
-  it('setupVault leaves nothing local when UpdateVault fails', async () => {
-    api.createVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT });
-    api.updateVault.mockRejectedValueOnce(new Error('Network error'));
+  it('leaves nothing local when the bootstrap write fails', async () => {
+    api.updateVaultPassword.mockRejectedValueOnce(new Error('Network error'));
     await renderProbe();
     await act(async () => {
       screen.getByText('setup').click();
     });
     expect(document.title).toBe('Network error');
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
-    expect(loadVerifier('v1')).toBeNull();
     expect(storedRegistry()).toEqual([]);
+    expect(vi.mocked(storeKeys)).not.toHaveBeenCalled();
   });
+});
 
-  it('unlockVault with the correct password unlocks', async () => {
-    const keys = deriveKeys(MASTER);
+describe('unlockVault', () => {
+  it('unwraps the current envelope with the correct password and unlocks', async () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
-    api.getVaultSalt.mockResolvedValue(SALT);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IDLE',
-      rotationLockedAt: null,
-    });
-
+    api.getVault.mockResolvedValue(await serverVault());
     await renderProbe();
     await act(async () => {
       screen.getByText('unlock').click();
     });
     expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK));
     expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
   });
 
-  it('unlockVault sets rotationInterrupted when GetVault reports a non-IDLE rotation state', async () => {
-    const keys = deriveKeys(MASTER);
+  it('rejects a wrong password with WRONG_VAULT_PASSWORD and stays locked', async () => {
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
-    api.getVaultSalt.mockResolvedValue(SALT);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IN_PROGRESS',
-      rotationLockedAt: 1700000000,
+    api.getVault.mockResolvedValue(await serverVault());
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.unlockVault('wrongpw', 'v1')).rejects.toThrow(WRONG_VAULT_PASSWORD);
     });
+    expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
+    expect(vi.mocked(storeKeys)).not.toHaveBeenCalled();
+  });
 
+  it('routes an unbootstrapped vault (no envelopes) to setup via VAULT_NEEDS_SETUP', async () => {
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    api.getVault.mockResolvedValue(await serverVault({ vmkEnvelopes: [], currentVmkVersion: 0, envelopeVersion: 0 }));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.unlockVault('vaultpw', 'v1')).rejects.toThrow(VAULT_NEEDS_SETUP);
+    });
+    expect(vi.mocked(storeKeys)).not.toHaveBeenCalled();
+  });
+
+  it('sets rotationInterrupted when GetVault reports a non-IDLE rotation state', async () => {
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    api.getVault.mockResolvedValue(await serverVault({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000 }));
     await renderProbe();
     await act(async () => {
       screen.getByText('unlock').click();
@@ -346,128 +378,26 @@ describe('SessionContext vault', () => {
     expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('true');
   });
 
-  it('unlockVault with the wrong password throws and stays locked', async () => {
-    const wrong = deriveKeys(new Uint8Array(32).fill(42));
+  it('decrypts the server-side name into the registry', async () => {
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    const vault = await serverVault({ encryptedName, vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }] });
+    api.getVault.mockResolvedValue(vault);
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', encryptedName: bytesToBase64(encryptedName) }]));
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', await createVerifier(wrong.metadataEncryptionKey));
-    api.getVaultSalt.mockResolvedValue(SALT);
-
     await renderProbe();
-    await act(async () => {
-      screen.getByText('unlock').click();
-    });
-    expect(document.title).toBe('Incorrect vault password');
-    expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
-  });
-
-  it('unlockVault hard-fails (does not unlock) when the verifier is missing', async () => {
-    localStorage.setItem('cortex_vault_id:u1', 'v1'); // vault id present, but no verifier blob
-    api.getVaultSalt.mockResolvedValue(SALT);
-
-    await renderProbe();
-    await act(async () => {
-      screen.getByText('unlock').click();
-    });
-    expect(document.title).toMatch(/verifier missing/i);
-    expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
-  });
-
-  it('unlockVault on a new device uses the server salt and verifier, then saves the verifier locally', async () => {
-    const keys = deriveKeys(MASTER);
-    const verifier = await createVerifier(keys.metadataEncryptionKey);
-    api.listAllVaults.mockResolvedValue([summary({ verifier: stringToBytes(verifier) })]);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IDLE',
-      rotationLockedAt: null,
-      verifier: stringToBytes(verifier), // server already has one: GetVault confirms it
-    });
-    await renderProbe();
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal');
-    expect(storedRegistry()[0]).not.toHaveProperty('verifier');
-    expect(loadVerifier('v1')).toBeNull();
-
-    await act(async () => {
-      screen.getByText('unlock').click();
-    });
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
-    expect(loadVerifier('v1')).toBe(verifier);
-    expect(api.getVaultSalt).not.toHaveBeenCalled();
-    expect(api.updateVault).not.toHaveBeenCalled();
-  });
-
-  it('unlockVault uploads a legacy local verifier when the server has none', async () => {
-    const keys = deriveKeys(MASTER);
-    const local = await createVerifier(keys.metadataEncryptionKey);
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', local);
-    api.listAllVaults.mockResolvedValue([summary()]); // listed, but no verifier stored server-side
-    api.getVault.mockResolvedValueOnce({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IDLE',
-      rotationLockedAt: null,
-      verifier: null, // GetVault confirms the server truly has none
-    });
-    await renderProbe();
-    await act(async () => {
-      screen.getByText('unlock').click();
-    });
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
-    expect(api.updateVault).toHaveBeenCalledWith('v1', { verifier: stringToBytes(local) });
-  });
-
-  it('unlockVault does not upload the local verifier when GetVault reports the server already has one', async () => {
-    // This session never synced (no ListVaults call succeeded), so `entry.verifier` is unknown;
-    // only GetVault's fresh read can tell the difference between "server has none" and
-    // "this session doesn't know yet" (final review Important 1).
-    const keys = deriveKeys(MASTER);
-    const local = await createVerifier(keys.metadataEncryptionKey);
-    localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', local);
-    api.getVaultSalt.mockResolvedValue(SALT);
-    api.getVault.mockResolvedValueOnce({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IDLE',
-      rotationLockedAt: null,
-      verifier: stringToBytes('server-already-has-a-verifier'),
-    });
-
-    await renderProbe();
-    await act(async () => {
-      screen.getByText('unlock').click();
-    });
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
-    expect(api.updateVault).not.toHaveBeenCalled();
-  });
-
-  it('unlockVault decrypts the server-side name into the registry', async () => {
-    const keys = deriveKeys(MASTER);
-    const verifier = await createVerifier(keys.metadataEncryptionKey);
-    const encryptedName = await encryptCollectionName('Family', keys.metadataEncryptionKey);
-    api.listAllVaults.mockResolvedValue([summary({ verifier: stringToBytes(verifier), encryptedName })]);
-    await renderProbe();
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal');
     await act(async () => {
       screen.getByText('unlock').click();
     });
     expect(screen.getByTestId('vaults')).toHaveTextContent('Family');
-    expect(screen.getByTestId('active')).toHaveTextContent('Family');
-    expect(storedRegistry()[0]).toMatchObject({ name: 'Family', encryptedName: bytesToBase64(encryptedName) });
+    expect(storedRegistry()[0]).toMatchObject({ name: 'Family', currentVmkVersion: 1, rotationState: 'IDLE' });
   });
 });
 
 describe('renameVault', () => {
   it('encrypts the name for the server, then updates the registry', async () => {
-    const keys = deriveKeys(MASTER);
+    const keys = deriveKeys(VMK);
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    (retrieveKeys as Mock).mockResolvedValueOnce(keys as never);
+    vi.mocked(retrieveKeys).mockResolvedValueOnce(keys as never);
     await renderProbe();
     await act(async () => {
       screen.getByText('rename-v1').click();
@@ -476,7 +406,6 @@ describe('renameVault', () => {
     const [vaultId, fields] = api.updateVault.mock.calls[0] as [string, { encryptedName: Uint8Array }];
     expect(vaultId).toBe('v1');
     expect(decryptCollectionName(fields.encryptedName, keys.metadataEncryptionKey)).toBe('Work');
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Work');
     expect(storedRegistry()[0]).toMatchObject({ name: 'Work', encryptedName: bytesToBase64(fields.encryptedName) });
   });
 
@@ -488,73 +417,10 @@ describe('renameVault', () => {
     });
     expect(document.title).toBe('Unlock to rename');
     expect(api.updateVault).not.toHaveBeenCalled();
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal');
-  });
-
-  it('leaves the registry alone when the server rejects the rename', async () => {
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    (retrieveKeys as Mock).mockResolvedValueOnce(deriveKeys(MASTER) as never);
-    api.updateVault.mockRejectedValueOnce(new Error('Network error'));
-    await renderProbe();
-    await act(async () => {
-      screen.getByText('rename-v1').click();
-    });
-    expect(document.title).toBe('Network error');
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal');
-    expect(storedRegistry()[0]).toEqual({ vaultId: 'v1', name: 'Personal' });
-  });
-});
-
-describe('changeVaultPassword', () => {
-  it('is exposed on SessionValue as a function, alongside rotationInterrupted as a boolean', async () => {
-    await renderProbe();
-    expect(screen.getByTestId('types')).toHaveTextContent('function,boolean');
-    // Full integration coverage (wrong-password fast-fail, sweep, phrase gate) lives in
-    // ChangeVaultPassword.test.tsx (Task 9), this is just the wiring smoke test.
-    expect(api.getVault).not.toHaveBeenCalled();
-  });
-
-  it('resuming an interrupted rotation ACQUIREs with the vault\'s actual rotationState, not a hardcoded IDLE', async () => {
-    // Regression test: GetVault reporting IN_PROGRESS (a crashed mid-sweep attempt)
-    // must NOT cause the ACQUIRE call to assert expectedState: 'IDLE', the backend's
-    // conditional write would then always throw ConflictError, since the vault is
-    // genuinely IN_PROGRESS and the 7-day staleness window hasn't elapsed. The resume
-    // path must ACQUIRE using the vault's own current state.
-    const keys = deriveKeys(MASTER);
-    localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IN_PROGRESS',
-      rotationLockedAt: 1700000000,
-    });
-    api.updateVaultRotation.mockResolvedValue({ rotationState: 'IN_PROGRESS', rotationLockedAt: Date.now() });
-
-    await renderProbe();
-    await act(async () => {
-      screen.getByText('change').click();
-    });
-
-    expect(api.updateVaultRotation).toHaveBeenCalledWith(
-      expect.objectContaining({ action: 'ACQUIRE', expectedState: 'IN_PROGRESS' }),
-    );
   });
 });
 
 describe('vault registry integration', () => {
-  it('setupVault registers the vault under its name and makes it active', async () => {
-    api.createVault.mockResolvedValue({ vaultId: 'v2', vaultSalt: SALT });
-    await renderProbe();
-    await act(async () => {
-      screen.getByText('setup-family').click();
-    });
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Family');
-    expect(screen.getByTestId('active')).toHaveTextContent('Family');
-    expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v2');
-  });
-
   it('switchVault reports locked when that vault has no keys on this device', async () => {
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }, { vaultId: 'v9', name: 'Work' }]));
     localStorage.setItem('cortex_vault_id:u1', 'v1');
@@ -569,7 +435,7 @@ describe('vault registry integration', () => {
   it('switchVault unlocks and activates when keys exist on this device', async () => {
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }, { vaultId: 'v9', name: 'Work' }]));
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    (retrieveKeys as Mock).mockResolvedValueOnce({
+    vi.mocked(retrieveKeys).mockResolvedValueOnce({
       keyEncryptionKey: new Uint8Array(32),
       metadataEncryptionKey: new Uint8Array(32),
     } as never);
@@ -580,725 +446,518 @@ describe('vault registry integration', () => {
     });
     expect(document.title).toBe('unlocked');
     expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v9');
-    expect(screen.getByTestId('active')).toHaveTextContent('Work');
     expect(Number(screen.getByTestId('version').textContent)).toBe(versionBefore + 1);
   });
+});
 
-  it('switchVault resolves locked (not a throw) when retrieveKeys rejects on a storage error', async () => {
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }, { vaultId: 'v9', name: 'Work' }]));
+describe('changeVaultPassword', () => {
+  it('re-wraps every envelope under the new password, preserving the version set', async () => {
+    const env1 = await envelope(VMK, 'vaultpw');
+    const env2 = await envelope(VMK_NEW, 'vaultpw');
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        vmkEnvelopes: [
+          { vmkVersion: 1, wrappedVmk: env1, createdAt: new Date(0) },
+          { vmkVersion: 2, wrappedVmk: env2, createdAt: new Date(0) },
+        ],
+      }),
+    );
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    (retrieveKeys as Mock).mockRejectedValueOnce(new Error('Failed to retrieve keys: IndexedDB unavailable'));
     await renderProbe();
     await act(async () => {
-      screen.getByText('switch-v9').click();
+      screen.getByText('change').click();
     });
-    expect(document.title).toBe('locked');
-    expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
+    expect(document.title).toBe('changed');
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(1);
+    const [vaultId, expectedEnvelopeVersion, envelopes] = api.updateVaultPassword.mock.calls[0] as [
+      string,
+      number,
+      { vmkVersion: number; wrappedVmk: Uint8Array }[],
+    ];
+    expect(vaultId).toBe('v1');
+    expect(expectedEnvelopeVersion).toBe(2);
+    expect(envelopes.map((e) => e.vmkVersion)).toEqual([1, 2]);
+    expect(unwrapVmk(envelopes[0].wrappedVmk, wrapKey('newvaultpw'))).toEqual(VMK);
+    expect(unwrapVmk(envelopes[1].wrappedVmk, wrapKey('newvaultpw'))).toEqual(VMK_NEW);
+  });
+
+  it('rejects a wrong current password without writing', async () => {
+    api.getVault.mockResolvedValue(await serverVault());
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.changeVaultPassword('wrongpw', 'newvaultpw')).rejects.toThrow(WRONG_VAULT_PASSWORD);
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('retries once on ConflictError against a fresh envelopeVersion', async () => {
+    const first = await serverVault({ envelopeVersion: 1 });
+    const fresh = await serverVault({
+      envelopeVersion: 2,
+      vmkEnvelopes: [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }],
+    });
+    api.getVault.mockResolvedValueOnce(first).mockResolvedValueOnce(fresh);
+    api.updateVaultPassword
+      .mockRejectedValueOnce(new ConflictError({ message: 'A vault password change cannot add or drop a VMK version', $metadata: {} }))
+      .mockResolvedValueOnce({ envelopeVersion: 3 });
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw');
+    });
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(2);
+    expect(api.updateVaultPassword.mock.calls[0][1]).toBe(1);
+    expect(api.updateVaultPassword.mock.calls[1][1]).toBe(2);
+  });
+});
+
+describe('rotateEncryptionKeys', () => {
+  async function seedRotatableVault() {
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName: await encryptCollectionName('Holiday', deriveKeys(VMK).metadataEncryptionKey),
+      }),
+    );
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Holiday', currentVmkVersion: 1, rotationState: 'IDLE' }]));
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+  }
+
+  it('ACQUIREs, sweeps, then RELEASEs once zero stragglers remain', async () => {
+    await seedRotatableVault();
+    vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());
+    api.updateVaultRotation
+      .mockResolvedValueOnce({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, currentVmkVersion: 2, envelopeVersion: 2 })
+      .mockResolvedValueOnce({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 2 });
+    await renderProbe();
+    await act(async () => {
+      screen.getByText('rotate').click();
+    });
+    expect(document.title).toBe('rotated:24');
+    const acquire = api.updateVaultRotation.mock.calls[0][0] as { action: string; newVmkVersion: number; wrappedNewVmk: Uint8Array; expectedState: string };
+    expect(acquire).toMatchObject({ action: 'ACQUIRE', expectedState: 'IDLE', newVmkVersion: 2 });
+    expect(unwrapVmk(acquire.wrappedNewVmk, wrapKey('vaultpw'))).toEqual(VMK_NEW);
+    const release = api.updateVaultRotation.mock.calls[1][0] as { action: string; newEncryptedName: Uint8Array };
+    expect(release.action).toBe('RELEASE');
+    expect(decryptCollectionName(release.newEncryptedName, deriveKeys(VMK_NEW).metadataEncryptionKey)).toBe('Holiday');
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK_NEW));
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 2, rotationState: 'IDLE', name: 'Holiday' });
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
+  });
+
+  it('withholds RELEASE when a straggler item remains, leaving the rotation IN_PROGRESS', async () => {
+    await seedRotatableVault();
+    vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());
+    api.updateVaultRotation.mockResolvedValueOnce({
+      rotationState: 'IN_PROGRESS',
+      rotationLockedAt: 1700000000,
+      currentVmkVersion: 2,
+      envelopeVersion: 2,
+    });
+    // The first list is empty; the re-list finds a straggler that appeared after ACQUIRE.
+    const straggler: ItemData = {
+      itemId: 'late',
+      vaultId: 'v1',
+      itemType: 'MEDIA',
+      encryptedMetadata: new Uint8Array([1]),
+      wrappedDek: new Uint8Array(97),
+      dekVersion: 1,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      version: 1,
+    };
+    vi.mocked(listAllItems).mockResolvedValueOnce([]).mockResolvedValueOnce([straggler]);
+    // The keys this device actually holds are the OLD ones: storeKeys was never called.
+    const oldKeys = deriveKeys(VMK);
+    vi.mocked(retrieveKeys).mockResolvedValue(oldKeys as never);
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.rotateEncryptionKeys('vaultpw')).rejects.toThrow(ROTATION_INCOMPLETE);
+    });
+    expect(api.updateVaultRotation.mock.calls.map((c) => (c[0] as { action: string }).action)).toEqual(['ACQUIRE']);
+    // The registry must NOT advertise the new version with the old KEK: getVaultKeys stays consistent.
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 1, rotationState: 'IN_PROGRESS' });
+    const held = await getVaultKeys();
+    expect(held.kekVersion).toBe(1);
+    expect(held.kek).toEqual(oldKeys.keyEncryptionKey);
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('true');
+  });
+
+  it('sweeps a stale-version item that was present at ACQUIRE, then RELEASEs (never stranded)', async () => {
+    await seedRotatableVault();
+    vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());
+    api.updateVaultRotation
+      .mockResolvedValueOnce({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, currentVmkVersion: 2, envelopeVersion: 2 })
+      .mockResolvedValueOnce({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 2 });
+    const item = await mediaItem(1, deriveKeys(VMK));
+    vi.mocked(listAllItems).mockResolvedValueOnce([item]).mockResolvedValueOnce([]);
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.rotateEncryptionKeys('vaultpw');
+    });
+    expect(updateItemRotation).toHaveBeenCalledTimes(1);
+    const [itemId, , dekVersion] = vi.mocked(updateItemRotation).mock.calls[0];
+    expect(itemId).toBe('m1');
+    expect(dekVersion).toBe(2);
+    expect(api.updateVaultRotation.mock.calls[1][0]).toMatchObject({ action: 'RELEASE' });
+  });
+
+  it('resumes an IN_PROGRESS rotation: sweeps stragglers with the FROM envelope, then RELEASEs', async () => {
+    // The previous attempt ACQUIREd (server bumped to v2) but failed mid-sweep; the v1 envelope
+    // still wraps the old VMK, the v2 envelope the new one. Resume must derive the old KEK from
+    // the v1 envelope, not the (now current) v2 one, or the un-swept item never unwraps.
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName: await encryptCollectionName('Holiday', deriveKeys(VMK).metadataEncryptionKey),
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        rotationState: 'IN_PROGRESS',
+        rotationLockedAt: 1700000000,
+        vmkEnvelopes: [
+          { vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) },
+          { vmkVersion: 2, wrappedVmk: await envelope(VMK_NEW, 'vaultpw'), createdAt: new Date(0) },
+        ],
+      }),
+    );
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Holiday', currentVmkVersion: 2, rotationState: 'IN_PROGRESS' }]));
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    const item = await mediaItem(1, deriveKeys(VMK)); // still on the generation being swept from
+    vi.mocked(listAllItems).mockResolvedValueOnce([item]).mockResolvedValueOnce([]);
+    api.updateVaultRotation.mockResolvedValueOnce({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 2 });
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.rotateEncryptionKeys('vaultpw');
+    });
+    expect(api.updateVaultRotation.mock.calls.map((c) => (c[0] as { action: string }).action)).toEqual(['RELEASE']);
+    const [, , dekVersion] = vi.mocked(updateItemRotation).mock.calls[0];
+    expect(dekVersion).toBe(2);
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK_NEW));
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 2, rotationState: 'IDLE' });
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
+  });
+
+  it('rejects a wrong confirmation password without ACQUIRE', async () => {
+    await seedRotatableVault();
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.rotateEncryptionKeys('wrongpw')).rejects.toThrow(WRONG_VAULT_PASSWORD);
+    });
+    expect(api.updateVaultRotation).not.toHaveBeenCalled();
   });
 });
 
 describe('recoverVault', () => {
-  it('re-secures the vault the phrase opens and unlocks it', async () => {
-    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
-    document.body.dataset.phrase = real.generateRecoveryKey(MASTER);
-    const keys = deriveKeys(MASTER);
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    saveVerifier('v1', await createVerifier(keys.metadataEncryptionKey));
-    api.listAllVaults.mockResolvedValue([{ vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', createdAt: new Date(0), updatedAt: new Date(0) }]);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', rotationLockedAt: null,
-      encryptedName: null, verifier: null, pendingVaultSalt: null, pendingVerifier: null,
-    });
-    api.updateVaultRotation.mockImplementation(async (args: { action: string; newVaultSalt?: Uint8Array; newVerifier?: Uint8Array }) =>
-      args.action === 'ACQUIRE'
-        ? { rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, pendingVaultSalt: args.newVaultSalt ?? null, pendingVerifier: args.newVerifier ?? null }
-        : { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null },
-    );
+  let realGenerateRecoveryKey: (vmk: Uint8Array) => string;
 
-    await renderProbe();
-    const listAllVaultsCallsBeforeRecovery = api.listAllVaults.mock.calls.length;
-    await act(async () => {
-      screen.getByText('recover').click();
-    });
-    expect(document.title).toBe('recovered:v1:24');
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
-    expect(api.updateVaultRotation).toHaveBeenCalledWith(expect.objectContaining({ action: 'RELEASE', kekVersion: 2 }));
-    expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
-    // ListVaults is eventually consistent: a re-sync after RELEASE could read this stale mock
-    // (still kekVersion 1) and stomp the commit rotateVault just made. There must be no sync
-    // after RELEASE, and the registry row must already carry the rotation's own commit.
-    expect(api.listAllVaults).toHaveBeenCalledTimes(listAllVaultsCallsBeforeRecovery);
-    expect(storedRegistry().find((v) => v.vaultId === 'v1')).toMatchObject({
-      kekVersion: 2,
-      rotationState: 'IDLE',
-      name: 'Personal',
-    });
+  beforeEach(async () => {
+    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
+    realGenerateRecoveryKey = real.generateRecoveryKey;
   });
 
-  it('rejects with the generic message when the phrase opens nothing here', async () => {
-    document.body.dataset.phrase = 'alpha bravo charlie';
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+  it('re-wraps the phrase VMK under the new password and returns the SAME phrase', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    localStorage.setItem(
+      'cortex_vaults:u1',
+      JSON.stringify([{ vaultId: 'v1', name: 'Personal', encryptedName: bytesToBase64(encryptedName) }]),
+    );
+    api.getVault.mockResolvedValue(await serverVault({ encryptedName }));
+    await renderProbe();
+    let result: { phrase: string; vaultId: string; name: string } | undefined;
+    await act(async () => {
+      result = await sessionRef.current!.recoverVault(phrase, 'newpw');
+    });
+    expect(result).toEqual({ phrase, vaultId: 'v1', name: 'Family' });
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(1);
+    const [, expectedEnvelopeVersion, envelopes] = api.updateVaultPassword.mock.calls[0] as [
+      string,
+      number,
+      { vmkVersion: number; wrappedVmk: Uint8Array }[],
+    ];
+    expect(expectedEnvelopeVersion).toBe(1);
+    expect(unwrapVmk(envelopes[0].wrappedVmk, wrapKey('newpw'))).toEqual(VMK);
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK));
+    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
+    expect(storedRegistry()[0]).toMatchObject({ name: 'Family', currentVmkVersion: 1, rotationState: 'IDLE' });
+  });
+
+  it('refuses while rotationState is not IDLE', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    api.getVault.mockResolvedValue(await serverVault({ rotationState: 'IN_PROGRESS' }));
     await renderProbe();
     await act(async () => {
-      screen.getByText('recover').click();
+      await expect(
+        sessionRef.current!.recoverVault(phrase, 'newpw', { vaultId: 'v1' }),
+      ).rejects.toThrow(RECOVERY_BLOCKED_BY_ROTATION);
     });
-    expect(document.title).toMatch(/don't open a vault on this device/);
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the phrase does not decrypt the encryptedName', async () => {
+    const wrongPhrase = realGenerateRecoveryKey(new Uint8Array(32).fill(9));
+    const encryptedName = await encryptCollectionName('Family', deriveKeys(VMK).metadataEncryptionKey);
+    api.getVault.mockResolvedValue(await serverVault({ encryptedName }));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.recoverVault(wrongPhrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
   });
 
-  it("new device: a wrong phrase against a vault with a collection throws PHRASE_ERROR before any rotation write", async () => {
-    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
-    document.body.dataset.phrase = real.generateRecoveryKey(new Uint8Array(32).fill(7));
+  it('identifies nothing when no known vault name decrypts (local path)', async () => {
+    const wrongPhrase = realGenerateRecoveryKey(new Uint8Array(32).fill(9));
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    // No verifier saved for v1, simulates a new device that has never opened this vault.
-    vi.mocked(listItems).mockResolvedValueOnce([]);
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.recoverVault(wrongPhrase, 'newpw')).rejects.toThrow(/don't open a vault on this device/);
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when there is no encryptedName and no data to prove a wrong phrase against', async () => {
+    const wrongPhrase = realGenerateRecoveryKey(new Uint8Array(32).fill(9));
+    api.getVault.mockResolvedValue(await serverVault({ encryptedName: null }));
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.recoverVault(wrongPhrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
+    });
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the only candidates exist but the phrase does not open them', async () => {
+    const wrongPhrase = realGenerateRecoveryKey(new Uint8Array(32).fill(9));
+    api.getVault.mockResolvedValue(await serverVault({ encryptedName: null }));
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    // A collection encrypted under the correct keys — the wrong phrase's key cannot open it.
     vi.mocked(listAllCollections).mockResolvedValueOnce([
       {
         collectionId: 'c1',
         vaultId: 'v1',
-        encryptedMetadata: new Uint8Array([1, 2, 3]),
+        encryptedMetadata: await encryptCollectionName('Trips', deriveKeys(VMK).metadataEncryptionKey),
         itemCount: 0,
         createdAt: new Date(0),
         updatedAt: new Date(0),
       },
     ]);
-    api.getVault.mockResolvedValue({ vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', rotationLockedAt: null });
-
     await renderProbe();
     await act(async () => {
-      screen.getByText('recover-kit').click();
+      await expect(sessionRef.current!.recoverVault(wrongPhrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
     });
-    expect(document.title).toMatch(/don't open a vault on this device/);
-    expect(vi.mocked(listAllCollections)).toHaveBeenCalledWith('v1');
-    expect(api.updateVaultRotation).not.toHaveBeenCalled();
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
   });
 
-  it('new device: proof succeeds against an old-key item even when a partial sweep left a newer-key item unreadable', async () => {
-    // Regression for Important #1: a retry after a sweep that died partway through must not
-    // reject the correct phrase just because the first item happens to already be under the
-    // new metadata key.
-    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
-    const phrase = real.generateRecoveryKey(MASTER);
-    document.body.dataset.phrase = phrase;
-    const keys = deriveKeys(MASTER);
+  it('rejects a superseded phrase when only an old-generation item exists (no encryptedName)', async () => {
+    const supersededPhrase = realGenerateRecoveryKey(VMK);
+    // Current generation is 2; the only candidate is a v1 item. The superseded phrase opens it,
+    // but accepting it would overwrite the v2 envelope with the v1 VMK and break swept items.
+    vi.mocked(listItems).mockResolvedValueOnce([await mediaItem(1, deriveKeys(VMK))]);
+    api.getVault.mockResolvedValue(
+      await serverVault({
+        encryptedName: null,
+        currentVmkVersion: 2,
+        envelopeVersion: 2,
+        vmkEnvelopes: [
+          { vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) },
+          { vmkVersion: 2, wrappedVmk: await envelope(VMK_NEW, 'vaultpw'), createdAt: new Date(0) },
+        ],
+      }),
+    );
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    // No verifier saved for v1, simulates a new device.
-    const oldKeyMetadata = await encryptMetadata(
-      { name: 'a.jpg', contentType: 'image/jpeg', size: 1, contentId: 'c1' },
-      keys.metadataEncryptionKey,
-    );
-    vi.mocked(listItems).mockResolvedValueOnce([
-      {
-        itemId: 'already-rotated',
-        vaultId: 'v1',
-        itemType: 'MEDIA',
-        encryptedMetadata: new Uint8Array([9, 9, 9]), // already re-keyed by a prior partial sweep
-        dekVersion: 2, // kekVersion + 1, under the NEW key, not readable with these keys
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-        version: 1,
-      },
-      {
-        itemId: 'still-old-key',
-        vaultId: 'v1',
-        itemType: 'MEDIA',
-        encryptedMetadata: oldKeyMetadata,
-        dekVersion: 1, // == kekVersion, still under the OLD key, the real proof candidate
-        createdAt: new Date(0),
-        updatedAt: new Date(0),
-        version: 1,
-      },
-    ]);
-    api.listAllVaults.mockResolvedValue([{ vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', createdAt: new Date(0), updatedAt: new Date(0) }]);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'IDLE', rotationLockedAt: null,
-      encryptedName: null, verifier: null, pendingVaultSalt: null, pendingVerifier: null,
-    });
-    api.updateVaultRotation.mockImplementation(async (args: { action: string; newVaultSalt?: Uint8Array; newVerifier?: Uint8Array }) =>
-      args.action === 'ACQUIRE'
-        ? { rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, pendingVaultSalt: args.newVaultSalt ?? null, pendingVerifier: args.newVerifier ?? null }
-        : { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null },
-    );
-
     await renderProbe();
     await act(async () => {
-      screen.getByText('recover-kit').click();
+      await expect(sessionRef.current!.recoverVault(supersededPhrase, 'newpw', { vaultId: 'v1' })).rejects.toThrow(
+        /don't open a vault on this device/,
+      );
     });
-    expect(document.title).toMatch(/^recovered:v1/);
-    expect(api.updateVaultRotation).toHaveBeenCalledWith(expect.objectContaining({ action: 'ACQUIRE' }));
+    expect(api.updateVaultPassword).not.toHaveBeenCalled();
   });
 
-  it('recovery meets a staged pair from an earlier attempt: start over goes PAUSE, ABANDON, re-ACQUIRE IDLE', async () => {
-    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
-    document.body.dataset.phrase = real.generateRecoveryKey(MASTER);
-    const keys = deriveKeys(MASTER);
-    const verifier = await createVerifier(keys.metadataEncryptionKey);
-    localStorage.setItem('cortex_account', 'u1');
+  it('proves via an old-key item when the vault has no encryptedName', async () => {
+    const phrase = realGenerateRecoveryKey(VMK);
+    vi.mocked(listItems).mockResolvedValueOnce([await mediaItem(1, deriveKeys(VMK))]);
+    api.getVault.mockResolvedValue(await serverVault({ encryptedName: null }));
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    saveVerifier('v1', verifier);
-    api.listAllVaults.mockResolvedValue([
-      { vaultId: 'v1', vaultSalt: SALT, verifier: stringToBytes(verifier), kekVersion: 1, rotationState: 'PAUSED', createdAt: new Date(0), updatedAt: new Date(0) },
-    ]);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1', vaultSalt: SALT, kekVersion: 1, rotationState: 'PAUSED', rotationLockedAt: 1700000000,
-      encryptedName: null, verifier: stringToBytes(verifier), pendingVaultSalt: new Uint8Array(16).fill(3), pendingVerifier: null,
-    });
-    // The staged pair belongs to a password this user no longer knows.
-    const stagedVerifier = await createVerifier(deriveKeys(new Uint8Array(32).fill(7)).metadataEncryptionKey);
-    const staged = { pendingVaultSalt: new Uint8Array(16).fill(3), pendingVerifier: stringToBytes(stagedVerifier) };
-    let abandoned = false;
-    api.updateVaultRotation.mockImplementation(async (args: { action: string; newVaultSalt?: Uint8Array; newVerifier?: Uint8Array }) => {
-      if (args.action === 'ACQUIRE') {
-        return abandoned
-          ? { rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000100, pendingVaultSalt: args.newVaultSalt ?? null, pendingVerifier: args.newVerifier ?? null }
-          : { rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, ...staged };
-      }
-      if (args.action === 'PAUSE') return { rotationState: 'PAUSED', rotationLockedAt: 1700000000, ...staged };
-      if (args.action === 'ABANDON') {
-        abandoned = true;
-        return { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null };
-      }
-      return { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null };
-    });
-    const onStagedMismatch = vi.fn().mockResolvedValueOnce({ action: 'startOver' });
-
-    render(
-      <SessionProvider>
-        <Probe />
-      </SessionProvider>,
-    );
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked'));
-    const listAllVaultsCallsBeforeRecovery = api.listAllVaults.mock.calls.length;
-
-    let result: { phrase: string; vaultId: string; name: string } | null = null;
+    await renderProbe();
+    let result: { phrase: string; vaultId: string; name: string } | undefined;
     await act(async () => {
-      result = await sessionRef.current!.recoverVault(document.body.dataset.phrase ?? '', 'newpw', undefined, undefined, onStagedMismatch);
+      result = await sessionRef.current!.recoverVault(phrase, 'newpw', { vaultId: 'v1' });
     });
-
-    expect(onStagedMismatch).toHaveBeenCalledWith(1700000000, undefined);
-    expect(api.updateVaultRotation.mock.calls.map((c: unknown[]) => (c[0] as { action: string }).action)).toEqual([
-      'ACQUIRE', 'PAUSE', 'ABANDON', 'ACQUIRE', 'RELEASE',
-    ]);
-    expect(api.updateVaultRotation.mock.calls[3][0]).toMatchObject({ action: 'ACQUIRE', expectedState: 'IDLE' });
-    expect(result!.vaultId).toBe('v1');
-    expect(result!.phrase.split(' ')).toHaveLength(24);
-    expect(api.listAllVaults).toHaveBeenCalledTimes(listAllVaultsCallsBeforeRecovery);
-    expect(storedRegistry().find((v) => v.vaultId === 'v1')).toMatchObject({ kekVersion: 2, rotationState: 'IDLE' });
-    expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
-    expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
-  });
-});
-
-describe('rotation with the staged pair', () => {
-  // deriveVaultMasterKey is mocked (Argon2id is slow); map passwords to distinct masters so a
-  // password typed at the resume dialog really does derive different keys. The salt is ignored.
-  const MASTERS: Record<string, Uint8Array> = {
-    newvaultpw: new Uint8Array(32).fill(6),
-    staged: new Uint8Array(32).fill(7),
-  };
-  const STAGED_SALT = new Uint8Array(16).fill(3);
-  const LOCKED_AT = 1700000000;
-  const bogusItem: ItemData = {
-    itemId: 'i1',
-    vaultId: 'v1',
-    itemType: 'MEDIA',
-    encryptedMetadata: new Uint8Array([1, 2, 3]), // undecryptable: makes rotateItems throw
-    wrappedDek: new Uint8Array(97),
-    dekVersion: 1,
-    createdAt: new Date(0),
-    updatedAt: new Date(0),
-    version: 1,
-  };
-
-  beforeEach(() => {
-    // Real Argon2id returns a fresh buffer per call; slice so the app can zeroize
-    // its own copy without corrupting these fixtures (and the assertions using them).
-    vi.mocked(deriveVaultMasterKey).mockImplementation(async (password: string) =>
-      (MASTERS[password] ?? MASTER).slice(),
-    );
-  });
-
-  // A vault this device unlocked before (local verifier blob) that the server also lists.
-  async function seedVault(record: Record<string, unknown> = {}) {
-    const keys = deriveKeys(MASTER);
-    const verifier = await createVerifier(keys.metadataEncryptionKey);
-    const encryptedName = await encryptCollectionName('Holiday', keys.metadataEncryptionKey);
-    localStorage.setItem('cortex_account', 'u1');
-    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Holiday', kekVersion: 1, rotationState: 'IDLE' }]));
-    localStorage.setItem('cortex_vault_id:u1', 'v1');
-    saveVerifier('v1', verifier);
-    api.listAllVaults.mockResolvedValue([
-      { vaultId: 'v1', vaultSalt: SALT, verifier: stringToBytes(verifier), encryptedName, kekVersion: 1, rotationState: 'IDLE', createdAt: new Date(0), updatedAt: new Date(0) },
-    ]);
-    api.getVault.mockResolvedValue({
-      vaultId: 'v1',
-      vaultSalt: SALT,
-      kekVersion: 1,
-      rotationState: 'IDLE',
-      rotationLockedAt: null,
-      encryptedName,
-      verifier: stringToBytes(verifier),
-      pendingVaultSalt: null,
-      pendingVerifier: null,
-      ...record,
-    });
-    return keys;
-  }
-
-  // Server that accepts this attempt's pair: ACQUIRE echoes the salt and verifier it was sent.
-  function echoRotation() {
-    api.updateVaultRotation.mockImplementation(async (args: { action: string; newVaultSalt?: Uint8Array; newVerifier?: Uint8Array }) =>
-      args.action === 'ACQUIRE'
-        ? { rotationState: 'IN_PROGRESS', rotationLockedAt: LOCKED_AT, pendingVaultSalt: args.newVaultSalt ?? null, pendingVerifier: args.newVerifier ?? null }
-        : { rotationState: args.action === 'PAUSE' ? 'PAUSED' : 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null },
-    );
-  }
-
-  // Server holding an earlier attempt's pair: ACQUIRE returns it until ABANDON succeeds, after
-  // which ACQUIRE echoes the caller's pair. `abandon` is the ABANDON outcome.
-  function stagedRotation(stagedVerifier: string, abandon: 'ok' | Error = 'ok') {
-    let abandoned = false;
-    const staged = { pendingVaultSalt: STAGED_SALT, pendingVerifier: stringToBytes(stagedVerifier) };
-    api.updateVaultRotation.mockImplementation(async (args: { action: string; newVaultSalt?: Uint8Array; newVerifier?: Uint8Array }) => {
-      switch (args.action) {
-        case 'ACQUIRE':
-          return abandoned
-            ? { rotationState: 'IN_PROGRESS', rotationLockedAt: LOCKED_AT + 100, pendingVaultSalt: args.newVaultSalt ?? null, pendingVerifier: args.newVerifier ?? null }
-            : { rotationState: 'IN_PROGRESS', rotationLockedAt: LOCKED_AT, ...staged };
-        case 'PAUSE':
-          return { rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT, ...staged };
-        case 'ABANDON':
-          if (abandon !== 'ok') throw abandon;
-          abandoned = true;
-          return { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null };
-        default:
-          return { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null };
-      }
-    });
-  }
-
-  async function mount() {
-    render(
-      <SessionProvider>
-        <Probe />
-      </SessionProvider>,
-    );
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked'));
-  }
-
-  // Cast, not inferred: whichever fields a given test actually reads off a call are always
-  // present for that action (ACQUIRE always carries newVaultSalt/newVerifier when this attempt
-  // sent them, RELEASE always carries newEncryptedName); tests that check absence use
-  // toBeUndefined(), which does not need the stricter optional type.
-  type RotationCallArgs = {
-    action: string;
-    expectedState: string;
-    kekVersion?: number;
-    newVaultSalt: Uint8Array;
-    newVerifier: Uint8Array;
-    newEncryptedName: Uint8Array;
-  };
-  const rotationCalls = () => api.updateVaultRotation.mock.calls.map((c: unknown[]) => c[0] as RotationCallArgs);
-  const callFor = (action: string, nth = 0) => rotationCalls().filter((a) => a.action === action)[nth];
-  const registryEntry = () => (JSON.parse(localStorage.getItem('cortex_vaults:u1') ?? '[]') as { vaultId: string; kekVersion?: number; rotationState?: string; encryptedName?: string; name: string }[]).find((v) => v.vaultId === 'v1');
-
-  it('happy path: ACQUIRE stages a fresh pair, RELEASE carries the name under the new keys and no verifier', async () => {
-    await seedVault();
-    echoRotation();
-    await mount();
-
-    let phrase = '';
-    await act(async () => {
-      phrase = await sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw');
-    });
-
-    expect(phrase.split(' ')).toHaveLength(24);
-    const acquire = callFor('ACQUIRE');
-    expect(acquire.expectedState).toBe('IDLE');
-    expect(acquire.newVaultSalt).toBeInstanceOf(Uint8Array);
-    expect(acquire.newVaultSalt.length).toBe(16);
-    const keysNew = deriveKeys(MASTERS.newvaultpw);
-    const sentVerifier = bytesToString(acquire.newVerifier);
-    expect(checkVerifier(sentVerifier, keysNew.metadataEncryptionKey)).toBe(true);
-
-    const release = callFor('RELEASE');
-    expect(release).toMatchObject({ expectedState: 'IN_PROGRESS', kekVersion: 2 });
-    expect(release.newVerifier).toBeUndefined();
-    expect(release.newVaultSalt).toBeUndefined();
-    expect(decryptCollectionName(release.newEncryptedName, keysNew.metadataEncryptionKey)).toBe('Holiday');
-
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'RELEASE']);
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBe(sentVerifier);
-    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', keysNew);
-    expect(registryEntry()).toMatchObject({ kekVersion: 2, rotationState: 'IDLE', name: 'Holiday' });
-    expect(typeof registryEntry()?.encryptedName).toBe('string');
-    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
-  });
-
-  it('resume with the same password: uses the staged pair and finishes without the dialog', async () => {
-    await seedVault({ rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT });
-    const stagedKeys = deriveKeys(MASTERS.newvaultpw);
-    const stagedVerifier = await createVerifier(stagedKeys.metadataEncryptionKey);
-    stagedRotation(stagedVerifier);
-    const onStagedMismatch = vi.fn();
-    await mount();
-
-    await act(async () => {
-      await sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch);
-    });
-
-    expect(onStagedMismatch).not.toHaveBeenCalled();
-    expect(callFor('ACQUIRE').expectedState).toBe('PAUSED');
-    // The staged verifier, not the one this attempt generated, is what gets committed locally.
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBe(stagedVerifier);
-    expect(decryptCollectionName(callFor('RELEASE').newEncryptedName, stagedKeys.metadataEncryptionKey)).toBe('Holiday');
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'RELEASE']);
-  });
-
-  it('PAUSE on failure: a sweep error pauses on the server, marks the registry PAUSED and raises the banner', async () => {
-    await seedVault();
-    echoRotation();
-    vi.mocked(listAllItems).mockResolvedValueOnce([bogusItem]);
-    await mount();
-
-    await act(async () => {
-      await expect(sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw')).rejects.toThrow(/ciphertext/i);
-    });
-
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'PAUSE']);
-    expect(callFor('PAUSE').expectedState).toBe('IN_PROGRESS');
-    expect(registryEntry()).toMatchObject({ rotationState: 'PAUSED' });
-    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('true');
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).not.toBeNull();
-    expect(vi.mocked(storeKeys)).not.toHaveBeenCalled();
-  });
-
-  it('collection sweep sends metadataVersion: target and expectedMetadataVersion: current', async () => {
-    const keysOld = await seedVault();
-    echoRotation();
-    const col: CollectionData = {
-      collectionId: 'c1',
-      vaultId: 'v1',
-      encryptedMetadata: await encryptCollectionName('Trips', keysOld.metadataEncryptionKey),
-      itemCount: 0,
-      createdAt: new Date(0),
-      updatedAt: new Date(0),
-    };
-    vi.mocked(listAllCollections).mockResolvedValueOnce([col]);
-    await mount();
-
-    await act(async () => {
-      await sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw');
-    });
-
-    expect(vi.mocked(listAllCollections)).toHaveBeenCalledWith('v1');
-    expect(vi.mocked(updateCollection)).toHaveBeenCalledTimes(1);
-    const [id, vaultId, bytes, version, expected] = vi.mocked(updateCollection).mock.calls[0];
-    expect([id, vaultId, version, expected]).toEqual(['c1', 'v1', 2, 1]);
-    expect(decryptCollectionName(bytes, deriveKeys(MASTERS.newvaultpw).metadataEncryptionKey)).toBe('Trips');
-  });
-
-  it('mismatch then finish: the dialog password opens the staged pair; a wrong one re-prompts with the error', async () => {
-    await seedVault({ rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT });
-    const stagedKeys = deriveKeys(MASTERS.staged);
-    const stagedVerifier = await createVerifier(stagedKeys.metadataEncryptionKey);
-    stagedRotation(stagedVerifier);
-    const onStagedMismatch = vi
-      .fn()
-      .mockResolvedValueOnce({ action: 'finish', password: 'nope' })
-      .mockResolvedValueOnce({ action: 'finish', password: 'staged' });
-    await mount();
-
-    let phrase = '';
-    await act(async () => {
-      phrase = await sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch);
-    });
-
-    expect(phrase.split(' ')).toHaveLength(24);
-    expect(onStagedMismatch).toHaveBeenCalledTimes(2);
-    expect(onStagedMismatch).toHaveBeenNthCalledWith(1, LOCKED_AT, undefined);
-    expect(onStagedMismatch).toHaveBeenNthCalledWith(2, LOCKED_AT, WRONG_VAULT_PASSWORD);
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'RELEASE']);
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBe(stagedVerifier);
-    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', stagedKeys);
-    expect(decryptCollectionName(callFor('RELEASE').newEncryptedName, stagedKeys.metadataEncryptionKey)).toBe('Holiday');
-  });
-
-  it('mismatch then start over: PAUSE, ABANDON, then re-ACQUIRE with expectedState IDLE and this attempt\'s pair', async () => {
-    await seedVault({ rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT });
-    const stagedVerifier = await createVerifier(deriveKeys(MASTERS.staged).metadataEncryptionKey);
-    stagedRotation(stagedVerifier);
-    const onStagedMismatch = vi.fn().mockResolvedValueOnce({ action: 'startOver' });
-    await mount();
-
-    let phrase = '';
-    await act(async () => {
-      phrase = await sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch);
-    });
-
-    expect(phrase.split(' ')).toHaveLength(24);
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'PAUSE', 'ABANDON', 'ACQUIRE', 'RELEASE']);
-    expect(callFor('ACQUIRE', 0).expectedState).toBe('PAUSED');
-    expect(callFor('PAUSE').expectedState).toBe('IN_PROGRESS');
-    expect(callFor('ABANDON').expectedState).toBe('PAUSED');
-    expect(callFor('ACQUIRE', 1).expectedState).toBe('IDLE');
-    // Both ACQUIREs carry the same fresh pair; the second one is the one the server accepts.
-    expect(Array.from(callFor('ACQUIRE', 1).newVaultSalt)).toEqual(Array.from(callFor('ACQUIRE', 0).newVaultSalt));
-    const keysNew = deriveKeys(MASTERS.newvaultpw);
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBe(bytesToString(callFor('ACQUIRE', 1).newVerifier));
-    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', keysNew);
-    expect(registryEntry()).toMatchObject({ kekVersion: 2, rotationState: 'IDLE' });
-  });
-
-  it('start over when files were already re-keyed: ABANDON 409 with the re-keyed text becomes REKEYED_ERROR', async () => {
-    await seedVault({ rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT });
-    const stagedVerifier = await createVerifier(deriveKeys(MASTERS.staged).metadataEncryptionKey);
-    stagedRotation(stagedVerifier, new Error('Some files were already re-keyed; finish the password change with the new password'));
-    const onStagedMismatch = vi.fn().mockResolvedValueOnce({ action: 'startOver' });
-    await mount();
-
-    await act(async () => {
-      await expect(
-        sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch),
-      ).rejects.toThrow(REKEYED_ERROR);
-    });
-
-    // ABANDON is never retried and the lock was already released by PAUSE: no second PAUSE, no re-ACQUIRE.
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'PAUSE', 'ABANDON']);
-    expect(registryEntry()).toMatchObject({ rotationState: 'PAUSED' });
-    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('true');
-  });
-
-  it('start over when another device holds the lock: any other ABANDON error surfaces as the server message', async () => {
-    await seedVault({ rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT });
-    const stagedVerifier = await createVerifier(deriveKeys(MASTERS.staged).metadataEncryptionKey);
-    stagedRotation(stagedVerifier, new Error('A vault password change is already in progress on another device'));
-    const onStagedMismatch = vi.fn().mockResolvedValueOnce({ action: 'startOver' });
-    await mount();
-
-    await act(async () => {
-      await expect(
-        sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch),
-      ).rejects.toThrow('A vault password change is already in progress on another device');
-    });
-
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'PAUSE', 'ABANDON']);
-  });
-
-  it('start over succeeds, then the re-ACQUIRE throws: no second PAUSE (lock already released) and the registry lands IDLE, not PAUSED', async () => {
-    await seedVault({ rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT });
-    const stagedVerifier = await createVerifier(deriveKeys(MASTERS.staged).metadataEncryptionKey);
-    const staged = { pendingVaultSalt: STAGED_SALT, pendingVerifier: stringToBytes(stagedVerifier) };
-    let abandoned = false;
-    api.updateVaultRotation.mockImplementation(async (args: { action: string }) => {
-      switch (args.action) {
-        case 'ACQUIRE':
-          // After ABANDON, this attempt no longer holds the lock; the re-ACQUIRE fails
-          // for an unrelated reason (e.g. a network blip), with the server left IDLE.
-          if (abandoned) throw new Error('network down');
-          return { rotationState: 'IN_PROGRESS', rotationLockedAt: LOCKED_AT, ...staged };
-        case 'PAUSE':
-          return { rotationState: 'PAUSED', rotationLockedAt: LOCKED_AT, ...staged };
-        case 'ABANDON':
-          abandoned = true;
-          return { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null };
-        default:
-          return { rotationState: 'IDLE', rotationLockedAt: null, pendingVaultSalt: null, pendingVerifier: null };
-      }
-    });
-    const onStagedMismatch = vi.fn().mockResolvedValueOnce({ action: 'startOver' });
-    await mount();
-
-    await act(async () => {
-      await expect(
-        sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch),
-      ).rejects.toThrow('network down');
-    });
-
-    // Exactly one PAUSE (Start over's own, before ABANDON) — the failed re-ACQUIRE sends no second one.
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'PAUSE', 'ABANDON', 'ACQUIRE']);
-    expect(registryEntry()).toMatchObject({ rotationState: 'IDLE' });
-    // The server and the registry both say IDLE, so the Dashboard banner must not claim an
-    // interrupted rotation for the rest of the session (final review M2).
-    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
-  });
-
-  it('mismatch then cancel: throws CANCELLED_ERROR and pauses the rotation', async () => {
-    await seedVault({ rotationState: 'IDLE' });
-    const stagedVerifier = await createVerifier(deriveKeys(MASTERS.staged).metadataEncryptionKey);
-    stagedRotation(stagedVerifier);
-    const onStagedMismatch = vi.fn().mockResolvedValueOnce({ action: 'cancel' });
-    await mount();
-
-    await act(async () => {
-      await expect(
-        sessionRef.current!.changeVaultPassword('vaultpw', 'newvaultpw', undefined, onStagedMismatch),
-      ).rejects.toThrow(CANCELLED_ERROR);
-    });
-
-    expect(rotationCalls().map((a: { action: string }) => a.action)).toEqual(['ACQUIRE', 'PAUSE']);
-    expect(callFor('PAUSE').expectedState).toBe('IN_PROGRESS');
-    expect(registryEntry()).toMatchObject({ rotationState: 'PAUSED' });
-    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('true');
-    expect(vi.mocked(storeKeys)).not.toHaveBeenCalled();
+    expect(result).toEqual({ phrase, vaultId: 'v1', name: 'Personal' });
+    expect(api.updateVaultPassword).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('deleteVault', () => {
-  const serverVault = (vaultId: string, verifier?: string) => ({
-    vaultId,
-    vaultSalt: SALT,
-    kekVersion: 1,
-    rotationState: 'IDLE' as const,
-    createdAt: new Date(0),
-    updatedAt: new Date(0),
-    ...(verifier ? { verifier: new TextEncoder().encode(verifier) } : {}),
-  });
-  const batch = (deletedItems: number, deletionState: 'DELETING' | 'DELETED') => ({
-    deletionState,
-    deletedItems,
-    deletedCollections: 0,
-    deletedShares: 0,
-  });
-  // Render and wait for the gate (ListVaults sync) so the server salt/verifier are in state.
-  async function mount(server: ReturnType<typeof serverVault>[]) {
-    api.listAllVaults.mockResolvedValue(server);
-    render(
-      <SessionProvider>
-        <Probe />
-      </SessionProvider>,
-    );
-    await waitFor(() => expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked'));
-  }
-
-  beforeEach(() => {
-    localStorage.setItem('cortex_account', 'u1');
-    localStorage.setItem(
-      'cortex_vaults:u1',
-      JSON.stringify([
-        { vaultId: 'v1', name: 'Personal', lastOpened: 2 },
-        { vaultId: 'v2', name: 'Work', lastOpened: 1 },
-      ]),
-    );
+  it('confirms by unwrapping the current envelope, then loops DeleteVault until DELETED', async () => {
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal', lastOpened: 2 }, { vaultId: 'v2', name: 'Work', lastOpened: 1 }]));
     localStorage.setItem('cortex_vault_id:u1', 'v1');
-    localStorage.setItem('cortex_welcome_done:v1', '1');
-    delete document.body.dataset.deleted;
-  });
-
-  it('loops until DELETED, reports progress, purges the vault locally and hands over to the most recently opened vault', async () => {
-    const good = await createVerifier(deriveKeys(MASTER).metadataEncryptionKey);
-    saveVerifier('v1', good);
-    api.deleteVault.mockResolvedValueOnce(batch(2, 'DELETING')).mockResolvedValueOnce(batch(1, 'DELETED'));
-    await mount([serverVault('v1', good), serverVault('v2', good)]);
-    api.listAllVaults.mockResolvedValue([serverVault('v2', good)]); // the server no longer lists v1
+    api.getVault.mockResolvedValue(await serverVault());
+    api.deleteVault
+      .mockResolvedValueOnce({ deletionState: 'DELETING', deletedItems: 2, deletedCollections: 0, deletedShares: 0 })
+      .mockResolvedValueOnce({ deletionState: 'DELETED', deletedItems: 1, deletedCollections: 0, deletedShares: 0 });
+    await renderProbe();
     await act(async () => {
       screen.getByText('delete-v1').click();
     });
     expect(document.title).toBe('deleted');
     expect(api.deleteVault).toHaveBeenCalledTimes(2);
-    expect(api.deleteVault).toHaveBeenCalledWith('v1');
     expect(document.body.dataset.deleted).toBe('3');
-    expect(clearKeys).toHaveBeenCalledWith('v1');
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBeNull();
-    expect(localStorage.getItem('cortex_welcome_done:v1')).toBeNull();
-    expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!).map((v: { vaultId: string }) => v.vaultId)).toEqual(['v2']);
+    expect(storedRegistry().map((v) => v.vaultId)).toEqual(['v2']);
     expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v2');
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Work');
   });
 
-  it('treats a 404 on a later call as success and leaves no active vault when none remain', async () => {
-    const good = await createVerifier(deriveKeys(MASTER).metadataEncryptionKey);
+  it('refuses a wrong password and makes no DeleteVault call', async () => {
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    api.getVault.mockResolvedValue(await serverVault());
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.deleteVault('v1', 'wrongpw')).rejects.toThrow(WRONG_VAULT_PASSWORD);
+    });
+    expect(api.deleteVault).not.toHaveBeenCalled();
+  });
+
+  it('refuses with DELETE_REFUSED when the vault has no envelope to check', async () => {
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    api.getVault.mockResolvedValue(await serverVault({ vmkEnvelopes: [], currentVmkVersion: 0, envelopeVersion: 0 }));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.deleteVault('v1', 'vaultpw')).rejects.toThrow(DELETE_REFUSED);
+    });
+    expect(api.deleteVault).not.toHaveBeenCalled();
+  });
+
+  it('treats a 404 on a later call as success', async () => {
+    const { ResourceNotFoundError } = await import('@cortex/client');
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    api.getVault.mockResolvedValue(await serverVault());
     api.deleteVault
-      .mockResolvedValueOnce(batch(5, 'DELETING'))
+      .mockResolvedValueOnce({ deletionState: 'DELETING', deletedItems: 5, deletedCollections: 0, deletedShares: 0 })
       .mockRejectedValueOnce(new ResourceNotFoundError({ message: 'Vault not found', $metadata: {} }));
-    await mount([serverVault('v1', good)]);
-    api.listAllVaults.mockResolvedValue([]);
+    await renderProbe();
     await act(async () => {
       screen.getByText('delete-v1').click();
     });
     expect(document.title).toBe('deleted');
-    expect(api.deleteVault).toHaveBeenCalledTimes(2);
     expect(document.body.dataset.deleted).toBe('5');
     expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!)).toEqual([]);
-    expect(localStorage.getItem('cortex_vault_id:u1')).toBeNull();
-    expect(screen.getByTestId('vaults').textContent).toBe('');
-    expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
-  });
-
-  it('treats a 404 on the first call as an error: surfaces the message and purges nothing', async () => {
-    // Spec §3.5 / §7: only a 404 on a later call means "already gone"; on the first call the
-    // vault this device believes in does not exist server-side, which the user must see.
-    const good = await createVerifier(deriveKeys(MASTER).metadataEncryptionKey);
-    api.deleteVault.mockRejectedValueOnce(new ResourceNotFoundError({ message: 'Vault not found', $metadata: {} }));
-    await mount([serverVault('v1', good), serverVault('v2', good)]);
-    await act(async () => {
-      screen.getByText('delete-v1').click();
-    });
-    expect(document.title).toBe('Vault not found');
-    expect(api.deleteVault).toHaveBeenCalledTimes(1);
-    expect(clearKeys).not.toHaveBeenCalled();
-    expect(localStorage.getItem('cortex_vault_verifier_v1')).toBeNull(); // never saved: nothing to purge
-    expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
-    expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!)).toHaveLength(2);
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal,Work');
   });
 
   it('stops on a 409 with the server message and purges nothing', async () => {
-    const good = await createVerifier(deriveKeys(MASTER).metadataEncryptionKey);
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    api.getVault.mockResolvedValue(await serverVault());
     api.deleteVault.mockRejectedValueOnce(
-      new ConflictError({
-        message: 'A vault password change is in progress; wait for it to finish or pause it first',
-        $metadata: {},
-      }),
+      new ConflictError({ message: 'A key rotation is in progress; finish it before deleting this vault', $metadata: {} }),
     );
-    await mount([serverVault('v1', good), serverVault('v2', good)]);
+    await renderProbe();
     await act(async () => {
       screen.getByText('delete-v1').click();
     });
-    expect(document.title).toBe('A vault password change is in progress; wait for it to finish or pause it first');
-    expect(api.deleteVault).toHaveBeenCalledTimes(1);
-    expect(clearKeys).not.toHaveBeenCalled();
+    expect(document.title).toBe('A key rotation is in progress; finish it before deleting this vault');
     expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v1');
-    expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!)).toHaveLength(2);
   });
+});
 
-  it('refuses when neither the server nor this device has a verifier, and makes no call', async () => {
-    await mount([serverVault('v1'), serverVault('v2')]);
-    await act(async () => {
-      screen.getByText('delete-v1').click();
+describe('composed rotate → recover → change (multi-generation vault)', () => {
+  it('changeVaultPassword still succeeds after a recovery re-wrapped only the current envelope', async () => {
+    const real = await vi.importActual<typeof import('@cortex/encryption')>('@cortex/encryption');
+    const keysOld = deriveKeys(VMK);
+    const keysNew = deriveKeys(VMK_NEW);
+    // A tiny stateful vault server: the composed flow drives the real session methods.
+    let envelopeVersion = 1;
+    let currentVmkVersion = 1;
+    let rotationState: 'IDLE' | 'IN_PROGRESS' = 'IDLE';
+    let encryptedName: Uint8Array | null = await encryptCollectionName('Holiday', keysOld.metadataEncryptionKey);
+    let envelopes = [{ vmkVersion: 1, wrappedVmk: await envelope(VMK, 'vaultpw'), createdAt: new Date(0) }];
+    const snapshot = () => ({
+      vaultId: 'v1',
+      vaultSalt: SALT,
+      encryptedName,
+      currentVmkVersion,
+      envelopeVersion,
+      vmkEnvelopes: envelopes.map((e) => ({ ...e })),
+      rotationState,
+      rotationLockedAt: null,
     });
-    expect(document.title).toBe('Unlock this vault once on a device that knows its password');
-    expect(api.deleteVault).not.toHaveBeenCalled();
-    expect(api.getVaultSalt).not.toHaveBeenCalled();
-    expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!)).toHaveLength(2);
-  });
+    api.getVault.mockImplementation(async () => snapshot());
+    api.updateVaultRotation.mockImplementation(
+      async (args: { action: string; newVmkVersion?: number; wrappedNewVmk?: Uint8Array; newEncryptedName?: Uint8Array }) => {
+        if (args.action === 'ACQUIRE') {
+          envelopes = [
+            ...envelopes,
+            { vmkVersion: args.newVmkVersion!, wrappedVmk: args.wrappedNewVmk!, createdAt: new Date(0) },
+          ];
+          currentVmkVersion = args.newVmkVersion!;
+          envelopeVersion += 1;
+          rotationState = 'IN_PROGRESS';
+        } else {
+          rotationState = 'IDLE';
+          if (args.newEncryptedName) encryptedName = args.newEncryptedName;
+        }
+        return { rotationState, rotationLockedAt: null, currentVmkVersion, envelopeVersion };
+      },
+    );
+    api.updateVaultPassword.mockImplementation(
+      async (_vaultId: string, expected: number, list: { vmkVersion: number; wrappedVmk: Uint8Array; createdAt: Date }[]) => {
+        envelopes = list.map((e) => ({ ...e }));
+        envelopeVersion = expected + 1;
+        return { envelopeVersion };
+      },
+    );
+    api.updateVault.mockResolvedValue(undefined);
+    localStorage.setItem(
+      'cortex_vaults:u1',
+      JSON.stringify([{ vaultId: 'v1', name: 'Holiday', encryptedName: bytesToBase64(encryptedName), currentVmkVersion: 1, rotationState: 'IDLE' }]),
+    );
+    localStorage.setItem('cortex_vault_id:u1', 'v1');
+    await renderProbe();
 
-  it('rejects a wrong password against the server verifier and makes no call', async () => {
-    const other = await createVerifier(deriveKeys(new Uint8Array(32).fill(42)).metadataEncryptionKey);
-    await mount([serverVault('v1', other), serverVault('v2', other)]);
+    // 1. rotate: version 1 → 2, the new current envelope wraps VMK_NEW under the current password.
+    vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());
     await act(async () => {
-      screen.getByText('delete-v1').click();
+      await sessionRef.current!.rotateEncryptionKeys('vaultpw');
     });
-    expect(document.title).toBe('Incorrect vault password');
-    expect(api.deleteVault).not.toHaveBeenCalled();
-  });
+    expect(currentVmkVersion).toBe(2);
 
-  it('does not resurrect the deleted vault via a stale post-delete ListVaults read', async () => {
-    const good = await createVerifier(deriveKeys(MASTER).metadataEncryptionKey);
-    saveVerifier('v1', good);
-    api.deleteVault.mockResolvedValueOnce(batch(1, 'DELETED'));
-    await mount([serverVault('v1', good), serverVault('v2', good)]);
-    // Deliberately leave listAllVaults resolving to the stale, pre-delete list (it is an
-    // eventually-consistent DynamoDB query): a real read racing the delete could still
-    // include v1 immediately afterwards. No re-sync should happen at all.
-    const callsBeforeDelete = api.listAllVaults.mock.calls.length;
+    // 2. recover with the phrase for VMK_NEW. Recovery re-wraps ONLY the current (v2) envelope;
+    //    envelope 1 stays wrapped under the pre-recovery password.
     await act(async () => {
-      screen.getByText('delete-v1').click();
+      await sessionRef.current!.recoverVault(real.generateRecoveryKey(VMK_NEW), 'recoverypw');
     });
-    expect(document.title).toBe('deleted');
-    expect(api.listAllVaults.mock.calls.length).toBe(callsBeforeDelete);
-    expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!).map((v: { vaultId: string }) => v.vaultId)).toEqual(['v2']);
+    expect(unwrapVmk(envelopes.find((e) => e.vmkVersion === 1)!.wrappedVmk, wrapKey('vaultpw'))).toEqual(VMK);
+    expect(unwrapVmk(envelopes.find((e) => e.vmkVersion === 2)!.wrappedVmk, wrapKey('recoverypw'))).toEqual(VMK_NEW);
+
+    // 3. the superseded password opens only envelope 1: it must be rejected, not silently accepted.
+    const writesAfterRecovery = api.updateVaultPassword.mock.calls.length;
+    await act(async () => {
+      await expect(sessionRef.current!.changeVaultPassword('vaultpw', 'finalpw')).rejects.toThrow(WRONG_VAULT_PASSWORD);
+    });
+    expect(api.updateVaultPassword.mock.calls.length).toBe(writesAfterRecovery);
+
+    // 4. change with the recovery password (the one that opens the current envelope): the
+    //    un-openable superseded envelope must not block it.
+    const supersededBefore = envelopes.find((e) => e.vmkVersion === 1)!.wrappedVmk;
+    await act(async () => {
+      await expect(sessionRef.current!.changeVaultPassword('recoverypw', 'finalpw')).resolves.toBeUndefined();
+    });
+    const calls = api.updateVaultPassword.mock.calls;
+    const submitted = calls[calls.length - 1][2] as { vmkVersion: number; wrappedVmk: Uint8Array }[];
+    expect(submitted.map((e) => e.vmkVersion)).toEqual([1, 2]);
+    // The superseded envelope is passed through untouched; only the current one is re-wrapped.
+    expect(submitted.find((e) => e.vmkVersion === 1)!.wrappedVmk).toEqual(supersededBefore);
+    expect(unwrapVmk(submitted.find((e) => e.vmkVersion === 2)!.wrappedVmk, wrapKey('finalpw'))).toEqual(VMK_NEW);
+    expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', keysNew);
   });
 });

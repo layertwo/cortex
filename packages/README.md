@@ -2,6 +2,8 @@
 
 This directory contains the Cortex monorepo packages managed with npm workspaces.
 
+> Clean break: the VMK model replaces the previous verifier / salt-derived master key outright. Nothing is deployed yet, so no data migration is needed.
+
 ## Packages
 
 ### @cortex/encryption
@@ -11,8 +13,9 @@ Standalone zero-knowledge encryption library for Cortex. This package provides a
 **Features:**
 - ChaCha20-Poly1305 authenticated encryption
 - Envelope encryption (per-file DEK wrapped with KEK)
-- Argon2id key derivation
-- HKDF key expansion
+- Password-wrapped vault master key (random VMK; `wrapVmk`/`unwrapVmk`)
+- Argon2id wrapping-key derivation
+- HKDF key expansion from the VMK
 - Password validation and breach checking
 - Share key derivation
 - No framework dependencies - pure TypeScript
@@ -21,7 +24,7 @@ Standalone zero-knowledge encryption library for Cortex. This package provides a
 
 **Usage:**
 ```typescript
-import { encrypt, decrypt, deriveVaultMasterKey } from '@cortex/encryption';
+import { deriveWrappingKey, unwrapVmk, deriveKeys } from '@cortex/encryption';
 ```
 
 **Reusability:** This library can be used across:

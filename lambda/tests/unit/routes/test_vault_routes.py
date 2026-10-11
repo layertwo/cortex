@@ -10,7 +10,6 @@ import json
 import secrets
 import time
 
-import pytest
 from botocore.stub import ANY
 
 from tests.fixtures.vault_deletion import (
@@ -143,6 +142,7 @@ class TestGetVaultRoute:
         # get_current_user to return (see tests/conftest.py).
         user_id = "test-user-id"
         vault_id = "test-vault-1"
+        wrapped = secrets.token_bytes(61)
         dynamodb_stubber.add_response(
             "get_item",
             {
@@ -154,7 +154,19 @@ class TestGetVaultRoute:
                     "vault_salt": {"B": b"\xaa" * 16},
                     "created_at": {"N": "1700000000"},
                     "updated_at": {"N": "1700000000"},
-                    "kek_version": {"N": "1"},
+                    "current_vmk_version": {"N": "1"},
+                    "envelope_version": {"N": "1"},
+                    "vmk_envelopes": {
+                        "L": [
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "1"},
+                                    "wrapped_vmk": {"B": wrapped},
+                                    "created_at": {"N": "1700000000"},
+                                }
+                            }
+                        ]
+                    },
                     "rotation_state": {"S": "IDLE"},
                 }
             },
@@ -168,20 +180,28 @@ class TestGetVaultRoute:
         body = response.json()
         assert body["vaultId"] == vault_id
         assert body["rotationState"] == "IDLE"
-        assert body["kekVersion"] == 1
-        # Nothing stored or staged on this row: the optional blobs are null.
+        assert body["currentVmkVersion"] == 1
+        assert body["envelopeVersion"] == 1
+        assert body["vmkEnvelopes"] == [
+            {
+                "vmkVersion": 1,
+                "wrappedVmk": base64.b64encode(wrapped).decode("utf-8"),
+                "createdAt": 1700000000,
+            }
+        ]
+        # Nothing stored on this row: the optional name is null.
         assert body["encryptedName"] is None
-        assert body["verifier"] is None
-        assert body["pendingVaultSalt"] is None
-        assert body["pendingVerifier"] is None
+        assert "verifier" not in body
+        assert "kekVersion" not in body
+        assert "pendingVaultSalt" not in body
+        assert "pendingVerifier" not in body
 
-    def test_get_vault_returns_verifier_and_staged_pair(self, client, dynamodb_stubber):
+    def test_get_vault_returns_vmk_envelopes(self, client, dynamodb_stubber):
         user_id = "test-user-id"
         vault_id = "test-vault-1"
         encrypted_name = secrets.token_bytes(40)
-        verifier = secrets.token_bytes(48)
-        pending_salt = secrets.token_bytes(16)
-        pending_verifier = secrets.token_bytes(48)
+        wrapped1 = secrets.token_bytes(61)
+        wrapped2 = secrets.token_bytes(61)
         dynamodb_stubber.add_response(
             "get_item",
             {
@@ -189,11 +209,27 @@ class TestGetVaultRoute:
                     user_id,
                     vault_id,
                     encrypted_name={"B": encrypted_name},
-                    verifier={"B": verifier},
-                    pending_vault_salt={"B": pending_salt},
-                    pending_verifier={"B": pending_verifier},
+                    current_vmk_version={"N": "2"},
+                    envelope_version={"N": "1"},
+                    vmk_envelopes={
+                        "L": [
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "1"},
+                                    "wrapped_vmk": {"B": wrapped1},
+                                    "created_at": {"N": "1700000000"},
+                                }
+                            },
+                            {
+                                "M": {
+                                    "vmk_version": {"N": "2"},
+                                    "wrapped_vmk": {"B": wrapped2},
+                                    "created_at": {"N": "1700000500"},
+                                }
+                            },
+                        ]
+                    },
                     updated_at={"N": "1700000500"},
-                    kek_version={"N": "1"},
                     rotation_state={"S": "IN_PROGRESS"},
                     rotation_locked_at={"N": "1700000500"},
                 )
@@ -209,377 +245,66 @@ class TestGetVaultRoute:
         assert body["rotationState"] == "IN_PROGRESS"
         assert body["rotationLockedAt"] == 1700000500
         assert base64.b64decode(body["encryptedName"]) == encrypted_name
-        assert base64.b64decode(body["verifier"]) == verifier
-        assert base64.b64decode(body["pendingVaultSalt"]) == pending_salt
-        assert base64.b64decode(body["pendingVerifier"]) == pending_verifier
+        assert body["currentVmkVersion"] == 2
+        assert body["envelopeVersion"] == 1
+        envelopes = body["vmkEnvelopes"]
+        assert [e["vmkVersion"] for e in envelopes] == [1, 2]
+        assert base64.b64decode(envelopes[0]["wrappedVmk"]) == wrapped1
+        assert base64.b64decode(envelopes[1]["wrappedVmk"]) == wrapped2
 
 
 class TestUpdateVaultRotationRoute:
-    def test_acquire_rotation_lock(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
+    """POST /v1/vaults/{vault_id}/rotation: ACQUIRE appends an envelope, RELEASE flips IDLE."""
+
+    VAULT = "test-vault-1"
+    KEY = {"PK": "USER#test-user-id", "SK": "VAULT#test-vault-1"}
+
+    def _stub_consistent_read(self, dynamodb_stubber, **extra):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": vault_row("test-user-id", self.VAULT, **extra)},
+            {"TableName": "test-vaults-table", "Key": self.KEY, "ConsistentRead": True},
+        )
+
+    def _acquire_body(self, **extra):
+        body = {
+            "action": "ACQUIRE",
+            "expectedState": "IDLE",
+            "expectedEnvelopeVersion": 1,
+            "newVmkVersion": 2,
+            "wrappedNewVmk": base64.b64encode(secrets.token_bytes(61)).decode("utf-8"),
+        }
+        body.update(extra)
+        return body
+
+    def test_acquire_appends_envelope_and_bumps(self, client, dynamodb_stubber):
+        wrapped = secrets.token_bytes(61)
+        self._stub_consistent_read(
+            dynamodb_stubber,
+            current_vmk_version={"N": "1"},
+            envelope_version={"N": "1"},
+            vmk_envelopes={
+                "L": [
+                    {
+                        "M": {
+                            "vmk_version": {"N": "1"},
+                            "wrapped_vmk": {"B": b"\x01" * 61},
+                            "created_at": {"N": "1"},
+                        }
+                    }
+                ]
+            },
+        )
         dynamodb_stubber.add_response(
             "update_item",
             {
                 "Attributes": {
                     "rotation_state": {"S": "IN_PROGRESS"},
                     "rotation_locked_at": {"N": str(int(time.time()))},
+                    "current_vmk_version": {"N": "2"},
+                    "envelope_version": {"N": "2"},
                 }
             },
-            {
-                "TableName": "test-vaults-table",
-                "Key": ANY,
-                "UpdateExpression": ANY,
-                "ConditionExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={"action": "ACQUIRE", "expectedState": "IDLE"},
-        )
-        assert response.status_code == 200
-        assert response.json()["rotationState"] == "IN_PROGRESS"
-
-    def test_conflict_returns_409(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        # The service disambiguates the failed condition with one get_item; a row
-        # that exists but fails the state check is a real conflict, not a 404.
-        dynamodb_stubber.add_response(
-            "get_item",
-            {"Item": vault_row(user_id="test-user-id", vault_id=vault_id)},
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={"action": "ACQUIRE", "expectedState": "IDLE"},
-        )
-        assert response.status_code == 409
-
-    def test_acquire_unknown_vault_returns_404(self, client, dynamodb_stubber):
-        """A retried ACQUIRE against a vault deleted from another device 404s."""
-        vault_id = "test-vault-1"
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item",
-            {},
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={"action": "ACQUIRE", "expectedState": "IDLE"},
-        )
-        assert response.status_code == 404
-
-    def test_pause_returns_paused(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        dynamodb_stubber.add_response(
-            "update_item",
-            {
-                "Attributes": {
-                    "rotation_state": {"S": "PAUSED"},
-                    "rotation_locked_at": {"N": "1700000500"},
-                    "pending_vault_salt": {"B": b"\x01" * 16},
-                    "pending_verifier": {"B": b"\x02" * 48},
-                }
-            },
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-                "UpdateExpression": "SET rotation_state = :paused, updated_at = :now",
-                "ConditionExpression": (
-                    "attribute_not_exists(deletion_state) AND rotation_state = :expected"
-                ),
-                "ExpressionAttributeValues": ANY,
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={"action": "PAUSE", "expectedState": "IN_PROGRESS"},
-        )
-        assert response.status_code == 200
-        assert response.json()["rotationState"] == "PAUSED"
-
-    def test_acquire_with_salt_and_verifier_returns_staged_pair(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        # The row already holds a pair staged by an earlier attempt; if_not_exists
-        # keeps it, and ALL_NEW hands that pair back, not the one we sent.
-        staged_salt = secrets.token_bytes(16)
-        staged_verifier = secrets.token_bytes(48)
-        sent_salt = secrets.token_bytes(16)
-        sent_verifier = secrets.token_bytes(48)
-        dynamodb_stubber.add_response(
-            "update_item",
-            {
-                "Attributes": {
-                    "rotation_state": {"S": "IN_PROGRESS"},
-                    "rotation_locked_at": {"N": "1700000500"},
-                    "pending_vault_salt": {"B": staged_salt},
-                    "pending_verifier": {"B": staged_verifier},
-                }
-            },
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-                "UpdateExpression": (
-                    "SET rotation_state = :in_progress, rotation_locked_at = :now, "
-                    "updated_at = :now, "
-                    "pending_vault_salt = if_not_exists(pending_vault_salt, :salt), "
-                    "pending_verifier = if_not_exists(pending_verifier, :pv)"
-                    " ADD rotation_generation :one"
-                ),
-                "ConditionExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={
-                "action": "ACQUIRE",
-                "expectedState": "IDLE",
-                "newVaultSalt": base64.b64encode(sent_salt).decode("utf-8"),
-                "newVerifier": base64.b64encode(sent_verifier).decode("utf-8"),
-            },
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["rotationState"] == "IN_PROGRESS"
-        assert base64.b64decode(body["pendingVaultSalt"]) == staged_salt
-        assert base64.b64decode(body["pendingVerifier"]) == staged_verifier
-
-    @pytest.mark.parametrize("field", ["newVaultSalt", "newVerifier"])
-    def test_acquire_with_only_one_of_the_pair_returns_400(self, client, dynamodb_stubber, field):
-        # No DynamoDB stub: the service must reject before any write.
-        vault_id = "test-vault-1"
-        blob = base64.b64encode(secrets.token_bytes(16)).decode("utf-8")
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={"action": "ACQUIRE", "expectedState": "IDLE", field: blob},
-        )
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "BAD_REQUEST"
-
-    def test_acquire_rejects_salt_that_is_not_16_bytes(self, client):
-        # Smithy @length(min: 16, max: 16) on newVaultSalt: pydantic rejects it as 422.
-        response = client.post(
-            "/v1/vaults/test-vault-1/rotation",
-            json={
-                "action": "ACQUIRE",
-                "expectedState": "IDLE",
-                "newVaultSalt": base64.b64encode(b"\x01" * 15).decode("utf-8"),
-                "newVerifier": base64.b64encode(b"\x02" * 48).decode("utf-8"),
-            },
-        )
-        assert response.status_code == 422
-
-    def _stub_consistent_read(self, dynamodb_stubber, vault_id, item_extra):
-        item = vault_row(
-            "test-user-id",
-            vault_id,
-            kek_version={"N": "1"},
-            rotation_state={"S": "IN_PROGRESS"},
-            rotation_locked_at={"N": "1700000500"},
-            **item_extra,
-        )
-        dynamodb_stubber.add_response(
-            "get_item",
-            {"Item": item},
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-                "ConsistentRead": True,
-            },
-        )
-
-    def test_release_staged_with_kek_version_and_name(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        pending_salt = secrets.token_bytes(16)
-        pending_verifier = secrets.token_bytes(48)
-        new_name = secrets.token_bytes(40)
-        self._stub_consistent_read(
-            dynamodb_stubber,
-            vault_id,
-            {
-                "pending_vault_salt": {"B": pending_salt},
-                "pending_verifier": {"B": pending_verifier},
-            },
-        )
-        dynamodb_stubber.add_response(
-            "update_item",
-            {
-                "Attributes": {
-                    "rotation_state": {"S": "IDLE"},
-                    "rotation_locked_at": {"N": "1700000500"},
-                    "kek_version": {"N": "2"},
-                    "vault_salt": {"B": pending_salt},
-                    "verifier": {"B": pending_verifier},
-                    "encrypted_name": {"B": new_name},
-                }
-            },
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-                "UpdateExpression": (
-                    "SET rotation_state = :idle, updated_at = :now, kek_version = :kv, "
-                    "encrypted_name = :name, "
-                    "vault_salt = :pending_salt, verifier = :pending_verifier "
-                    "REMOVE pending_vault_salt, pending_verifier"
-                ),
-                "ConditionExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={
-                "action": "RELEASE",
-                "expectedState": "IN_PROGRESS",
-                "kekVersion": 2,
-                "newEncryptedName": base64.b64encode(new_name).decode("utf-8"),
-            },
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["rotationState"] == "IDLE"
-        assert body["pendingVaultSalt"] is None
-        assert body["pendingVerifier"] is None
-
-    def test_release_staged_without_kek_version_returns_409(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        self._stub_consistent_read(
-            dynamodb_stubber,
-            vault_id,
-            {
-                "pending_vault_salt": {"B": secrets.token_bytes(16)},
-                "pending_verifier": {"B": secrets.token_bytes(48)},
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={"action": "RELEASE", "expectedState": "IN_PROGRESS"},
-        )
-        assert response.status_code == 409
-        assert response.json()["error"]["message"] == (
-            "A rotation with a new salt is staged; commit it with kekVersion only, or PAUSE"
-        )
-
-    def test_release_staged_with_new_verifier_returns_409(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        self._stub_consistent_read(
-            dynamodb_stubber,
-            vault_id,
-            {
-                "pending_vault_salt": {"B": secrets.token_bytes(16)},
-                "pending_verifier": {"B": secrets.token_bytes(48)},
-            },
-        )
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={
-                "action": "RELEASE",
-                "expectedState": "IN_PROGRESS",
-                "kekVersion": 2,
-                "newVerifier": base64.b64encode(secrets.token_bytes(48)).decode("utf-8"),
-            },
-        )
-        assert response.status_code == 409
-        assert response.json()["error"]["message"] == (
-            "A rotation with a new salt is staged; commit it with kekVersion only, or PAUSE"
-        )
-
-    def test_release_with_new_vault_salt_returns_400(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        # No DynamoDB stub: the service rejects newVaultSalt before its consistent read
-        # (Task 3), so any DynamoDB call fails this test.
-        response = client.post(
-            f"/v1/vaults/{vault_id}/rotation",
-            json={
-                "action": "RELEASE",
-                "expectedState": "IN_PROGRESS",
-                "kekVersion": 2,
-                "newVaultSalt": base64.b64encode(secrets.token_bytes(16)).decode("utf-8"),
-            },
-        )
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "BAD_REQUEST"
-
-
-class TestAbandonRotationRoute:
-    """ABANDON dispatches to RotationAbandonService, not VaultService (spec 5)."""
-
-    VAULT_ID = "test-vault-1"
-    KEY = {"PK": "USER#test-user-id", "SK": "VAULT#test-vault-1"}
-
-    def _stub_paused_vault(self, dynamodb_stubber, kek_version=1):
-        dynamodb_stubber.add_response(
-            "get_item",
-            {
-                "Item": vault_row(
-                    "test-user-id",
-                    self.VAULT_ID,
-                    rotation_state={"S": "PAUSED"},
-                    pending_vault_salt={"B": b"\x01" * 16},
-                    pending_verifier={"B": b"\x02" * 32},
-                    kek_version={"N": str(kek_version)},
-                )
-            },
-            {"TableName": "test-vaults-table", "Key": self.KEY},
-        )
-
-    def _stub_empty_item_page(self, dynamodb_stubber, kek_version=1):
-        dynamodb_stubber.add_response(
-            "query",
-            {"Items": []},
-            {
-                "TableName": "test-items-table",
-                "IndexName": "GSI2",
-                "KeyConditionExpression": "GSI2PK = :pk",
-                "FilterExpression": "dek_version > :kek",
-                "ExpressionAttributeValues": {
-                    ":pk": f"VAULT#{self.VAULT_ID}",
-                    ":kek": kek_version,
-                },
-                "Limit": 100,
-                "ScanIndexForward": True,
-            },
-        )
-
-    def _stub_empty_collections_page(self, dynamodb_stubber, kek_version=1):
-        dynamodb_stubber.add_response(
-            "query",
-            {"Items": []},
-            {
-                "TableName": "test-collections-table",
-                "KeyConditionExpression": "PK = :pk AND begins_with(SK, :sk_prefix)",
-                "FilterExpression": "metadata_version > :kek",
-                "ExpressionAttributeValues": {
-                    ":pk": f"VAULT#{self.VAULT_ID}",
-                    ":sk_prefix": "COLLECTION#",
-                    ":kek": kek_version,
-                },
-                "Limit": 100,
-                "ScanIndexForward": True,
-            },
-        )
-
-    def _stub_abandon_write(self, dynamodb_stubber):
-        dynamodb_stubber.add_response(
-            "update_item",
-            {"Attributes": {"rotation_state": {"S": "IDLE"}}},
             {
                 "TableName": "test-vaults-table",
                 "Key": self.KEY,
@@ -590,66 +315,104 @@ class TestAbandonRotationRoute:
             },
         )
 
-    def test_abandon_returns_200_with_pending_fields_absent(self, client, dynamodb_stubber):
-        self._stub_paused_vault(dynamodb_stubber)
-        self._stub_empty_item_page(dynamodb_stubber)
-        self._stub_empty_collections_page(dynamodb_stubber)
-        self._stub_abandon_write(dynamodb_stubber)
+        response = client.post(
+            f"/v1/vaults/{self.VAULT}/rotation",
+            json=self._acquire_body(wrappedNewVmk=base64.b64encode(wrapped).decode("utf-8")),
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["rotationState"] == "IN_PROGRESS"
+        assert body["currentVmkVersion"] == 2
+        assert body["envelopeVersion"] == 2
+
+    def test_acquire_wrong_next_version_returns_400(self, client, dynamodb_stubber):
+        self._stub_consistent_read(
+            dynamodb_stubber, current_vmk_version={"N": "2"}, envelope_version={"N": "1"}
+        )
+
+        response = client.post(f"/v1/vaults/{self.VAULT}/rotation", json=self._acquire_body())
+
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "BAD_REQUEST"
+
+    def test_acquire_stale_envelope_returns_409(self, client, dynamodb_stubber):
+        self._stub_consistent_read(
+            dynamodb_stubber, current_vmk_version={"N": "1"}, envelope_version={"N": "1"}
+        )
+        dynamodb_stubber.add_client_error(
+            "update_item", service_error_code="ConditionalCheckFailedException"
+        )
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": vault_row("test-user-id", self.VAULT)},
+            {"TableName": "test-vaults-table", "Key": self.KEY},
+        )
 
         response = client.post(
-            f"/v1/vaults/{self.VAULT_ID}/rotation",
-            json={"action": "ABANDON", "expectedState": "PAUSED"},
+            f"/v1/vaults/{self.VAULT}/rotation", json=self._acquire_body(expectedEnvelopeVersion=0)
+        )
+
+        assert response.status_code == 409
+
+    def test_acquire_unknown_vault_returns_404(self, client, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {"TableName": "test-vaults-table", "Key": self.KEY, "ConsistentRead": True},
+        )
+
+        response = client.post(f"/v1/vaults/{self.VAULT}/rotation", json=self._acquire_body())
+
+        assert response.status_code == 404
+
+    def test_release_flips_idle_and_stores_name(self, client, dynamodb_stubber):
+        new_name = secrets.token_bytes(40)
+        dynamodb_stubber.add_response(
+            "update_item",
+            {
+                "Attributes": {
+                    "rotation_state": {"S": "IDLE"},
+                    "rotation_locked_at": {"N": "1700000500"},
+                    "current_vmk_version": {"N": "2"},
+                    "envelope_version": {"N": "2"},
+                }
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": self.KEY,
+                "UpdateExpression": (
+                    "SET rotation_state = :idle, updated_at = :now, encrypted_name = :name"
+                ),
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+                "ReturnValues": "ALL_NEW",
+            },
+        )
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT}/rotation",
+            json={
+                "action": "RELEASE",
+                "expectedState": "IN_PROGRESS",
+                "newEncryptedName": base64.b64encode(new_name).decode("utf-8"),
+            },
         )
 
         assert response.status_code == 200
         body = response.json()
         assert body["rotationState"] == "IDLE"
-        assert body.get("pendingVaultSalt") is None
-        assert body.get("pendingVerifier") is None
+        assert body["currentVmkVersion"] == 2
+        assert body["envelopeVersion"] == 2
 
-    def test_abandon_wrong_expected_state_returns_400_with_no_stubs(self, client, dynamodb_stubber):
-        # No DynamoDB stub: the route rejects before any I/O.
-        response = client.post(
-            f"/v1/vaults/{self.VAULT_ID}/rotation",
-            json={"action": "ABANDON", "expectedState": "IN_PROGRESS"},
-        )
+    def test_acquire_without_envelope_version_returns_400(self, client, dynamodb_stubber):
+        # No DynamoDB stub: the request is rejected before any I/O.
+        body = self._acquire_body()
+        del body["expectedEnvelopeVersion"]
+
+        response = client.post(f"/v1/vaults/{self.VAULT}/rotation", json=body)
 
         assert response.status_code == 400
-        assert response.json()["error"]["message"] == "ABANDON requires expectedState PAUSED"
-
-    def test_abandon_conflict_propagates_409(self, client, dynamodb_stubber):
-        self._stub_paused_vault(dynamodb_stubber)
-        dynamodb_stubber.add_response(
-            "query",
-            {
-                "Items": [
-                    {
-                        "PK": {"S": "ITEM#i1"},
-                        "SK": {"S": "METADATA"},
-                        "item_id": {"S": "i1"},
-                        "vault_id": {"S": self.VAULT_ID},
-                        "dek_version": {"N": "2"},
-                    }
-                ]
-            },
-            {
-                "TableName": "test-items-table",
-                "IndexName": "GSI2",
-                "KeyConditionExpression": "GSI2PK = :pk",
-                "FilterExpression": "dek_version > :kek",
-                "ExpressionAttributeValues": {":pk": f"VAULT#{self.VAULT_ID}", ":kek": 1},
-                "Limit": 100,
-                "ScanIndexForward": True,
-            },
-        )
-        # No collections query and no update_item are stubbed.
-
-        response = client.post(
-            f"/v1/vaults/{self.VAULT_ID}/rotation",
-            json={"action": "ABANDON", "expectedState": "PAUSED"},
-        )
-
-        assert response.status_code == 409
 
 
 class TestListVaultsRoute:
@@ -660,7 +423,6 @@ class TestListVaultsRoute:
         salt_a = secrets.token_bytes(16)
         salt_b = secrets.token_bytes(16)
         name_a = secrets.token_bytes(40)
-        verifier_a = secrets.token_bytes(48)
         dynamodb_stubber.add_response(
             "query",
             {
@@ -672,11 +434,10 @@ class TestListVaultsRoute:
                         "user_id": {"S": user_id},
                         "vault_salt": {"B": salt_a},
                         "encrypted_name": {"B": name_a},
-                        "verifier": {"B": verifier_a},
                         "created_at": {"N": "1700000000"},
                         "updated_at": {"N": "1700000900"},
-                        "kek_version": {"N": "2"},
-                        "rotation_state": {"S": "PAUSED"},
+                        "current_vmk_version": {"N": "2"},
+                        "rotation_state": {"S": "IN_PROGRESS"},
                     },
                     {
                         "PK": {"S": f"USER#{user_id}"},
@@ -686,7 +447,7 @@ class TestListVaultsRoute:
                         "vault_salt": {"B": salt_b},
                         "created_at": {"N": "1700001000"},
                         "updated_at": {"N": "1700001000"},
-                        "kek_version": {"N": "1"},
+                        "current_vmk_version": {"N": "1"},
                         "rotation_state": {"S": "IDLE"},
                     },
                 ],
@@ -709,14 +470,13 @@ class TestListVaultsRoute:
         first, second = body["vaults"]
         assert base64.b64decode(first["vaultSalt"]) == salt_a
         assert base64.b64decode(first["encryptedName"]) == name_a
-        assert base64.b64decode(first["verifier"]) == verifier_a
-        assert first["kekVersion"] == 2
-        assert first["rotationState"] == "PAUSED"
+        assert first["currentVmkVersion"] == 2
+        assert first["rotationState"] == "IN_PROGRESS"
         assert first["createdAt"] == 1700000000
         assert first["updatedAt"] == 1700000900
+        assert "verifier" not in first
         assert second["encryptedName"] is None
-        assert second["verifier"] is None
-        assert second["kekVersion"] == 1
+        assert second["currentVmkVersion"] == 1
         assert second["rotationState"] == "IDLE"
         # The token is the base64 JSON of LastEvaluatedKey.
         assert json.loads(base64.b64decode(body["nextToken"])) == {
@@ -824,28 +584,16 @@ class TestUpdateVaultRoute:
         assert body["vaultId"] == vault_id
         assert isinstance(body["updatedAt"], (int, float))
 
-    def test_update_vault_verifier_only(self, client, dynamodb_stubber):
-        vault_id = "test-vault-1"
-        verifier = secrets.token_bytes(48)
-        dynamodb_stubber.add_response(
-            "update_item",
-            {"Attributes": {"vault_id": {"S": vault_id}, "updated_at": {"N": "1700000100"}}},
-            {
-                "TableName": "test-vaults-table",
-                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{vault_id}"},
-                "UpdateExpression": "SET updated_at = :now, verifier = :ver",
-                "ConditionExpression": self.UPDATE_CONDITION,
-                "ExpressionAttributeValues": ANY,
-            },
-        )
-
+    def test_update_vault_verifier_only_is_rejected(self, client):
+        # `verifier` is gone from the contract: an unknown field is ignored, so the
+        # route sees no encryptedName and rejects before touching DynamoDB.
         response = client.put(
-            f"/v1/vaults/{vault_id}",
-            json={"verifier": base64.b64encode(verifier).decode("utf-8")},
+            "/v1/vaults/test-vault-1",
+            json={"verifier": base64.b64encode(secrets.token_bytes(48)).decode("utf-8")},
         )
 
-        assert response.status_code == 200
-        assert response.json()["vaultId"] == vault_id
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "Provide encryptedName"
 
     def test_update_vault_empty_body_returns_400(self, client):
         # No stub: the route rejects before touching DynamoDB.
@@ -854,7 +602,7 @@ class TestUpdateVaultRoute:
         assert response.status_code == 400
         body = response.json()
         assert body["error"]["code"] == "BAD_REQUEST"
-        assert body["error"]["message"] == "Provide encryptedName or verifier"
+        assert body["error"]["message"] == "Provide encryptedName"
 
     def test_update_vault_missing_vault_returns_404(self, client, dynamodb_stubber):
         vault_id = "nonexistent-vault"
@@ -907,7 +655,7 @@ class TestUpdateVaultRoute:
 
         response = client.put(
             f"/v1/vaults/{vault_id}",
-            json={"verifier": base64.b64encode(secrets.token_bytes(48)).decode("utf-8")},
+            json={"encryptedName": base64.b64encode(secrets.token_bytes(40)).decode("utf-8")},
         )
 
         assert response.status_code == 409
@@ -935,11 +683,11 @@ class TestDeleteVaultRoute:
         body = response.json()
         assert body["error"]["code"] == "CONFLICT"
         assert body["error"]["message"] == (
-            "A vault password change is in progress; wait for it to finish or pause it first"
+            "A key rotation is in progress; finish it before deleting this vault"
         )
 
-    def test_paused_vault_is_deleted_in_one_call(self, client, dynamodb_stubber):
-        stub_mark(dynamodb_stubber, self.USER, self.VAULT, rotation_state="PAUSED")
+    def test_idle_vault_after_vmk_rotation_is_deleted_in_one_call(self, client, dynamodb_stubber):
+        stub_mark(dynamodb_stubber, self.USER, self.VAULT, rotation_state="IDLE")
         stub_empty_tail(dynamodb_stubber, self.USER, self.VAULT)
         stub_row_delete(dynamodb_stubber, self.USER, self.VAULT)
 
@@ -986,3 +734,83 @@ class TestDeleteVaultRoute:
 
         assert second.status_code == 404
         assert "not found" in second.json()["error"]["message"].lower()
+
+
+class TestUpdateVaultPasswordRoute:
+    """POST /v1/vaults/{vault_id}/password: bootstrap and pure re-wrap."""
+
+    VAULT = "test-vault-1"
+
+    def test_bootstrap_returns_1(self, client, dynamodb_stubber):
+        wrapped = secrets.token_bytes(61)
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": vault_row(
+                    "test-user-id",
+                    self.VAULT,
+                    envelope_version={"N": "0"},
+                    current_vmk_version={"N": "0"},
+                )
+            },
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{self.VAULT}"},
+                "ConsistentRead": True,
+            },
+        )
+        dynamodb_stubber.add_response(
+            "update_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{self.VAULT}"},
+                "UpdateExpression": ANY,
+                "ConditionExpression": ANY,
+                "ExpressionAttributeValues": ANY,
+            },
+        )
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT}/password",
+            json={
+                "expectedEnvelopeVersion": 0,
+                "vmkEnvelopes": [
+                    {
+                        "vmkVersion": 1,
+                        "wrappedVmk": base64.b64encode(wrapped).decode("utf-8"),
+                        "createdAt": 1700000400,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"envelopeVersion": 1}
+
+    def test_unknown_vault_returns_404(self, client, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#test-user-id", "SK": f"VAULT#{self.VAULT}"},
+                "ConsistentRead": True,
+            },
+        )
+
+        response = client.post(
+            f"/v1/vaults/{self.VAULT}/password",
+            json={
+                "expectedEnvelopeVersion": 0,
+                "vmkEnvelopes": [
+                    {
+                        "vmkVersion": 1,
+                        "wrappedVmk": base64.b64encode(secrets.token_bytes(61)).decode("utf-8"),
+                        "createdAt": 1700000400,
+                    }
+                ],
+            },
+        )
+
+        assert response.status_code == 404

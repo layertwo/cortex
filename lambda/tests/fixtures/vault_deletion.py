@@ -23,7 +23,7 @@ MARK_UPDATE_EXPRESSION = (
 )
 MARK_CONDITION_EXPRESSION = (
     "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND "
-    "(attribute_not_exists(rotation_state) OR rotation_state IN (:idle, :paused) OR "
+    "(attribute_not_exists(rotation_state) OR rotation_state = :idle OR "
     "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
 )
 ROW_DELETE_CONDITION = "deletion_state = :deleting"
