@@ -22,7 +22,7 @@ export {
 
 // Export key management functions
 export {
-  deriveVaultMasterKey,
+  deriveWrappingKey,
   deriveKeys,
   generateRecoveryKey,
   validateRecoveryKey,

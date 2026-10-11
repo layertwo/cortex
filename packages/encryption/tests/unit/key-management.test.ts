@@ -1,13 +1,13 @@
 /**
  * Unit tests for key management functions
  * 
- * Note: Tests for deriveVaultMasterKey are skipped in Node.js environment
+ * Note: Tests for deriveWrappingKey are skipped in Node.js environment
  * because argon2-browser requires WebAssembly which is browser-specific.
  * These functions should be tested in a browser environment or with integration tests.
  */
 
 import {
-  deriveVaultMasterKey,
+  deriveWrappingKey,
   deriveKeys,
   generateRecoveryKey,
   validateRecoveryKey,
@@ -93,7 +93,7 @@ describe('Key Management', () => {
 
     it('derives a 32-byte saltHmacKey distinct from all other derived keys', async () => {
       const salt = new Uint8Array(16).fill(0x42);
-      const masterKey = await deriveVaultMasterKey('correct horse battery staple 12', salt);
+      const masterKey = await deriveWrappingKey('correct horse battery staple 12', salt);
       const keys = deriveKeys(masterKey);
 
       expect(keys.saltHmacKey).toBeInstanceOf(Uint8Array);
@@ -115,28 +115,28 @@ describe('Key Management', () => {
     });
   });
 
-  describe('deriveVaultMasterKey', () => {
+  describe('deriveWrappingKey', () => {
     const KAT_SALT = new Uint8Array(16).fill(0x42);
     // Argon2id(t=3, m=64MB, p=4, dkLen=32) over UTF-8 "correct horse battery staple 12".
     // Standardized KDF → identical across implementations; pins the swap to @noble/hashes.
     const KAT_HEX = '5c88eecd72d28909ed99588a8f9b9ca80d7a7f65429dcd450a0d832371bf43b3';
 
     it('matches the Argon2id known-answer vector', async () => {
-      const mk = await deriveVaultMasterKey('correct horse battery staple 12', KAT_SALT);
+      const mk = await deriveWrappingKey('correct horse battery staple 12', KAT_SALT);
       expect(mk).toBeInstanceOf(Uint8Array);
       expect(mk).toHaveLength(32);
       expect(Buffer.from(mk).toString('hex')).toBe(KAT_HEX);
     });
 
     it('is deterministic for the same password and salt', async () => {
-      const a = await deriveVaultMasterKey('pw-123', KAT_SALT);
-      const b = await deriveVaultMasterKey('pw-123', KAT_SALT);
+      const a = await deriveWrappingKey('pw-123', KAT_SALT);
+      const b = await deriveWrappingKey('pw-123', KAT_SALT);
       expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
     });
 
     it('rejects an empty password and a too-short salt', async () => {
-      await expect(deriveVaultMasterKey('', KAT_SALT)).rejects.toThrow('Password cannot be empty');
-      await expect(deriveVaultMasterKey('pw', new Uint8Array(8))).rejects.toThrow(
+      await expect(deriveWrappingKey('', KAT_SALT)).rejects.toThrow('Password cannot be empty');
+      await expect(deriveWrappingKey('pw', new Uint8Array(8))).rejects.toThrow(
         'at least 16 bytes',
       );
     });

@@ -4,7 +4,7 @@ import { getCurrentUser } from 'aws-amplify/auth';
 import {
   deriveKeys,
   retrieveKeys,
-  deriveVaultMasterKey,
+  deriveWrappingKey,
   storeKeys,
   clearKeys,
   stringToBytes,
@@ -54,7 +54,7 @@ vi.mock('@cortex/encryption', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@cortex/encryption')>();
   return {
     ...actual,
-    deriveVaultMasterKey: vi.fn(async () => MASTER.slice()),
+    deriveWrappingKey: vi.fn(async () => MASTER.slice()),
     generateRecoveryKey: vi.fn(() => 'word '.repeat(24).trim()),
     storeKeys: vi.fn(async () => {}),
     clearKeys: vi.fn(async () => {}),
@@ -790,7 +790,7 @@ describe('recoverVault', () => {
 });
 
 describe('rotation with the staged pair', () => {
-  // deriveVaultMasterKey is mocked (Argon2id is slow); map passwords to distinct masters so a
+  // deriveWrappingKey is mocked (Argon2id is slow); map passwords to distinct masters so a
   // password typed at the resume dialog really does derive different keys. The salt is ignored.
   const MASTERS: Record<string, Uint8Array> = {
     newvaultpw: new Uint8Array(32).fill(6),
@@ -813,7 +813,7 @@ describe('rotation with the staged pair', () => {
   beforeEach(() => {
     // Real Argon2id returns a fresh buffer per call; slice so the app can zeroize
     // its own copy without corrupting these fixtures (and the assertions using them).
-    vi.mocked(deriveVaultMasterKey).mockImplementation(async (password: string) =>
+    vi.mocked(deriveWrappingKey).mockImplementation(async (password: string) =>
       (MASTERS[password] ?? MASTER).slice(),
     );
   });

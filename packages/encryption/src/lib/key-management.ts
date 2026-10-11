@@ -90,9 +90,9 @@ const HKDF_CONTEXTS = {
  * @example
  * const password = 'my-secure-vault-password';
  * const salt = crypto.getRandomValues(new Uint8Array(16));
- * const masterKey = await deriveVaultMasterKey(password, salt);
+ * const masterKey = await deriveWrappingKey(password, salt);
  */
-export async function deriveVaultMasterKey(
+export async function deriveWrappingKey(
   password: string,
   salt: Uint8Array
 ): Promise<Uint8Array> {
@@ -136,11 +136,11 @@ export interface DerivedKeys {
  * domain separation. This provides two independent layers of cryptographic separation.
  * All derived keys are 256 bits (32 bytes) for use with ChaCha20-Poly1305.
  *
- * @param vaultMasterKey - The 256-bit vault master key (from deriveVaultMasterKey)
+ * @param vaultMasterKey - The 256-bit vault master key (from deriveWrappingKey)
  * @returns DerivedKeys - Object containing all derived encryption keys
  *
  * @example
- * const masterKey = await deriveVaultMasterKey(password, salt);
+ * const masterKey = await deriveWrappingKey(password, salt);
  * const keys = deriveKeys(masterKey);
  * // Use keys.keyEncryptionKey as the KEK to wrap per-file DEKs (envelope encryption)
  * // Use keys.metadataEncryptionKey for encrypting metadata
@@ -238,7 +238,7 @@ export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
  * @returns string - A 24-word BIP39 mnemonic phrase
  *
  * @example
- * const masterKey = await deriveVaultMasterKey(password, salt);
+ * const masterKey = await deriveWrappingKey(password, salt);
  * const recoveryKey = generateRecoveryKey(masterKey);
  * console.log('IMPORTANT: Store this 24-word recovery key securely:', recoveryKey);
  */

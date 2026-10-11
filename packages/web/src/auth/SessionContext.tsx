@@ -10,7 +10,7 @@ import {
   updatePassword,
 } from 'aws-amplify/auth';
 import {
-  deriveVaultMasterKey,
+  deriveWrappingKey,
   deriveKeys,
   generateRecoveryKey,
   storeKeys,
@@ -298,7 +298,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     async (vaultPassword: string, name = DEFAULT_VAULT_NAME): Promise<string> => {
       const displayName = name.trim() || DEFAULT_VAULT_NAME;
       const { vaultId, vaultSalt } = await createVault();
-      const master = await deriveVaultMasterKey(vaultPassword, vaultSalt);
+      const master = await deriveWrappingKey(vaultPassword, vaultSalt);
       const keys = deriveKeys(master);
       const verifierString = await createVerifier(keys.metadataEncryptionKey);
       const encryptedName = await encryptCollectionName(displayName, keys.metadataEncryptionKey);
@@ -331,7 +331,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!vaultId) throw new Error('No vault on this device, set one up first');
       const entry = vaultsRef.current.find((v) => v.vaultId === vaultId);
       const salt = entry?.vaultSalt ?? (await getVaultSalt(vaultId));
-      const master = await deriveVaultMasterKey(vaultPassword, salt);
+      const master = await deriveWrappingKey(vaultPassword, salt);
       const keys = deriveKeys(master);
       secureZeroize(master); // only the derived keys are needed past this point
       const verifier = verifierFor({ vaultId, verifier: entry?.verifier });
@@ -417,7 +417,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
       // 1. This attempt's new keys and verifier.
       const newSalt = crypto.getRandomValues(new Uint8Array(16));
-      const masterNew = await deriveVaultMasterKey(newPassword, newSalt);
+      const masterNew = await deriveWrappingKey(newPassword, newSalt);
       const keysNew = deriveKeys(masterNew);
       const verifierNew = await createVerifier(keysNew.metadataEncryptionKey);
 
@@ -461,7 +461,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           let password = newPassword;
           let error: string | undefined;
           for (;;) {
-            const master = await deriveVaultMasterKey(password, stagedSalt);
+            const master = await deriveWrappingKey(password, stagedSalt);
             const keys = deriveKeys(master);
             if (checkVerifier(stagedVerifier, keys.metadataEncryptionKey)) {
               inUse = { keys, master, salt: stagedSalt, verifier: stagedVerifier };
@@ -590,7 +590,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Verify the current password client-side (fast-fail). The server verifier is
       // authoritative; the in-memory copy and then the local blob are the offline fallbacks.
       const vault = await getVault(vaultId);
-      const masterOld = await deriveVaultMasterKey(currentPassword, vault.vaultSalt);
+      const masterOld = await deriveWrappingKey(currentPassword, vault.vaultSalt);
       const keysOld = deriveKeys(masterOld);
       secureZeroize(masterOld); // rotation only needs the derived old key set
       const verifier =
@@ -680,7 +680,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const verifier = entry ? verifierFor(entry) : loadVerifier(vaultId);
       if (!verifier) throw new Error(DELETE_REFUSED);
       const salt = entry?.vaultSalt ?? (await getVaultSalt(vaultId));
-      const keys = deriveKeys(await deriveVaultMasterKey(vaultPassword, salt));
+      const keys = deriveKeys(await deriveWrappingKey(vaultPassword, salt));
       const passwordOk = checkVerifier(verifier, keys.metadataEncryptionKey);
       zeroizeKeys(keys); // the check is the only use of these keys
       if (!passwordOk) throw new Error(WRONG_VAULT_PASSWORD);
