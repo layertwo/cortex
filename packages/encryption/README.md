@@ -67,3 +67,37 @@ If `verifySaltHmac` returns false, surface this UX:
 > To continue, re-enter both your account password and vault password. If you did not just recover your account, contact support before proceeding.
 
 Only on explicit user acknowledgment plus a successful re-derivation should the client call `resetSaltHmac`.
+
+## DEK wrapping-format versioning
+
+Every wrapped DEK begins with a version byte. `CURRENT_DEK_VERSION` is used for new
+wraps; `SUPPORTED_DEK_VERSIONS` lists everything the client can read; and
+`DEPRECATED_DEK_VERSIONS` lists versions that are refused. Deploy a new version as
+SUPPORTED for a soak period before promoting it to CURRENT, so a rollback never
+orphans files.
+
+`getWrappedDekVersion(wrappedDek)` reads the version without decrypting;
+`isDekVersionDeprecated(version)` reports refusal; and `unwrapDek` throws
+`DekUnwrapError` with code `WRONG_KEK_VERSION` for both unsupported and deprecated
+versions (the deprecated message points at migration).
+
+## Key zeroization on logout
+
+`secureZeroize(buffer)` overwrites a key buffer in place — zeros, then cryptographically
+random bytes. `zeroizeKeys(keys)` does the same for every present buffer in a derived-key
+set. `clearAllKeys()` removes all key material from IndexedDB, localStorage, and
+sessionStorage.
+
+These are **best-effort**. JavaScript cannot guarantee a value is gone from memory: the
+garbage collector may have copied it, and a buffer handed to Web Crypto or a third-party
+library may persist in that library's own memory. What this library does to shrink the
+window: raw `Uint8Array` (never strings) holds key material, the two-pass overwrite
+replaces it, and the at-rest device key is a `crypto.subtle` non-exportable `CryptoKey`.
+
+The web app keeps no long-lived in-memory key cache. `retrieveKeys` decrypts the encrypted
+bundle from IndexedDB per operation, and `SessionContext` zeroizes each transient master
+key immediately after deriving the working keys (`secureZeroize` / `zeroizeKeys`). The
+inactivity timeout is enforced by the bundle's own expiry (`DEFAULT_CONFIG.timeoutMinutes`,
+30 minutes): once it lapses `retrieveKeys` returns `null` and the vault reads as locked.
+Because nothing persistent lives in memory, there is no separate `beforeunload` hook to
+register.

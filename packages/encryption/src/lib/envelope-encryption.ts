@@ -21,6 +21,14 @@ const WRAPPED_DEK_SIZE = 65;
 const WRAPPED_DEK_WITH_HMAC_SIZE = 97;
 const VERSION = 0x01;
 const DEK_SIZE = 32;
+
+// Wrapping-format versions (spec 6.15 / REQ-32). A new version ships as SUPPORTED
+// (readable) before it becomes CURRENT (used for new wraps), so a rollback never
+// orphans files. Deprecated versions are refused on unwrap.
+export const CURRENT_DEK_VERSION = VERSION;
+export const SUPPORTED_DEK_VERSIONS: readonly number[] = [VERSION];
+export const DEPRECATED_DEK_VERSIONS: readonly number[] = [];
+
 const NONCE_SIZE = 12;
 const TIMESTAMP_SIZE = 4;
 const AUTH_TAG_SIZE = 16;
@@ -53,6 +61,16 @@ export class DekUnwrapError extends Error {
     super(message);
     this.name = 'DekUnwrapError';
   }
+}
+
+/** Reads the wrapping-format version byte from a wrapped DEK (0 if absent). */
+export function getWrappedDekVersion(wrappedDek: Uint8Array): number {
+  return wrappedDek[0] ?? 0;
+}
+
+/** True when the version is explicitly refused (too old / insecure). */
+export function isDekVersionDeprecated(version: number): boolean {
+  return DEPRECATED_DEK_VERSIONS.includes(version);
 }
 
 // --- Core functions ---
@@ -168,9 +186,17 @@ export function unwrapDek(
     throw new DekUnwrapError('CORRUPTED_DEK', `Invalid wrapped DEK length: expected ${WRAPPED_DEK_SIZE} or ${WRAPPED_DEK_WITH_HMAC_SIZE} bytes, got ${wrappedDek.length}`);
   }
 
-  if (wrappedDek[0] !== VERSION) {
-    console.warn(`[envelope-encryption] WRONG_KEK_VERSION: version ${wrappedDek[0]} at ${new Date().toISOString()}`);
-    throw new DekUnwrapError('WRONG_KEK_VERSION', `Unsupported wrapped DEK version: ${wrappedDek[0]}`);
+  const version = getWrappedDekVersion(wrappedDek);
+  if (isDekVersionDeprecated(version)) {
+    console.warn(`[envelope-encryption] DEPRECATED_DEK_VERSION: version ${version} at ${new Date().toISOString()}`);
+    throw new DekUnwrapError(
+      'WRONG_KEK_VERSION',
+      `Wrapped DEK version ${version} is deprecated; re-wrap this file to migrate`
+    );
+  }
+  if (!SUPPORTED_DEK_VERSIONS.includes(version)) {
+    console.warn(`[envelope-encryption] WRONG_KEK_VERSION: version ${version} at ${new Date().toISOString()}`);
+    throw new DekUnwrapError('WRONG_KEK_VERSION', `Unsupported wrapped DEK version: ${version}`);
   }
 
   // 2. ChaCha20-Poly1305 decryption

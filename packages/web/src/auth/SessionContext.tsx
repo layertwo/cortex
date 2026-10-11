@@ -19,6 +19,8 @@ import {
   bytesToString,
   bytesToBase64,
   base64ToBytes,
+  secureZeroize,
+  zeroizeKeys,
   type DerivedKeys,
 } from '@cortex/encryption';
 import {
@@ -294,6 +296,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       await updateVault(vaultId, { encryptedName, verifier: stringToBytes(verifierString) });
       saveVerifier(vaultId, verifierString);
       const recovery = generateRecoveryKey(master);
+      secureZeroize(master); // derived keys are held; the root secret is not
       await storeKeys(vaultId, keys);
       upsertVault({
         vaultId,
@@ -317,6 +320,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const salt = entry?.vaultSalt ?? (await getVaultSalt(vaultId));
       const master = await deriveVaultMasterKey(vaultPassword, salt);
       const keys = deriveKeys(master);
+      secureZeroize(master); // only the derived keys are needed past this point
       const verifier = verifierFor({ vaultId, verifier: entry?.verifier });
       // Missing verifier is a hard failure: unlocking without it would silently accept a
       // wrong password and store keys that decrypt nothing.
@@ -550,6 +554,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         patchEntry(vaultId, { rotationState: expectedState === 'IDLE' ? 'IDLE' : 'PAUSED' });
         setRotationInterrupted(expectedState !== 'IDLE');
         throw err;
+      } finally {
+        // Best-effort zeroization of the root secret(s); the derived working keys
+        // stay until the caller stores them.
+        secureZeroize(masterNew);
+        secureZeroize(inUse.master);
       }
     },
     [patchEntry],
@@ -570,6 +579,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const vault = await getVault(vaultId);
       const masterOld = await deriveVaultMasterKey(currentPassword, vault.vaultSalt);
       const keysOld = deriveKeys(masterOld);
+      secureZeroize(masterOld); // rotation only needs the derived old key set
       const verifier =
         (vault.verifier && bytesToString(vault.verifier)) ||
         vaults.find((v) => v.vaultId === vaultId)?.verifier ||
@@ -593,6 +603,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     ) => {
       const derived = keysFromPhrase(phrase);
       if (!derived) throw new Error(PHRASE_ERROR);
+      secureZeroize(derived.master); // only the derived keys are used below
       const known = listVaults();
       const vaultId = target?.vaultId ?? identifyVaultForPhrase(phrase, known.map((v) => v.vaultId));
       if (!vaultId) throw new Error(PHRASE_ERROR);
@@ -657,7 +668,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!verifier) throw new Error(DELETE_REFUSED);
       const salt = entry?.vaultSalt ?? (await getVaultSalt(vaultId));
       const keys = deriveKeys(await deriveVaultMasterKey(vaultPassword, salt));
-      if (!checkVerifier(verifier, keys.metadataEncryptionKey)) throw new Error(WRONG_VAULT_PASSWORD);
+      const passwordOk = checkVerifier(verifier, keys.metadataEncryptionKey);
+      zeroizeKeys(keys); // the check is the only use of these keys
+      if (!passwordOk) throw new Error(WRONG_VAULT_PASSWORD);
 
       let removed = 0;
       for (let calls = 1; ; calls++) {
