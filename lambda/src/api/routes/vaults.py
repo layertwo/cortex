@@ -18,7 +18,6 @@ import base64
 from fastapi import APIRouter, Depends, Query
 
 from src.api.routes.base_route import BaseRoute
-from src.api.services.rotation_abandon_service import RotationAbandonService
 from src.api.services.vault_deletion_service import VaultDeletionService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
@@ -190,20 +189,16 @@ class GetVaultRoute(BaseRoute):
 
 
 class UpdateVaultRotationRoute(BaseRoute):
-    """Handle rotation lock acquire/pause/release/abandon (conditional write)."""
+    """Handle rotation lock acquire/release (conditional write)."""
 
-    def __init__(
-        self, vault_service: VaultService, rotation_abandon_service: RotationAbandonService
-    ):
+    def __init__(self, vault_service: VaultService):
         """
         Initialize update vault rotation route.
 
         Args:
             vault_service: VaultService instance for dependency injection
-            rotation_abandon_service: RotationAbandonService for the ABANDON action
         """
         self.vault_service = vault_service
-        self.rotation_abandon_service = rotation_abandon_service
 
     def register(self, app: APIRouter) -> None:
         @app.post(
@@ -215,22 +210,23 @@ class UpdateVaultRotationRoute(BaseRoute):
             user_id: str = Depends(get_current_user),
         ):
             """
-            Acquire, pause, release, or abandon the vault password rotation lock.
+            Acquire or release the vault password rotation lock.
 
-            ACQUIRE may stage a new salt and verifier pair; RELEASE promotes a
-            staged pair and may store the re-encrypted name; ABANDON discards
-            a staged pair once nothing has been re-keyed under it.
+            ACQUIRE appends the new VMK envelope and bumps the version counters,
+            taking the lock; RELEASE only flips the lock to IDLE and may store the
+            re-encrypted name (the versions were already bumped by ACQUIRE).
 
             Path Parameters:
                 vault_id: Vault identifier
 
             Returns:
-                The resulting rotation state, lock timestamp, and staged pair (if any).
+                The resulting rotation state, lock timestamp, and version counters.
 
             Raises:
-                BadRequestError: ABANDON without expectedState PAUSED (400)
-                ConflictError: If the conditional write fails, or (ABANDON
-                    only) a row was already re-keyed under the staged pair (409)
+                BadRequestError: ACQUIRE without expectedEnvelopeVersion, newVmkVersion
+                    or wrappedNewVmk, or newVmkVersion not the current version plus one (400)
+                NotFoundError: Unknown or unowned vault (404)
+                ConflictError: The conditional write fails (409)
             """
             logger.info(
                 "Updating vault rotation state",
@@ -238,27 +234,22 @@ class UpdateVaultRotationRoute(BaseRoute):
                 action=request.action,
             )
 
-            if request.action == "ABANDON":
-                if request.expected_state != "PAUSED":
-                    raise BadRequestError("ABANDON requires expectedState PAUSED")
-                result = self.rotation_abandon_service.abandon(user_id=user_id, vault_id=vault_id)
-            else:
-                result = self.vault_service.update_vault_rotation(
-                    user_id=user_id,
-                    vault_id=vault_id,
-                    action=request.action,
-                    expected_state=request.expected_state,
-                    kek_version=request.kek_version,
-                    new_verifier=to_bytes(request.new_verifier),
-                    new_vault_salt=to_bytes(request.new_vault_salt),
-                    new_encrypted_name=to_bytes(request.new_encrypted_name),
-                )
+            result = self.vault_service.update_vault_rotation(
+                user_id=user_id,
+                vault_id=vault_id,
+                action=request.action,
+                expected_state=request.expected_state,
+                expected_envelope_version=request.expected_envelope_version,
+                new_vmk_version=request.new_vmk_version,
+                wrapped_new_vmk=to_bytes(request.wrapped_new_vmk),
+                new_encrypted_name=to_bytes(request.new_encrypted_name),
+            )
 
             return UpdateVaultRotationResponseContent(
                 rotation_state=result["rotation_state"],
                 rotation_locked_at=result.get("rotation_locked_at"),
-                pending_vault_salt=_encode_binary(result.get("pending_vault_salt")),
-                pending_verifier=_encode_binary(result.get("pending_verifier")),
+                current_vmk_version=result["current_vmk_version"],
+                envelope_version=result["envelope_version"],
             )
 
 

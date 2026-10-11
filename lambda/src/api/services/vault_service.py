@@ -482,14 +482,13 @@ class VaultService:
                 ),
                 ConditionExpression=(
                     "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND "
-                    "(attribute_not_exists(rotation_state) OR rotation_state IN (:idle, :paused) "
+                    "(attribute_not_exists(rotation_state) OR rotation_state = :idle "
                     "OR (rotation_state = :in_progress AND rotation_locked_at < :stale))"
                 ),
                 ExpressionAttributeValues={
                     ":deleting": "DELETING",
                     ":now": now,
                     ":idle": "IDLE",
-                    ":paused": "PAUSED",
                     ":in_progress": "IN_PROGRESS",
                     ":stale": now - STALE_LOCK_SECONDS,
                 },
@@ -558,55 +557,49 @@ class VaultService:
         vault_id: str,
         action: str,
         expected_state: str,
-        kek_version: Optional[int] = None,
-        new_verifier: Optional[bytes] = None,
-        new_vault_salt: Optional[bytes] = None,
+        expected_envelope_version: Optional[int] = None,
+        new_vmk_version: Optional[int] = None,
+        wrapped_new_vmk: Optional[bytes] = None,
         new_encrypted_name: Optional[bytes] = None,
     ) -> Dict:
         """
-        Drive the vault password rotation state machine with one conditional write.
+        Drive the vault rotation lock over VMK envelopes with one conditional write.
 
-        ACQUIRE: -> IN_PROGRESS (steals a lock older than 7 days). When
-        new_vault_salt and new_verifier are both given they are staged as a
-        pair unless a pair is already staged; the staged pair is returned.
-        PAUSE: IN_PROGRESS -> PAUSED, keeping the staged pair.
-        RELEASE: -> IDLE after a consistent read; validates kek_version
-        against the row and promotes the staged pair (or writes new_verifier
-        when nothing is staged) in the same guarded write.
+        ACQUIRE: append {vmk_version, wrapped_vmk, created_at} to vmk_envelopes and
+        bump current_vmk_version/envelope_version, then take the lock (-> IN_PROGRESS;
+        a lock older than 7 days may be stolen). newVmkVersion must be the current
+        version plus one and expectedEnvelopeVersion guards the append. RELEASE:
+        -> IDLE only (the versions were already bumped by ACQUIRE), optionally
+        storing the re-encrypted name.
 
         Returns:
             Dictionary with rotation_state, rotation_locked_at,
-            pending_vault_salt and pending_verifier (bytes or None).
+            current_vmk_version and envelope_version.
 
         Raises:
-            BadRequestError: Invalid argument combination for the action.
-            NotFoundError: RELEASE on a vault that does not exist.
-            ConflictError: The condition failed, or RELEASE conflicts with
-                the staged pair or the stored kek_version.
+            BadRequestError: Unknown action, or ACQUIRE missing its envelope inputs
+                or not advancing the VMK version by one.
+            NotFoundError: The vault does not exist.
+            ConflictError: The condition failed, the vault is being deleted, or a
+                live rotation holds the lock.
         """
         key = {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
         now = int(time.time())
 
         if action == "ACQUIRE":
             update_expr, condition, values = self._acquire_expression(
-                expected_state, now, new_vault_salt, new_verifier
-            )
-        elif action == "PAUSE":
-            if expected_state != "IN_PROGRESS":
-                raise BadRequestError("PAUSE requires expectedState IN_PROGRESS")
-            update_expr = "SET rotation_state = :paused, updated_at = :now"
-            condition = "attribute_not_exists(deletion_state) AND rotation_state = :expected"
-            values = {":paused": "PAUSED", ":expected": expected_state, ":now": now}
-        else:
-            update_expr, condition, values = self._prepare_release(
                 key,
-                expected_state,
+                expected_envelope_version,
+                new_vmk_version,
+                wrapped_new_vmk,
                 now,
-                kek_version,
-                new_verifier,
-                new_vault_salt,
-                new_encrypted_name,
             )
+        elif action == "RELEASE":
+            update_expr, condition, values = self._release_expression(
+                expected_state, new_encrypted_name, now
+            )
+        else:
+            raise BadRequestError(f"Unknown rotation action: {action}")
 
         try:
             resp = self.vaults_table.update_item(
@@ -618,79 +611,6 @@ class VaultService:
             )
         except ClientError as e:
             self._rotation_conflict(key, vault_id, action, e)
-
-        return self._rotation_result(resp)
-
-    def abandon_rotation(
-        self,
-        user_id: str,
-        vault_id: str,
-        expected_generation: int,
-        expected_locked_at: Optional[int],
-    ) -> Dict:
-        """
-        Discard a staged rotation pair when nothing has been re-keyed under it.
-
-        Not reachable through update_vault_rotation's dispatcher: the route
-        sends ABANDON to RotationAbandonService, which runs the re-keyed-row
-        safety check (spec 3) before calling this write (spec 4).
-
-        expected_generation pins the rotation_generation the pre-flight read
-        (0: the attribute was absent, a row never through a new-code ACQUIRE).
-        expected_locked_at additionally pins rotation_locked_at when one was
-        read (None: none was). ACQUIRE is the only writer of both, so any
-        ACQUIRE between the read and this write fails the condition; the
-        timestamp pin is kept because an old-code ACQUIRE during a rollout
-        refreshes it without bumping the counter. Both are required so a
-        caller cannot silently skip a pin.
-
-        Returns:
-            Dictionary with rotation_state ("IDLE"), rotation_locked_at
-            (None), pending_vault_salt (None), pending_verifier (None).
-
-        Raises:
-            NotFoundError: If the vault is missing or unowned.
-            ConflictError: If the vault is being deleted, the row is
-                neither PAUSED nor a stale IN_PROGRESS lock, or either
-                pin no longer matches.
-        """
-        key = {"PK": f"USER#{user_id}", "SK": f"VAULT#{vault_id}"}
-        now = int(time.time())
-
-        condition = (
-            "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
-            "rotation_state = :paused OR "
-            "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
-        )
-        values: Dict[str, Any] = {
-            ":idle": "IDLE",
-            ":now": now,
-            ":paused": "PAUSED",
-            ":in_progress": "IN_PROGRESS",
-            ":stale": now - STALE_LOCK_SECONDS,
-        }
-        if expected_generation > 0:
-            condition += " AND rotation_generation = :gen"
-            values[":gen"] = expected_generation
-        else:
-            condition += " AND attribute_not_exists(rotation_generation)"
-        if expected_locked_at is not None:
-            condition += " AND rotation_locked_at = :seen"
-            values[":seen"] = expected_locked_at
-
-        try:
-            resp = self.vaults_table.update_item(
-                Key=key,
-                UpdateExpression=(
-                    "SET rotation_state = :idle, updated_at = :now"
-                    " REMOVE pending_vault_salt, pending_verifier, rotation_locked_at"
-                ),
-                ConditionExpression=condition,
-                ExpressionAttributeValues=values,
-                ReturnValues="ALL_NEW",
-            )
-        except ClientError as e:
-            self._rotation_conflict(key, vault_id, "ABANDON", e)
 
         return self._rotation_result(resp)
 
@@ -731,105 +651,81 @@ class VaultService:
             "rotation_locked_at": (
                 int(attrs["rotation_locked_at"]) if attrs.get("rotation_locked_at") else None
             ),
-            "pending_vault_salt": to_bytes(attrs.get("pending_vault_salt")),
-            "pending_verifier": to_bytes(attrs.get("pending_verifier")),
+            "current_vmk_version": int(attrs.get("current_vmk_version", 0)),
+            "envelope_version": int(attrs.get("envelope_version", 0)),
         }
 
-    @staticmethod
     def _acquire_expression(
-        expected_state: str,
-        now: int,
-        new_vault_salt: Optional[bytes],
-        new_verifier: Optional[bytes],
-    ) -> tuple[str, str, dict]:
-        """Build the ACQUIRE write; stages the salt/verifier pair only if none is staged."""
-        if (new_vault_salt is None) != (new_verifier is None):
-            raise BadRequestError("newVaultSalt and newVerifier must be supplied together")
-        if new_vault_salt is not None and len(new_vault_salt) != 16:
-            raise BadRequestError("Vault salt must be exactly 16 bytes")
-
-        update_expr = (
-            "SET rotation_state = :in_progress, rotation_locked_at = :now, updated_at = :now"
-        )
-        condition = (
-            "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
-            "attribute_not_exists(rotation_state) OR rotation_state = :expected OR "
-            "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
-        )
-        values: dict = {
-            ":in_progress": "IN_PROGRESS",
-            ":expected": expected_state,
-            ":stale": now - STALE_LOCK_SECONDS,
-            ":now": now,
-        }
-        if new_vault_salt is not None:
-            update_expr += (
-                ", pending_vault_salt = if_not_exists(pending_vault_salt, :salt)"
-                ", pending_verifier = if_not_exists(pending_verifier, :pv)"
-            )
-            values[":salt"] = new_vault_salt
-            values[":pv"] = new_verifier
-        update_expr += " ADD rotation_generation :one"
-        values[":one"] = 1
-        return update_expr, condition, values
-
-    def _prepare_release(
         self,
         key: dict,
-        expected_state: str,
+        expected_envelope_version: Optional[int],
+        new_vmk_version: Optional[int],
+        wrapped_new_vmk: Optional[bytes],
         now: int,
-        kek_version: Optional[int],
-        new_verifier: Optional[bytes],
-        new_vault_salt: Optional[bytes],
-        new_encrypted_name: Optional[bytes],
     ) -> tuple[str, str, dict]:
-        """Read the row, validate the request against it, and build the guarded RELEASE write."""
-        if new_vault_salt is not None:
-            raise BadRequestError("newVaultSalt is staged on ACQUIRE and not accepted on RELEASE")
+        """Read, validate the next VMK version, and build the guarded ACQUIRE write."""
+        if expected_envelope_version is None:
+            raise BadRequestError("ACQUIRE requires expectedEnvelopeVersion")
+        if new_vmk_version is None or wrapped_new_vmk is None:
+            raise BadRequestError("ACQUIRE requires newVmkVersion and wrappedNewVmk")
 
         item = self._read(key, consistent=True)
         if not item:
             raise NotFoundError("Vault not found")
-        pending_salt = item.get("pending_vault_salt")
-        pending_verifier = item.get("pending_verifier")
-        staged = pending_salt is not None
-        current_kek = int(item.get("kek_version", 1))
+        if item.get("deletion_state"):
+            raise ConflictError("Vault is being deleted")
 
-        if staged and (kek_version is None or new_verifier is not None):
-            raise ConflictError(
-                "A rotation with a new salt is staged; commit it with kekVersion only, or PAUSE"
-            )
-        if kek_version is not None and kek_version != current_kek + 1:
-            raise ConflictError("kekVersion must be the current version plus one")
+        current = int(item.get("current_vmk_version", 0))
+        if new_vmk_version != current + 1:
+            raise BadRequestError("newVmkVersion must be the current version plus one")
 
+        envelopes = [
+            {
+                "vmk_version": int(env["vmk_version"]),
+                "wrapped_vmk": to_bytes(env.get("wrapped_vmk")),
+                "created_at": int(env["created_at"]),
+            }
+            for env in item.get("vmk_envelopes") or []
+        ]
+        envelopes.append(
+            {
+                "vmk_version": new_vmk_version,
+                "wrapped_vmk": wrapped_new_vmk,
+                "created_at": now,
+            }
+        )
+
+        update_expr = (
+            "SET rotation_state = :in_progress, rotation_locked_at = :now, updated_at = :now, "
+            "current_vmk_version = :nv, envelope_version = :nev, vmk_envelopes = :env"
+        )
+        condition = (
+            "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
+            "attribute_not_exists(rotation_state) OR rotation_state = :idle OR "
+            "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
+            " AND envelope_version = :expected_env"
+        )
+        values: dict = {
+            ":idle": "IDLE",
+            ":in_progress": "IN_PROGRESS",
+            ":stale": now - STALE_LOCK_SECONDS,
+            ":now": now,
+            ":nv": new_vmk_version,
+            ":nev": expected_envelope_version + 1,
+            ":env": envelopes,
+            ":expected_env": expected_envelope_version,
+        }
+        return update_expr, condition, values
+
+    @staticmethod
+    def _release_expression(
+        expected_state: str, new_encrypted_name: Optional[bytes], now: int
+    ) -> tuple[str, str, dict]:
+        """Build the guarded RELEASE write: flip to IDLE, optionally store the name."""
         update_expr = "SET rotation_state = :idle, updated_at = :now"
-        condition = "attribute_not_exists(deletion_state) AND rotation_state = :expected"
         values: dict = {":idle": "IDLE", ":expected": expected_state, ":now": now}
-        if kek_version is not None:
-            update_expr += ", kek_version = :kv"
-            values[":kv"] = kek_version
         if new_encrypted_name is not None:
             update_expr += ", encrypted_name = :name"
             values[":name"] = new_encrypted_name
-        if staged:
-            update_expr += (
-                ", vault_salt = :pending_salt, verifier = :pending_verifier"
-                " REMOVE pending_vault_salt, pending_verifier"
-            )
-            values[":pending_salt"] = pending_salt
-            values[":pending_verifier"] = pending_verifier
-            condition += (
-                " AND pending_vault_salt = :pending_salt AND pending_verifier = :pending_verifier"
-            )
-        else:
-            if new_verifier is not None:
-                update_expr += ", verifier = :ver"
-                values[":ver"] = new_verifier
-            condition += " AND attribute_not_exists(pending_vault_salt)"
-        if kek_version is not None:
-            if "kek_version" in item:
-                condition += " AND kek_version = :prev"
-                values[":prev"] = current_kek
-            else:
-                condition += " AND attribute_not_exists(kek_version)"
+        condition = "attribute_not_exists(deletion_state) AND rotation_state = :expected"
         return update_expr, condition, values

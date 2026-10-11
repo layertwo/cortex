@@ -823,10 +823,25 @@ class TestVaultService:
                     ":deleting": "DELETING",
                     ":now": 1_700_000_000,
                     ":idle": "IDLE",
-                    ":paused": "PAUSED",
                     ":in_progress": "IN_PROGRESS",
                     ":stale": 1_700_000_000 - 7 * 24 * 3600,
                 },
+            },
+        )
+
+        assert vault_service.mark_deleting(user_id="u1", vault_id="v1") is None
+
+    def test_mark_deleting_allows_idle_after_vmk(self, vault_service, dynamodb_stubber):
+        """An IDLE vault (a finished VMK rotation) is deletable: no PAUSED branch remains."""
+        dynamodb_stubber.add_response(
+            "update_item",
+            {},
+            {
+                "TableName": "test-vaults-table",
+                "Key": {"PK": "USER#u1", "SK": "VAULT#v1"},
+                "UpdateExpression": MARK_UPDATE_EXPRESSION,
+                "ConditionExpression": MARK_CONDITION_EXPRESSION,
+                "ExpressionAttributeValues": ANY,
             },
         )
 
@@ -1122,32 +1137,49 @@ ROTATION_KEY = {"PK": "USER#u1", "SK": "VAULT#v1"}
 NOW = 1_700_000_000
 LOCKED_AT = 1_699_999_000
 STALE = NOW - 7 * 24 * 3600
-ACQUIRE_UPDATE = "SET rotation_state = :in_progress, rotation_locked_at = :now, updated_at = :now"
-ACQUIRE_STAGING = (
-    ", pending_vault_salt = if_not_exists(pending_vault_salt, :salt)"
-    ", pending_verifier = if_not_exists(pending_verifier, :pv)"
+
+ACQUIRE_UPDATE = (
+    "SET rotation_state = :in_progress, rotation_locked_at = :now, updated_at = :now, "
+    "current_vmk_version = :nv, envelope_version = :nev, vmk_envelopes = :env"
 )
-ACQUIRE_ADD = " ADD rotation_generation :one"
 ACQUIRE_CONDITION = (
     "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
-    "attribute_not_exists(rotation_state) OR rotation_state = :expected OR "
+    "attribute_not_exists(rotation_state) OR rotation_state = :idle OR "
     "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
+    " AND envelope_version = :expected_env"
 )
-STATE_CONDITION = "attribute_not_exists(deletion_state) AND rotation_state = :expected"
 RELEASE_UPDATE = "SET rotation_state = :idle, updated_at = :now"
+RELEASE_CONDITION = "attribute_not_exists(deletion_state) AND rotation_state = :expected"
+
+WRAPPED = b"\x01" * 61
 
 
 def _vault_row(**extra):
-    """get_item response for u1/v1 mid-rotation; no kek_version unless given (legacy row)."""
+    """get_item response for u1/v1 holding one VMK envelope at version 1."""
     row = vault_row(
-        "u1", "v1", rotation_state={"S": "IN_PROGRESS"}, rotation_locked_at={"N": str(LOCKED_AT)}
+        "u1",
+        "v1",
+        rotation_state={"S": "IDLE"},
+        current_vmk_version={"N": "1"},
+        envelope_version={"N": "1"},
+        vmk_envelopes={
+            "L": [
+                {
+                    "M": {
+                        "vmk_version": {"N": "1"},
+                        "wrapped_vmk": {"B": WRAPPED},
+                        "created_at": {"N": "1"},
+                    }
+                }
+            ]
+        },
     )
     row.update(extra)
     return {"Item": row}
 
 
 class TestVaultRotation:
-    """update_vault_rotation: ACQUIRE staging, PAUSE, RELEASE (spec 4.3)."""
+    """update_vault_rotation: ACQUIRE appends an envelope and bumps; RELEASE flips IDLE."""
 
     @pytest.fixture
     def frozen_time(self, monkeypatch):
@@ -1159,220 +1191,93 @@ class TestVaultRotation:
             user_id="u1", vault_id="v1", action=action, expected_state=expected_state, **kwargs
         )
 
-    def _stub_release_read(self, dynamodb_stubber, **extra):
+    def _stub_read(self, dynamodb_stubber, **extra):
         dynamodb_stubber.add_response(
             "get_item",
             _vault_row(**extra),
             {"TableName": "test-vaults-table", "Key": ROTATION_KEY, "ConsistentRead": True},
         )
 
-    # ACQUIRE
-
-    def test_acquire_without_pair_pins_expressions(
+    def test_acquire_appends_envelope_and_bumps_version(
         self, vault_service, dynamodb_stubber, frozen_time
     ):
+        wrapped = secrets.token_bytes(61)
+        self._stub_read(dynamodb_stubber)
         dynamodb_stubber.add_response(
             "update_item",
             {
                 "Attributes": {
                     "rotation_state": {"S": "IN_PROGRESS"},
                     "rotation_locked_at": {"N": str(NOW)},
+                    "current_vmk_version": {"N": "2"},
+                    "envelope_version": {"N": "2"},
                 }
             },
             {
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
-                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_ADD,
+                "UpdateExpression": ACQUIRE_UPDATE,
                 "ConditionExpression": ACQUIRE_CONDITION,
                 "ExpressionAttributeValues": {
+                    ":idle": "IDLE",
                     ":in_progress": "IN_PROGRESS",
-                    ":expected": "IDLE",
                     ":stale": STALE,
                     ":now": NOW,
-                    ":one": 1,
+                    ":nv": 2,
+                    ":nev": 2,
+                    ":env": [
+                        {"vmk_version": 1, "wrapped_vmk": WRAPPED, "created_at": 1},
+                        {"vmk_version": 2, "wrapped_vmk": wrapped, "created_at": NOW},
+                    ],
+                    ":expected_env": 1,
                 },
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        result = self._rotate(vault_service, "ACQUIRE", "IDLE")
-        assert result == {
-            "rotation_state": "IN_PROGRESS",
-            "rotation_locked_at": NOW,
-            "pending_vault_salt": None,
-            "pending_verifier": None,
-        }
-
-    def test_acquire_stages_salt_and_verifier(self, vault_service, dynamodb_stubber, frozen_time):
-        salt = secrets.token_bytes(16)
-        verifier = b"v" * 32
-        dynamodb_stubber.add_response(
-            "update_item",
-            {
-                "Attributes": {
-                    "rotation_state": {"S": "IN_PROGRESS"},
-                    "rotation_locked_at": {"N": str(NOW)},
-                    "pending_vault_salt": {"B": salt},
-                    "pending_verifier": {"B": verifier},
-                }
-            },
-            {
-                "TableName": "test-vaults-table",
-                "Key": ROTATION_KEY,
-                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_STAGING + ACQUIRE_ADD,
-                "ConditionExpression": ACQUIRE_CONDITION,
-                "ExpressionAttributeValues": {
-                    ":in_progress": "IN_PROGRESS",
-                    ":expected": "IDLE",
-                    ":stale": STALE,
-                    ":now": NOW,
-                    ":salt": salt,
-                    ":pv": verifier,
-                    ":one": 1,
-                },
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        result = self._rotate(
-            vault_service, "ACQUIRE", "IDLE", new_verifier=verifier, new_vault_salt=salt
-        )
-        assert result["rotation_state"] == "IN_PROGRESS"
-        assert result["pending_vault_salt"] == salt
-        assert result["pending_verifier"] == verifier
-        assert type(result["pending_vault_salt"]) is bytes
-        assert type(result["pending_verifier"]) is bytes
-
-    def test_reacquire_returns_staged_pair_not_the_request(self, vault_service, dynamodb_stubber):
-        first_salt, first_verifier = secrets.token_bytes(16), b"first-verifier"
-        second_salt, second_verifier = secrets.token_bytes(16), b"second-verifier"
-        dynamodb_stubber.add_response(
-            "update_item",
-            {
-                "Attributes": {
-                    "rotation_state": {"S": "IN_PROGRESS"},
-                    "rotation_locked_at": {"N": "1700000500"},
-                    "pending_vault_salt": {"B": first_salt},
-                    "pending_verifier": {"B": first_verifier},
-                }
-            },
-            {
-                "TableName": "test-vaults-table",
-                "Key": ROTATION_KEY,
-                "UpdateExpression": ACQUIRE_UPDATE + ACQUIRE_STAGING + ACQUIRE_ADD,
-                "ConditionExpression": ACQUIRE_CONDITION,
-                "ExpressionAttributeValues": ANY,
                 "ReturnValues": "ALL_NEW",
             },
         )
         result = self._rotate(
             vault_service,
             "ACQUIRE",
-            "IN_PROGRESS",
-            new_verifier=second_verifier,
-            new_vault_salt=second_salt,
+            "IDLE",
+            expected_envelope_version=1,
+            new_vmk_version=2,
+            wrapped_new_vmk=wrapped,
         )
-        assert result["pending_vault_salt"] == first_salt
-        assert result["pending_verifier"] == first_verifier
-
-    @pytest.mark.parametrize("kwargs", [{"new_vault_salt": b"s" * 16}, {"new_verifier": b"v" * 32}])
-    def test_acquire_with_half_a_pair_is_bad_request(self, vault_service, dynamodb_stubber, kwargs):
-        with pytest.raises(BadRequestError, match="together"):
-            self._rotate(vault_service, "ACQUIRE", "IDLE", **kwargs)
-
-    def test_acquire_rejects_salt_not_16_bytes(self, vault_service, dynamodb_stubber):
-        with pytest.raises(BadRequestError, match="Vault salt must be exactly 16 bytes"):
-            self._rotate(
-                vault_service, "ACQUIRE", "IDLE", new_verifier=b"v" * 32, new_vault_salt=b"s" * 15
-            )
-
-    def test_acquire_conflict_raises_conflict_error(self, vault_service, dynamodb_stubber):
-        """A row that exists but fails the state check is a real conflict, not a 404."""
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
-        )
-        with pytest.raises(ConflictError, match="already in progress"):
-            self._rotate(vault_service, "ACQUIRE", "IDLE")
-
-    def test_acquire_unknown_vault_is_not_found(self, vault_service, dynamodb_stubber):
-        """A retried ACQUIRE against a vault deleted from another device 404s, not a partial upsert."""
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item", {}, {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
-        )
-        with pytest.raises(NotFoundError, match="Vault not found"):
-            self._rotate(vault_service, "ACQUIRE", "IDLE")
-
-    def test_rotation_conflict_on_deleting_vault_says_being_deleted(
-        self, vault_service, dynamodb_stubber
-    ):
-        """The disambiguating read finds deletion_state: the message names it, not the lock."""
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item",
-            {
-                "Item": {
-                    "PK": {"S": "USER#u1"},
-                    "SK": {"S": "VAULT#v1"},
-                    "deletion_state": {"S": "DELETING"},
-                }
-            },
-            {"TableName": "test-vaults-table", "Key": ROTATION_KEY},
-        )
-        with pytest.raises(ConflictError, match="Vault is being deleted"):
-            self._rotate(vault_service, "ACQUIRE", "IDLE")
-
-    # PAUSE
-
-    def test_pause_pins_expressions_and_keeps_staged_pair(
-        self, vault_service, dynamodb_stubber, frozen_time
-    ):
-        salt = secrets.token_bytes(16)
-        dynamodb_stubber.add_response(
-            "update_item",
-            {
-                "Attributes": {
-                    "rotation_state": {"S": "PAUSED"},
-                    "rotation_locked_at": {"N": str(LOCKED_AT)},
-                    "pending_vault_salt": {"B": salt},
-                    "pending_verifier": {"B": b"pv"},
-                }
-            },
-            {
-                "TableName": "test-vaults-table",
-                "Key": ROTATION_KEY,
-                "UpdateExpression": "SET rotation_state = :paused, updated_at = :now",
-                "ConditionExpression": STATE_CONDITION,
-                "ExpressionAttributeValues": {
-                    ":paused": "PAUSED",
-                    ":expected": "IN_PROGRESS",
-                    ":now": NOW,
-                },
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        result = self._rotate(vault_service, "PAUSE", "IN_PROGRESS")
         assert result == {
-            "rotation_state": "PAUSED",
-            "rotation_locked_at": LOCKED_AT,
-            "pending_vault_salt": salt,
-            "pending_verifier": b"pv",
+            "rotation_state": "IN_PROGRESS",
+            "rotation_locked_at": NOW,
+            "current_vmk_version": 2,
+            "envelope_version": 2,
         }
 
-    @pytest.mark.parametrize("expected_state", ["IDLE", "PAUSED"])
-    def test_pause_requires_expected_in_progress(
-        self, vault_service, dynamodb_stubber, expected_state
-    ):
-        with pytest.raises(BadRequestError, match="IN_PROGRESS"):
-            self._rotate(vault_service, "PAUSE", expected_state)
+    def test_acquire_requires_next_version(self, vault_service, dynamodb_stubber):
+        self._stub_read(dynamodb_stubber, current_vmk_version={"N": "2"})
+        with pytest.raises(BadRequestError, match="current version plus one"):
+            self._rotate(
+                vault_service,
+                "ACQUIRE",
+                "IDLE",
+                expected_envelope_version=1,
+                new_vmk_version=2,
+                wrapped_new_vmk=WRAPPED,
+            )
 
-    def test_pause_conflict_raises_conflict_error(self, vault_service, dynamodb_stubber):
-        """A row that exists but fails the state check is a real conflict, not a 404."""
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"expected_envelope_version": 1, "wrapped_new_vmk": WRAPPED},
+            {"expected_envelope_version": 1, "new_vmk_version": 2},
+            {"new_vmk_version": 2, "wrapped_new_vmk": WRAPPED},
+        ],
+    )
+    def test_acquire_requires_version_guard_and_envelope_payload(
+        self, vault_service, dynamodb_stubber, kwargs
+    ):
+        # No read is stubbed: the request must be rejected before any I/O.
+        with pytest.raises(BadRequestError):
+            self._rotate(vault_service, "ACQUIRE", "IDLE", **kwargs)
+
+    def test_acquire_conflicts_on_stale_envelope_version(self, vault_service, dynamodb_stubber):
+        self._stub_read(dynamodb_stubber)
         dynamodb_stubber.add_client_error(
             "update_item", service_error_code="ConditionalCheckFailedException"
         )
@@ -1380,113 +1285,84 @@ class TestVaultRotation:
             "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
         )
         with pytest.raises(ConflictError, match="already in progress"):
-            self._rotate(vault_service, "PAUSE", "IN_PROGRESS")
+            self._rotate(
+                vault_service,
+                "ACQUIRE",
+                "IDLE",
+                expected_envelope_version=0,
+                new_vmk_version=2,
+                wrapped_new_vmk=WRAPPED,
+            )
 
-    # RELEASE
-
-    def test_release_promotes_staged_pair(self, vault_service, dynamodb_stubber, frozen_time):
-        salt, verifier, name = secrets.token_bytes(16), b"staged-verifier", b"new-name"
-        self._stub_release_read(
-            dynamodb_stubber,
-            kek_version={"N": "1"},
-            pending_vault_salt={"B": salt},
-            pending_verifier={"B": verifier},
+    def test_acquire_missing_vault_is_not_found(self, vault_service, dynamodb_stubber):
+        dynamodb_stubber.add_response(
+            "get_item",
+            {},
+            {"TableName": "test-vaults-table", "Key": ROTATION_KEY, "ConsistentRead": True},
         )
+        with pytest.raises(NotFoundError, match="Vault not found"):
+            self._rotate(
+                vault_service,
+                "ACQUIRE",
+                "IDLE",
+                expected_envelope_version=1,
+                new_vmk_version=2,
+                wrapped_new_vmk=WRAPPED,
+            )
+
+    def test_release_flips_idle_and_stores_name_only(
+        self, vault_service, dynamodb_stubber, frozen_time
+    ):
+        name = secrets.token_bytes(24)
         dynamodb_stubber.add_response(
             "update_item",
             {
                 "Attributes": {
                     "rotation_state": {"S": "IDLE"},
                     "rotation_locked_at": {"N": str(LOCKED_AT)},
-                    "kek_version": {"N": "2"},
-                    "vault_salt": {"B": salt},
-                    "verifier": {"B": verifier},
+                    "current_vmk_version": {"N": "2"},
+                    "envelope_version": {"N": "2"},
                 }
             },
             {
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
-                "UpdateExpression": (
-                    RELEASE_UPDATE + ", kek_version = :kv, encrypted_name = :name"
-                    ", vault_salt = :pending_salt, verifier = :pending_verifier"
-                    " REMOVE pending_vault_salt, pending_verifier"
-                ),
-                "ConditionExpression": (
-                    STATE_CONDITION + " AND pending_vault_salt = :pending_salt"
-                    " AND pending_verifier = :pending_verifier AND kek_version = :prev"
-                ),
+                "UpdateExpression": RELEASE_UPDATE + ", encrypted_name = :name",
+                "ConditionExpression": RELEASE_CONDITION,
                 "ExpressionAttributeValues": {
                     ":idle": "IDLE",
                     ":expected": "IN_PROGRESS",
                     ":now": NOW,
-                    ":kv": 2,
                     ":name": name,
-                    ":pending_salt": salt,
-                    ":pending_verifier": verifier,
-                    ":prev": 1,
                 },
                 "ReturnValues": "ALL_NEW",
             },
         )
-        result = self._rotate(
-            vault_service, "RELEASE", "IN_PROGRESS", kek_version=2, new_encrypted_name=name
-        )
+        result = self._rotate(vault_service, "RELEASE", "IN_PROGRESS", new_encrypted_name=name)
         assert result == {
             "rotation_state": "IDLE",
             "rotation_locked_at": LOCKED_AT,
-            "pending_vault_salt": None,
-            "pending_verifier": None,
+            "current_vmk_version": 2,
+            "envelope_version": 2,
         }
 
-    def test_release_with_nothing_staged_writes_new_verifier(
+    def test_release_without_name_only_flips_state(
         self, vault_service, dynamodb_stubber, frozen_time
     ):
-        self._stub_release_read(dynamodb_stubber, kek_version={"N": "1"})
         dynamodb_stubber.add_response(
             "update_item",
-            {"Attributes": {"rotation_state": {"S": "IDLE"}, "kek_version": {"N": "2"}}},
             {
-                "TableName": "test-vaults-table",
-                "Key": ROTATION_KEY,
-                "UpdateExpression": RELEASE_UPDATE + ", kek_version = :kv, verifier = :ver",
-                "ConditionExpression": (
-                    STATE_CONDITION
-                    + " AND attribute_not_exists(pending_vault_salt) AND kek_version = :prev"
-                ),
-                "ExpressionAttributeValues": {
-                    ":idle": "IDLE",
-                    ":expected": "IN_PROGRESS",
-                    ":now": NOW,
-                    ":kv": 2,
-                    ":ver": b"fresh-verifier",
-                    ":prev": 1,
-                },
-                "ReturnValues": "ALL_NEW",
+                "Attributes": {
+                    "rotation_state": {"S": "IDLE"},
+                    "current_vmk_version": {"N": "2"},
+                    "envelope_version": {"N": "2"},
+                }
             },
-        )
-        result = self._rotate(
-            vault_service, "RELEASE", "IN_PROGRESS", kek_version=2, new_verifier=b"fresh-verifier"
-        )
-        assert result == {
-            "rotation_state": "IDLE",
-            "rotation_locked_at": None,
-            "pending_vault_salt": None,
-            "pending_verifier": None,
-        }
-
-    def test_release_without_kek_version_and_nothing_staged(
-        self, vault_service, dynamodb_stubber, frozen_time
-    ):
-        self._stub_release_read(dynamodb_stubber)
-        dynamodb_stubber.add_response(
-            "update_item",
-            {"Attributes": {"rotation_state": {"S": "IDLE"}}},
             {
                 "TableName": "test-vaults-table",
                 "Key": ROTATION_KEY,
                 "UpdateExpression": RELEASE_UPDATE,
-                "ConditionExpression": STATE_CONDITION
-                + " AND attribute_not_exists(pending_vault_salt)",
+                "ConditionExpression": RELEASE_CONDITION,
                 "ExpressionAttributeValues": {
                     ":idle": "IDLE",
                     ":expected": "IN_PROGRESS",
@@ -1497,70 +1373,10 @@ class TestVaultRotation:
         )
         result = self._rotate(vault_service, "RELEASE", "IN_PROGRESS")
         assert result["rotation_state"] == "IDLE"
-
-    def test_release_on_legacy_row_guards_missing_kek_version(
-        self, vault_service, dynamodb_stubber
-    ):
-        self._stub_release_read(dynamodb_stubber)
-        dynamodb_stubber.add_response(
-            "update_item",
-            {"Attributes": {"rotation_state": {"S": "IDLE"}, "kek_version": {"N": "2"}}},
-            {
-                "TableName": "test-vaults-table",
-                "Key": ROTATION_KEY,
-                "UpdateExpression": RELEASE_UPDATE + ", kek_version = :kv",
-                "ConditionExpression": (
-                    STATE_CONDITION + " AND attribute_not_exists(pending_vault_salt)"
-                    " AND attribute_not_exists(kek_version)"
-                ),
-                "ExpressionAttributeValues": ANY,
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        result = self._rotate(vault_service, "RELEASE", "IN_PROGRESS", kek_version=2)
-        assert result["rotation_state"] == "IDLE"
-
-    def test_release_rejects_kek_version_not_current_plus_one(
-        self, vault_service, dynamodb_stubber
-    ):
-        self._stub_release_read(dynamodb_stubber, kek_version={"N": "3"})
-        with pytest.raises(ConflictError, match="kekVersion must be the current version plus one"):
-            self._rotate(vault_service, "RELEASE", "IN_PROGRESS", kek_version=5)
-
-    @pytest.mark.parametrize("kwargs", [{}, {"kek_version": 2, "new_verifier": b"fresh"}])
-    def test_release_while_staged_requires_kek_version_only(
-        self, vault_service, dynamodb_stubber, kwargs
-    ):
-        self._stub_release_read(
-            dynamodb_stubber,
-            kek_version={"N": "1"},
-            pending_vault_salt={"B": b"s" * 16},
-            pending_verifier={"B": b"pv"},
-        )
-        with pytest.raises(
-            ConflictError,
-            match="A rotation with a new salt is staged; commit it with kekVersion only, or PAUSE",
-        ):
-            self._rotate(vault_service, "RELEASE", "IN_PROGRESS", **kwargs)
-
-    def test_release_rejects_new_vault_salt(self, vault_service, dynamodb_stubber):
-        with pytest.raises(BadRequestError, match="newVaultSalt"):
-            self._rotate(
-                vault_service, "RELEASE", "IN_PROGRESS", kek_version=2, new_vault_salt=b"s" * 16
-            )
-
-    def test_release_missing_vault_is_not_found(self, vault_service, dynamodb_stubber):
-        dynamodb_stubber.add_response(
-            "get_item",
-            {},
-            {"TableName": "test-vaults-table", "Key": ROTATION_KEY, "ConsistentRead": True},
-        )
-        with pytest.raises(NotFoundError, match="Vault not found"):
-            self._rotate(vault_service, "RELEASE", "IN_PROGRESS", kek_version=2)
+        assert result["current_vmk_version"] == 2
 
     def test_release_conflict_raises_conflict_error(self, vault_service, dynamodb_stubber):
         """A row that exists but fails the state check is a real conflict, not a 404."""
-        self._stub_release_read(dynamodb_stubber, kek_version={"N": "1"})
         dynamodb_stubber.add_client_error(
             "update_item", service_error_code="ConditionalCheckFailedException"
         )
@@ -1568,141 +1384,4 @@ class TestVaultRotation:
             "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
         )
         with pytest.raises(ConflictError, match="already in progress"):
-            self._rotate(vault_service, "RELEASE", "IN_PROGRESS", kek_version=2)
-
-
-ABANDON_UPDATE = (
-    "SET rotation_state = :idle, updated_at = :now"
-    " REMOVE pending_vault_salt, pending_verifier, rotation_locked_at"
-)
-ABANDON_CONDITION = (
-    "attribute_exists(PK) AND attribute_not_exists(deletion_state) AND ("
-    "rotation_state = :paused OR "
-    "(rotation_state = :in_progress AND rotation_locked_at < :stale))"
-)
-ABANDON_VALUES = {
-    ":idle": "IDLE",
-    ":now": NOW,
-    ":paused": "PAUSED",
-    ":in_progress": "IN_PROGRESS",
-    ":stale": STALE,
-}
-
-
-class TestAbandonRotation:
-    """VaultService.abandon_rotation (spec 4): discard a staged pair, no re-keyed rows."""
-
-    @pytest.fixture
-    def frozen_time(self, monkeypatch):
-        monkeypatch.setattr(time, "time", lambda: NOW)
-        return NOW
-
-    @pytest.mark.parametrize(
-        "expected_generation, expected_locked_at, condition_suffix, extra_values",
-        [
-            (
-                3,
-                LOCKED_AT,
-                " AND rotation_generation = :gen AND rotation_locked_at = :seen",
-                {":gen": 3, ":seen": LOCKED_AT},
-            ),
-            (3, None, " AND rotation_generation = :gen", {":gen": 3}),
-            (0, None, " AND attribute_not_exists(rotation_generation)", {}),
-        ],
-        ids=["generation_and_locked_at", "generation_only", "attribute_not_exists"],
-    )
-    def test_abandon_pins_what_the_preflight_read(
-        self,
-        vault_service,
-        dynamodb_stubber,
-        frozen_time,
-        expected_generation,
-        expected_locked_at,
-        condition_suffix,
-        extra_values,
-    ):
-        """0 means no rotation_generation attribute was read; None means no timestamp was."""
-        dynamodb_stubber.add_response(
-            "update_item",
-            {"Attributes": {"rotation_state": {"S": "IDLE"}}},
-            {
-                "TableName": "test-vaults-table",
-                "Key": ROTATION_KEY,
-                "UpdateExpression": ABANDON_UPDATE,
-                "ConditionExpression": ABANDON_CONDITION + condition_suffix,
-                "ExpressionAttributeValues": {**ABANDON_VALUES, **extra_values},
-                "ReturnValues": "ALL_NEW",
-            },
-        )
-        result = vault_service.abandon_rotation(
-            user_id="u1",
-            vault_id="v1",
-            expected_generation=expected_generation,
-            expected_locked_at=expected_locked_at,
-        )
-        assert result == {
-            "rotation_state": "IDLE",
-            "rotation_locked_at": None,
-            "pending_vault_salt": None,
-            "pending_verifier": None,
-        }
-
-    def test_abandon_conflict_when_generation_changed(
-        self, vault_service, dynamodb_stubber, frozen_time
-    ):
-        """A failed generation pin maps to 409."""
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
-        )
-        with pytest.raises(ConflictError, match="already in progress"):
-            vault_service.abandon_rotation(
-                user_id="u1", vault_id="v1", expected_generation=3, expected_locked_at=None
-            )
-
-    def test_abandon_live_lock_raises_conflict(self, vault_service, dynamodb_stubber, frozen_time):
-        """A live (non-stale) IN_PROGRESS lock fails the condition: a real conflict, not a 404."""
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item", _vault_row(), {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
-        )
-        with pytest.raises(ConflictError, match="already in progress"):
-            vault_service.abandon_rotation(
-                user_id="u1", vault_id="v1", expected_generation=0, expected_locked_at=None
-            )
-
-    def test_abandon_deleting_vault_is_conflict(self, vault_service, dynamodb_stubber, frozen_time):
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item",
-            {
-                "Item": {
-                    "PK": {"S": "USER#u1"},
-                    "SK": {"S": "VAULT#v1"},
-                    "deletion_state": {"S": "DELETING"},
-                }
-            },
-            {"TableName": "test-vaults-table", "Key": ROTATION_KEY},
-        )
-        with pytest.raises(ConflictError, match="Vault is being deleted"):
-            vault_service.abandon_rotation(
-                user_id="u1", vault_id="v1", expected_generation=0, expected_locked_at=None
-            )
-
-    def test_abandon_missing_vault_is_not_found(self, vault_service, dynamodb_stubber, frozen_time):
-        dynamodb_stubber.add_client_error(
-            "update_item", service_error_code="ConditionalCheckFailedException"
-        )
-        dynamodb_stubber.add_response(
-            "get_item", {}, {"TableName": "test-vaults-table", "Key": ROTATION_KEY}
-        )
-        with pytest.raises(NotFoundError, match="Vault not found"):
-            vault_service.abandon_rotation(
-                user_id="u1", vault_id="v1", expected_generation=0, expected_locked_at=None
-            )
+            self._rotate(vault_service, "RELEASE", "IN_PROGRESS")

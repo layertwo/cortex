@@ -298,16 +298,13 @@ structure UpdateVaultRotationInput {
     @documentation("Expected current rotation state (conditional write guard)")
     expectedState: RotationState
 
-    @documentation("New KEK version to write on RELEASE; must equal the current version plus one")
-    kekVersion: Integer
-
     @documentation("Expected current envelope version (conditional write guard)")
     expectedEnvelopeVersion: Integer
 
-    @documentation("New VMK version to write on RELEASE")
+    @documentation("New VMK version to enrol on ACQUIRE; must equal the current version plus one")
     newVmkVersion: Integer
 
-    @documentation("New VMK wrapped under the re-keyed vault key, persisted on RELEASE")
+    @documentation("New VMK wrapped under the re-keyed vault key, appended on ACQUIRE")
     wrappedNewVmk: Blob
 
     @documentation("Vault name re-encrypted under the new metadata key, persisted on RELEASE")
