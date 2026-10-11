@@ -85,22 +85,22 @@ describe('Dashboard', () => {
     expect(screen.getByRole('button', { name: /change account password/i })).toBeInTheDocument();
   });
 
-  it('shows resume banner when rotationInterrupted is true', () => {
+  it('shows the rotation banner when rotationInterrupted is true', () => {
     mockSession.rotationInterrupted = true;
     render(<Dashboard />);
-    expect(screen.getByText(/password change was interrupted/i)).toBeInTheDocument();
+    expect(screen.getByText(/key rotation was interrupted/i)).toBeInTheDocument();
   });
 
-  it('shows the resume banner when the server says the active vault is mid-rotation', () => {
-    mockSession.activeVault = { vaultId: 'v1', name: 'Personal', rotationState: 'PAUSED' };
+  it('shows the rotation banner when the server says the active vault is mid-rotation', () => {
+    mockSession.activeVault = { vaultId: 'v1', name: 'Personal', rotationState: 'IN_PROGRESS' };
     render(<Dashboard />);
-    expect(screen.getByText(/password change was interrupted/i)).toBeInTheDocument();
+    expect(screen.getByText(/key rotation was interrupted/i)).toBeInTheDocument();
   });
 
   it('shows no banner for an IDLE vault when nothing was interrupted locally', () => {
     mockSession.activeVault = { vaultId: 'v1', name: 'Personal', rotationState: 'IDLE' };
     render(<Dashboard />);
-    expect(screen.queryByText(/password change was interrupted/i)).toBeNull();
+    expect(screen.queryByText(/key rotation was interrupted/i)).toBeNull();
   });
 
   it('shows the active vault name beside the title', () => {

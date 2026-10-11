@@ -37,6 +37,12 @@ export interface RotateItemsArgs {
   onProgress?: (done: number, total: number) => void;
 }
 
+// MEDIA items still wrapped under an older KEK generation than `targetDekVersion`. The sweep
+// is complete (and RELEASE may fire) only when this is empty.
+export function stragglers(items: ItemData[], targetDekVersion: number): ItemData[] {
+  return items.filter((it) => it.itemType === 'MEDIA' && (it.dekVersion ?? 0) < targetDekVersion);
+}
+
 // Sweep: for each item at dekVersion < targetDekVersion, re-wrap DEK and
 // re-encrypt metadata + tags under the new keys. Retries each item ITEM_RETRIES times.
 export async function rotateItems({

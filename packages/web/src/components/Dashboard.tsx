@@ -13,6 +13,7 @@ import FileList from './FileList';
 import CollectionSidebar, { type View } from './CollectionSidebar';
 import TagSearch from './TagSearch';
 import ChangeVaultPassword from './ChangeVaultPassword';
+import RotateKeysDialog from './RotateKeysDialog';
 import ChangeAccountPassword from './ChangeAccountPassword';
 import WelcomeCard from './WelcomeCard';
 import Wordmark from './brand/Wordmark';
@@ -33,6 +34,7 @@ export default function Dashboard() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [view, setView] = useState<View>({ kind: 'all' });
   const [changingPassword, setChangingPassword] = useState(false);
+  const [rotatingKeys, setRotatingKeys] = useState(false);
   const [changingAccountPassword, setChangingAccountPassword] = useState(false);
   const [unlocking, setUnlocking] = useState<VaultEntry | null>(null);
   const [vaultDialog, setVaultDialog] = useState<'new' | 'manage' | null>(null);
@@ -63,8 +65,8 @@ export default function Dashboard() {
           <Banner
             status="warning"
             container="section"
-            title="A vault password change was interrupted."
-            endContent={<Button label="Resume" size="sm" onClick={() => setChangingPassword(true)} />}
+            title="A key rotation was interrupted."
+            endContent={<Button label="Finish rotation" size="sm" onClick={() => setRotatingKeys(true)} />}
           />
         ) : undefined
       }
@@ -99,6 +101,12 @@ export default function Dashboard() {
                     variant="ghost"
                     size="sm"
                     onClick={() => setChangingPassword(true)}
+                  />
+                  <Button
+                    label="Rotate encryption keys"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRotatingKeys(true)}
                   />
                   <Button
                     label="Change account password"
@@ -145,6 +153,7 @@ export default function Dashboard() {
         }
       />
       {changingPassword && <ChangeVaultPassword onDone={() => setChangingPassword(false)} />}
+      {rotatingKeys && <RotateKeysDialog onDone={() => setRotatingKeys(false)} />}
       {changingAccountPassword && (
         <ChangeAccountPassword onDone={() => setChangingAccountPassword(false)} />
       )}

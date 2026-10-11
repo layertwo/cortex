@@ -14,7 +14,7 @@ vi.mock('../api/items', () => itemsApi);
 const collectionsApi = vi.hoisted(() => ({ updateCollection: vi.fn(), listAllCollections: vi.fn() }));
 vi.mock('../api/collections', () => collectionsApi);
 
-import { reWrapDek, rotateItems, rotateCollections } from './key-rotation';
+import { reWrapDek, rotateItems, rotateCollections, stragglers } from './key-rotation';
 
 const oldKek = new Uint8Array(32).fill(0xaa);
 const newKek = new Uint8Array(32).fill(0xbb);
@@ -93,6 +93,34 @@ async function makeMediaItem(opts: {
   };
   return { item, dek, meta };
 }
+
+describe('stragglers', () => {
+  const media = (itemId: string, dekVersion: number): ItemData => ({
+    itemId,
+    vaultId,
+    itemType: 'MEDIA',
+    encryptedMetadata: new Uint8Array([1]),
+    wrappedDek: new Uint8Array(97),
+    dekVersion,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+    version: 1,
+  });
+
+  it('returns only MEDIA items below the target dekVersion', () => {
+    const note: ItemData = {
+      itemId: 'note',
+      vaultId,
+      itemType: 'NOTE',
+      encryptedMetadata: new Uint8Array([1]),
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+      version: 1,
+    };
+    expect(stragglers([media('old', 1), media('new', 2), note], 2).map((i) => i.itemId)).toEqual(['old']);
+    expect(stragglers([media('new', 2)], 2)).toEqual([]);
+  });
+});
 
 describe('rotateItems', () => {
   it('re-wraps the DEK and re-encrypts metadata + tags for a MEDIA item below targetDekVersion', async () => {
