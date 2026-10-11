@@ -8,6 +8,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
 import { useSession } from '../auth/SessionContext';
+import { useAsyncAction } from './common/useAsyncAction';
 
 // The submit button lives in the dialog footer, outside the <form>; `form={FORM_ID}`
 // associates it with the form so Enter and click both submit.
@@ -20,24 +21,18 @@ export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) 
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
+  const { pending, error, setError, run } = useAsyncAction();
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError('');
     if (next !== confirm) {
       setError('Passwords do not match');
       return;
     }
-    setPending(true);
-    try {
+    void run(async () => {
       await changeVaultPassword(current, next);
       onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Password change failed');
-      setPending(false);
-    }
+    }, 'Password change failed');
   }
 
   return (

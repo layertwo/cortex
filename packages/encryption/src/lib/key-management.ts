@@ -78,19 +78,20 @@ const HKDF_CONTEXTS = {
 };
 
 /**
- * Derives a 256-bit vault master key from a vault password and salt using Argon2id.
+ * Derives the 256-bit wrapping key from a vault password and salt using Argon2id.
  *
  * This function uses memory-hard key derivation to protect against brute-force attacks.
- * The same password and salt will always produce the same master key (deterministic).
+ * The same password and salt will always produce the same wrapping key (deterministic).
  *
  * @param password - The vault password (string)
  * @param salt - The vault salt (Uint8Array, 16 bytes minimum)
- * @returns Promise<Uint8Array> - The 256-bit (32-byte) vault master key
+ * @returns Promise<Uint8Array> - The 256-bit (32-byte) wrapping key
  *
  * @example
  * const password = 'my-secure-vault-password';
  * const salt = crypto.getRandomValues(new Uint8Array(16));
- * const masterKey = await deriveWrappingKey(password, salt);
+ * const wrappingKey = await deriveWrappingKey(password, salt);
+ * // wrappingKey unwraps the vault's stored VMK envelope (unwrapVmk)
  */
 export async function deriveWrappingKey(
   password: string,
@@ -109,7 +110,7 @@ export async function deriveWrappingKey(
     // matching the previous TextEncoder().encode(password) behavior byte-for-byte.
     return await argon2id({ password, salt, ...ARGON2_PARAMS, outputType: 'binary' });
   } catch (error) {
-    throw new Error(`Failed to derive vault master key: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to derive wrapping key: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -136,12 +137,13 @@ export interface DerivedKeys {
  * domain separation. This provides two independent layers of cryptographic separation.
  * All derived keys are 256 bits (32 bytes) for use with ChaCha20-Poly1305.
  *
- * @param vaultMasterKey - The 256-bit vault master key (from deriveWrappingKey)
+ * @param vaultMasterKey - The 256-bit VMK (the unwrapped vault master key)
  * @returns DerivedKeys - Object containing all derived encryption keys
  *
  * @example
- * const masterKey = await deriveWrappingKey(password, salt);
- * const keys = deriveKeys(masterKey);
+ * const wrappingKey = await deriveWrappingKey(password, salt);
+ * const vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
+ * const keys = deriveKeys(vmk);
  * // Use keys.keyEncryptionKey as the KEK to wrap per-file DEKs (envelope encryption)
  * // Use keys.metadataEncryptionKey for encrypting metadata
  */
