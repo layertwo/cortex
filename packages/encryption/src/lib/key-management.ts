@@ -224,22 +224,22 @@ export function deriveKeys(vaultMasterKey: Uint8Array): DerivedKeys {
 }
 
 /**
- * Generates a BIP39 mnemonic recovery key from the vault master key.
+ * Generates a BIP39 mnemonic recovery key from the Vault Master Key (VMK).
  *
  * The recovery key is a 24-word mnemonic phrase that encodes the FULL 256-bit
- * vault master key. This enables complete offline vault recovery without requiring
- * the vault salt from the server. The user can recover their vault with ONLY
- * this 24-word phrase.
+ * Vault Master Key (VMK). This enables complete offline vault recovery without
+ * requiring the vault salt from the server. The user can recover their vault
+ * with ONLY this 24-word phrase.
  *
  * SECURITY: This should be displayed to the user ONCE during vault creation with
  * instructions to store it securely offline (paper backup, password manager, etc.).
  *
- * @param vaultMasterKey - The 256-bit vault master key
+ * @param vaultMasterKey - The 256-bit Vault Master Key (VMK)
  * @returns string - A 24-word BIP39 mnemonic phrase
  *
  * @example
- * const masterKey = await deriveWrappingKey(password, salt);
- * const recoveryKey = generateRecoveryKey(masterKey);
+ * const vmk = await generateVaultMasterKey();
+ * const recoveryKey = generateRecoveryKey(vmk);
  * console.log('IMPORTANT: Store this 24-word recovery key securely:', recoveryKey);
  */
 export function generateRecoveryKey(vaultMasterKey: Uint8Array): string {
@@ -259,29 +259,28 @@ export function generateRecoveryKey(vaultMasterKey: Uint8Array): string {
 }
 
 /**
- * Validates a recovery key and recovers the full vault master key from it.
+ * Validates a recovery key and recovers the full Vault Master Key (VMK) from it.
  *
- * This function is used during vault password reset. The user provides their
+ * This function is used during vault recovery. The user provides their
  * recovery key (24-word mnemonic), and this function validates it and returns
- * the complete 256-bit vault master key.
+ * the complete 256-bit Vault Master Key (VMK).
  *
  * SECURITY: This enables complete offline vault recovery. The user does NOT need
  * the vault salt from the server - the 24-word phrase contains everything needed
  * to recover full vault access.
  *
  * After recovery, the user can:
- * 1. Use the recovered master key directly to decrypt their vault
- * 2. Set a new vault password and derive a new vault salt
- * 3. Re-encrypt the vault with the new password (optional)
+ * 1. Use the recovered VMK to unwrap their vault
+ * 2. Set a new vault password and wrap the VMK with the new wrapping key
  *
  * @param recoveryKey - The 24-word BIP39 mnemonic phrase
- * @returns Uint8Array - The complete 256-bit vault master key (32 bytes)
+ * @returns Uint8Array - The complete 256-bit Vault Master Key (VMK) (32 bytes)
  * @throws Error if the recovery key is invalid
  *
  * @example
  * const recoveryKey = 'word1 word2 word3 ... word24';
- * const recoveredMasterKey = validateRecoveryKey(recoveryKey);
- * const keys = deriveKeys(recoveredMasterKey);
+ * const vmk = validateRecoveryKey(recoveryKey);
+ * const keys = deriveKeys(vmk);
  * // Now you can decrypt vault data with keys.keyEncryptionKey, etc.
  */
 export function validateRecoveryKey(recoveryKey: string): Uint8Array {

@@ -142,8 +142,8 @@ describe('Key Management', () => {
     });
   });
 
-  describe('generateRecoveryKey and validateRecoveryKey', () => {
-    it('should generate a valid BIP39 mnemonic', () => {
+  describe('generateRecoveryKey and validateRecoveryKey (VMK encoding)', () => {
+    it('should generate a valid BIP39 mnemonic encoding the VMK', () => {
       const masterKey = createMockMasterKey();
 
       const recoveryKey = generateRecoveryKey(masterKey);
@@ -152,14 +152,14 @@ describe('Key Management', () => {
       expect(recoveryKey.split(' ').length).toBe(24); // 24-word mnemonic (256 bits)
     });
 
-    it('should validate and recover full master key from recovery key', () => {
+    it('should validate and recover the full VMK from a recovery key', () => {
       const masterKey = createMockMasterKey();
 
       const recoveryKey = generateRecoveryKey(masterKey);
       const recoveredMasterKey = validateRecoveryKey(recoveryKey);
 
       expect(recoveredMasterKey).toBeInstanceOf(Uint8Array);
-      expect(recoveredMasterKey.length).toBe(32); // Full 256-bit master key
+      expect(recoveredMasterKey.length).toBe(32); // Full 256-bit VMK
       
       // The recovered master key should match the original master key exactly
       expect(recoveredMasterKey).toEqual(masterKey);

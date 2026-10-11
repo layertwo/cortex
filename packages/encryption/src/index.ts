@@ -67,6 +67,9 @@ export {
   DEPRECATED_DEK_VERSIONS,
   getWrappedDekVersion,
   isDekVersionDeprecated,
+  generateVaultMasterKey,
+  wrapVmk,
+  unwrapVmk,
   type DekUnwrapErrorCode,
 } from './lib/envelope-encryption';
 
