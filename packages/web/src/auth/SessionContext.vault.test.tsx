@@ -545,6 +545,24 @@ describe('rotateEncryptionKeys', () => {
     expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
   });
 
+  it('a local commit failure after RELEASE leaves the registry IDLE, not IN_PROGRESS', async () => {
+    await seedRotatableVault();
+    vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());
+    api.updateVaultRotation
+      .mockResolvedValueOnce({ rotationState: 'IN_PROGRESS', rotationLockedAt: 1700000000, currentVmkVersion: 2, envelopeVersion: 2 })
+      .mockResolvedValueOnce({ rotationState: 'IDLE', rotationLockedAt: null, currentVmkVersion: 2, envelopeVersion: 2 });
+    // RELEASE reaches the server (IDLE), then the local key store fails.
+    vi.mocked(storeKeys).mockRejectedValueOnce(new Error('disk full'));
+    await renderProbe();
+    await act(async () => {
+      await expect(sessionRef.current!.rotateEncryptionKeys('vaultpw')).rejects.toThrow('disk full');
+    });
+    expect(api.updateVaultRotation.mock.calls.map((c) => (c[0] as { action: string }).action)).toEqual(['ACQUIRE', 'RELEASE']);
+    // The server is IDLE; the registry must not claim a rotation is still in progress.
+    expect(storedRegistry()[0]).toMatchObject({ rotationState: 'IDLE' });
+    expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
+  });
+
   it('withholds RELEASE when a straggler item remains, leaving the rotation IN_PROGRESS', async () => {
     await seedRotatableVault();
     vi.mocked(generateVaultMasterKey).mockResolvedValueOnce(VMK_NEW.slice());

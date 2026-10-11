@@ -509,6 +509,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const keysOld = deriveKeys(vmkOld);
       const keysNew = deriveKeys(vmkNew);
       let acquired = isResume;
+      let released = false;
       try {
         if (!isResume) {
           const wrappedNewVmk = await wrapVmk(vmkNew, wrappingKey);
@@ -552,6 +553,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           : listVaults().find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
         const newEncryptedName = await encryptCollectionName(plaintext, keysNew.metadataEncryptionKey);
         await updateVaultRotation({ vaultId, action: 'RELEASE', expectedState: 'IN_PROGRESS', newEncryptedName });
+        released = true;
 
         // Commit locally, only now that the server has.
         await storeKeys(vaultId, keysNew);
@@ -570,7 +572,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // do NOT advance currentVmkVersion in the registry: advertising a version whose KEK the
         // client cannot unwrap would tag uploads with an unreadable dekVersion. The next unlock
         // reads GetVault and adopts the new keys/version.
-        if (acquired) {
+        if (released) {
+          // The server already RELEASEd to IDLE; only a local commit failed. Reflect IDLE
+          // rather than claiming a rotation is still running.
+          patchEntry(vaultId, { rotationState: 'IDLE', vaultSalt: vault.vaultSalt });
+          setRotationInterrupted(false);
+        } else if (acquired) {
           patchEntry(vaultId, { rotationState: 'IN_PROGRESS', vaultSalt: vault.vaultSalt });
           setRotationInterrupted(true);
         }
