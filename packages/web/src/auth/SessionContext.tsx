@@ -114,6 +114,24 @@ async function provesOwnership(vaultId: string, currentVmkVersion: number, metad
   });
 }
 
+const cloneEnvelopes = (list: VmkEnvelopeRecord[]): VmkEnvelopeRecord[] =>
+  list.map((e) => ({ ...e }));
+
+// Derive the wrapping key and unwrap the vault's current VMK envelope. The unwrap is the
+// password check: any failure is a wrong password.
+async function unwrapCurrentVmk(vault: VaultRecord, password: string): Promise<Uint8Array> {
+  const envelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
+  if (!envelope) throw new Error(WRONG_VAULT_PASSWORD);
+  const wrappingKey = await deriveWrappingKey(password, vault.vaultSalt);
+  try {
+    return unwrapVmk(envelope.wrappedVmk, wrappingKey);
+  } catch {
+    throw new Error(WRONG_VAULT_PASSWORD);
+  } finally {
+    secureZeroize(wrappingKey);
+  }
+}
+
 export interface SessionValue {
   status: SessionStatus;
   signUpAccount(email: string, password: string): Promise<void>;
@@ -351,17 +369,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!vaultId) throw new Error('No vault on this device, set one up first');
       const vault = await getVault(vaultId);
       if (!vault.vmkEnvelopes.length) throw new Error(VAULT_NEEDS_SETUP);
-      const envelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
-      if (!envelope) throw new Error(WRONG_VAULT_PASSWORD);
-      const wrappingKey = await deriveWrappingKey(vaultPassword, vault.vaultSalt);
-      let vmk: Uint8Array;
-      try {
-        vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
-      } catch {
-        throw new Error(WRONG_VAULT_PASSWORD);
-      } finally {
-        secureZeroize(wrappingKey);
-      }
+      const vmk = await unwrapCurrentVmk(vault, vaultPassword);
       const keys = deriveKeys(vmk);
       secureZeroize(vmk); // only the derived keys are needed past this point
       await storeKeys(vaultId, keys);
@@ -422,11 +430,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const oldKey = await deriveWrappingKey(currentPassword, vault.vaultSalt);
       const newKey = await deriveWrappingKey(newPassword, vault.vaultSalt);
       const rewrap = async (source: VaultRecord): Promise<VmkEnvelopeRecord[]> => {
-        const out: VmkEnvelopeRecord[] = source.vmkEnvelopes.map((e) => ({
-          vmkVersion: e.vmkVersion,
-          wrappedVmk: e.wrappedVmk,
-          createdAt: e.createdAt,
-        }));
+        const out = cloneEnvelopes(source.vmkEnvelopes);
         const currentVersion = source.currentVmkVersion;
         if (!out.length || !out.some((e) => e.vmkVersion === currentVersion)) {
           throw new Error(WRONG_VAULT_PASSWORD);
@@ -621,14 +625,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // The server keeps the VMK version set intact on a re-wrap, so re-wrap the current
         // envelope with the phrase's VMK and pass any superseded generations through unchanged.
         const envelopes: VmkEnvelopeRecord[] = vault.vmkEnvelopes.length
-          ? vault.vmkEnvelopes.map((e) => ({
-              vmkVersion: e.vmkVersion,
-              wrappedVmk: e.wrappedVmk,
-              createdAt: e.createdAt,
-            }))
+          ? cloneEnvelopes(vault.vmkEnvelopes)
           : [{ vmkVersion: 1, wrappedVmk: new Uint8Array(0), createdAt: new Date() }];
         const current = envelopes.find((e) => e.vmkVersion === newVersion) ?? envelopes[0];
-        current.vmkVersion = newVersion;
         current.wrappedVmk = await wrapVmk(vmk, newKey);
         current.createdAt = new Date();
         secureZeroize(newKey);
@@ -661,15 +660,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const vault = await getVault(vaultId);
       const envelope = vault.vmkEnvelopes.find((e) => e.vmkVersion === vault.currentVmkVersion);
       if (!envelope) throw new Error(DELETE_REFUSED);
-      const wrappingKey = await deriveWrappingKey(vaultPassword, vault.vaultSalt);
-      let vmk: Uint8Array;
-      try {
-        vmk = unwrapVmk(envelope.wrappedVmk, wrappingKey);
-      } catch {
-        throw new Error(WRONG_VAULT_PASSWORD);
-      } finally {
-        secureZeroize(wrappingKey);
-      }
+      const vmk = await unwrapCurrentVmk(vault, vaultPassword);
       secureZeroize(vmk); // the unwrap is the only use
 
       let removed = 0;

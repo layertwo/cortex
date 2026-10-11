@@ -56,9 +56,7 @@ export async function rotateItems({
   onProgress,
 }: RotateItemsArgs): Promise<void> {
   let done = 0;
-  const pending = items.filter(
-    (it) => it.itemType === 'MEDIA' && (it.dekVersion ?? 0) < targetDekVersion,
-  );
+  const pending = stragglers(items, targetDekVersion);
 
   for (const item of pending) {
     if (!item.wrappedDek || !item.encryptedMetadata) {

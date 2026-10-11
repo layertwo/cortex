@@ -337,7 +337,7 @@ export function unwrapVmk(
     const cipher = chacha20poly1305(wrappingKey, nonce);
     return cipher.decrypt(encryptedWithTag);
   } catch {
-    console.warn(`[envelope-encryption] AUTHENTICATION_FAILED at ${new Date().toISOString()}`);
+    console.warn('[envelope-encryption] AUTHENTICATION_FAILED');
     throw new DekUnwrapError('AUTHENTICATION_FAILED', 'ChaCha20-Poly1305 authentication failed');
   }
 }

@@ -43,6 +43,18 @@ def _vault_summary(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _envelope_dicts(item: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """Normalize a stored vmk_envelopes list to the service's envelope shape."""
+    return [
+        {
+            "vmk_version": int(env["vmk_version"]),
+            "wrapped_vmk": to_bytes(env.get("wrapped_vmk")),
+            "created_at": int(env["created_at"]),
+        }
+        for env in item.get("vmk_envelopes") or []
+    ]
+
+
 class VaultService:
     """Service for vault management operations."""
 
@@ -305,14 +317,7 @@ class VaultService:
             raise NotFoundError("Vault not found")
 
         vault = _vault_summary(item)
-        vault["vmk_envelopes"] = [
-            {
-                "vmk_version": int(env["vmk_version"]),
-                "wrapped_vmk": to_bytes(env.get("wrapped_vmk")),
-                "created_at": int(env["created_at"]),
-            }
-            for env in item.get("vmk_envelopes") or []
-        ]
+        vault["vmk_envelopes"] = _envelope_dicts(item)
         vault["rotation_locked_at"] = (
             int(item["rotation_locked_at"]) if item.get("rotation_locked_at") is not None else None
         )
@@ -679,14 +684,7 @@ class VaultService:
         if new_vmk_version != current + 1:
             raise BadRequestError("newVmkVersion must be the current version plus one")
 
-        envelopes = [
-            {
-                "vmk_version": int(env["vmk_version"]),
-                "wrapped_vmk": to_bytes(env.get("wrapped_vmk")),
-                "created_at": int(env["created_at"]),
-            }
-            for env in item.get("vmk_envelopes") or []
-        ]
+        envelopes = _envelope_dicts(item)
         envelopes.append(
             {
                 "vmk_version": new_vmk_version,
