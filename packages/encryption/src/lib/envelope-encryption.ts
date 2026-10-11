@@ -261,7 +261,8 @@ export function unwrapDek(
  * change when the password changes.
  */
 export async function generateVaultMasterKey(): Promise<Uint8Array> {
-  return await getRandomBytes(DEK_SIZE);
+  // A VMK is 32 random bytes like a DEK; the distinct name marks its role.
+  return generateDek();
 }
 
 /**
