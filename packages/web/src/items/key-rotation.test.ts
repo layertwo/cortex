@@ -128,6 +128,7 @@ describe('stragglers', () => {
       itemId: 'pending',
       vaultId,
       itemType: 'MEDIA',
+      encryptedMetadata: new Uint8Array([1]), // no wrappedDek: the sweep has nothing to re-wrap
       dekVersion: 1,
       createdAt: new Date(0),
       updatedAt: new Date(0),
