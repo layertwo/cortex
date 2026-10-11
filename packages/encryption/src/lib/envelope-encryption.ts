@@ -318,13 +318,14 @@ export function unwrapVmk(
   }
 
   if (wrappedVmk.length !== WRAPPED_VMK_SIZE) {
-    console.warn(`[envelope-encryption] CORRUPTED_DEK: invalid wrapped VMK length ${wrappedVmk.length} at ${new Date().toISOString()}`);
+    // Static marker only: never interpolate key-material bytes into a log.
+    console.warn('[envelope-encryption] CORRUPTED_DEK: invalid wrapped VMK length');
     throw new DekUnwrapError('CORRUPTED_DEK', `Invalid wrapped VMK length: expected ${WRAPPED_VMK_SIZE} bytes, got ${wrappedVmk.length}`);
   }
 
   const version = wrappedVmk[0];
   if (!SUPPORTED_DEK_VERSIONS.includes(version)) {
-    console.warn(`[envelope-encryption] WRONG_KEK_VERSION: VMK version ${version} at ${new Date().toISOString()}`);
+    console.warn('[envelope-encryption] WRONG_KEK_VERSION: unsupported VMK version');
     throw new DekUnwrapError('WRONG_KEK_VERSION', `Unsupported wrapped VMK version: ${version}`);
   }
 
