@@ -18,6 +18,7 @@ resource Vault {
     operations: [
         GetVaultSalt
         UpdateVaultRotation
+        UpdateVaultPassword
     ]
 }
 
@@ -66,7 +67,7 @@ operation GetVault {
 }
 
 @http(method: "PUT", uri: "/v1/vaults/{vaultId}")
-@documentation("Store the encrypted vault name and/or the password verifier")
+@documentation("Store the encrypted vault name")
 @idempotent
 operation UpdateVault {
     input: UpdateVaultInput
@@ -111,10 +112,24 @@ operation GetVaultSalt {
 }
 
 @http(method: "POST", uri: "/v1/vaults/{vaultId}/rotation")
-@documentation("Acquire, pause, or release the rotation lock on a vault (conditional write)")
+@documentation("Acquire or release the rotation lock on a vault (conditional write)")
 operation UpdateVaultRotation {
     input: UpdateVaultRotationInput
     output: UpdateVaultRotationOutput
+    errors: [
+        AuthenticationError
+        AuthorizationError
+        ResourceNotFoundError
+        ConflictError
+        InternalError
+    ]
+}
+
+@http(method: "POST", uri: "/v1/vaults/{vaultId}/password")
+@documentation("Replace the vault's VMK envelopes after a vault password change")
+operation UpdateVaultPassword {
+    input: UpdateVaultPasswordInput
+    output: UpdateVaultPasswordOutput
     errors: [
         AuthenticationError
         AuthorizationError
@@ -183,15 +198,6 @@ structure GetVaultOutput {
     @documentation("Encrypted vault name")
     encryptedName: Blob
 
-    @documentation("Password verifier ciphertext (owner only)")
-    verifier: Blob
-
-    @documentation("New salt staged by an open rotation; present only while rotationState is IN_PROGRESS or PAUSED")
-    pendingVaultSalt: Blob
-
-    @documentation("Verifier for the keys derived from pendingVaultSalt, staged with it; present only while rotationState is IN_PROGRESS or PAUSED")
-    pendingVerifier: Blob
-
     @required
     @documentation("Vault creation timestamp")
     createdAt: Timestamp
@@ -200,8 +206,17 @@ structure GetVaultOutput {
     @documentation("Last modified timestamp")
     updatedAt: Timestamp
 
-    @documentation("Current KEK version (increments on each completed rotation)")
-    kekVersion: Integer
+    @required
+    @documentation("Current VMK version")
+    currentVmkVersion: Integer
+
+    @required
+    @documentation("Current envelope version (increments on each password change)")
+    envelopeVersion: Integer
+
+    @required
+    @documentation("VMK envelopes, one per vault password generation")
+    vmkEnvelopes: VmkEnvelopeList
 
     @documentation("Current rotation state")
     rotationState: RotationState
@@ -219,10 +234,6 @@ structure UpdateVaultInput {
     @documentation("Vault name encrypted under the vault metadata key")
     @length(min: 1, max: 1024)
     encryptedName: Blob
-
-    @documentation("Password verifier ciphertext")
-    @length(min: 1, max: 256)
-    verifier: Blob
 }
 
 structure UpdateVaultOutput {
@@ -280,7 +291,7 @@ structure UpdateVaultRotationInput {
     vaultId: String
 
     @required
-    @documentation("ACQUIRE to lock; PAUSE to record an interrupted sweep; RELEASE to commit; ABANDON to discard a staged salt and verifier when no row has been re-keyed")
+    @documentation("ACQUIRE to lock; RELEASE to commit the re-keyed envelopes")
     action: RotationAction
 
     @required
@@ -290,13 +301,14 @@ structure UpdateVaultRotationInput {
     @documentation("New KEK version to write on RELEASE; must equal the current version plus one")
     kekVersion: Integer
 
-    @documentation("New verifier. On ACQUIRE, staged together with newVaultSalt (both or neither). On RELEASE, persisted directly only when nothing is staged.")
-    @length(min: 1, max: 256)
-    newVerifier: Blob
+    @documentation("Expected current envelope version (conditional write guard)")
+    expectedEnvelopeVersion: Integer
 
-    @documentation("New vault salt (16 bytes) to stage on ACQUIRE together with newVerifier; ignored if a pair is already staged; rejected on RELEASE")
-    @length(min: 16, max: 16)
-    newVaultSalt: Blob
+    @documentation("New VMK version to write on RELEASE")
+    newVmkVersion: Integer
+
+    @documentation("New VMK wrapped under the re-keyed vault key, persisted on RELEASE")
+    wrappedNewVmk: Blob
 
     @documentation("Vault name re-encrypted under the new metadata key, persisted on RELEASE")
     @length(min: 1, max: 1024)
@@ -311,9 +323,32 @@ structure UpdateVaultRotationOutput {
     @documentation("When the lock was acquired (epoch seconds)")
     rotationLockedAt: Long
 
-    @documentation("The salt the sweep must derive new keys from; returned on ACQUIRE when a pair is staged")
-    pendingVaultSalt: Blob
+    @required
+    @documentation("Current VMK version after the operation")
+    currentVmkVersion: Integer
 
-    @documentation("The verifier for those keys; returned with pendingVaultSalt")
-    pendingVerifier: Blob
+    @required
+    @documentation("Current envelope version after the operation")
+    envelopeVersion: Integer
+}
+
+structure UpdateVaultPasswordInput {
+    @required
+    @httpLabel
+    @documentation("Vault identifier")
+    vaultId: String
+
+    @required
+    @documentation("Expected current envelope version (conditional write guard)")
+    expectedEnvelopeVersion: Integer
+
+    @required
+    @documentation("VMK envelopes, one per vault password generation")
+    vmkEnvelopes: VmkEnvelopeList
+}
+
+structure UpdateVaultPasswordOutput {
+    @required
+    @documentation("New envelope version")
+    envelopeVersion: Integer
 }

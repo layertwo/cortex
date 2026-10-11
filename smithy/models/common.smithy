@@ -43,20 +43,21 @@ list VaultSummaryList {
     member: VaultSummary
 }
 
+/// List of VMK envelopes (one per VMK version)
+list VmkEnvelopeList {
+    member: VmkEnvelope
+}
+
 /// Vault rotation state — tracks whether a password-change rotation is in progress
 enum RotationState {
     IDLE = "IDLE"
     IN_PROGRESS = "IN_PROGRESS"
-    PAUSED = "PAUSED"
-    FAILED = "FAILED"
 }
 
 /// Action to take on vault rotation lock
 enum RotationAction {
     ACQUIRE = "ACQUIRE"
     RELEASE = "RELEASE"
-    PAUSE = "PAUSE"
-    ABANDON = "ABANDON"
 }
 
 /// Vault deletion progress
@@ -150,6 +151,21 @@ structure CollectionData {
     updatedAt: Timestamp
 }
 
+/// A VMK wrapped under the vault key derived from a given vault password generation
+structure VmkEnvelope {
+    @required
+    @documentation("VMK version this envelope wraps")
+    vmkVersion: Integer
+
+    @required
+    @documentation("VMK wrapped under the vault key")
+    wrappedVmk: Blob
+
+    @required
+    @documentation("Wrap timestamp")
+    createdAt: Timestamp
+}
+
 /// Vault summary returned by ListVaults
 structure VaultSummary {
     @required
@@ -163,9 +179,6 @@ structure VaultSummary {
     @documentation("Vault name encrypted under the vault metadata key")
     encryptedName: Blob
 
-    @documentation("Password verifier ciphertext (owner only)")
-    verifier: Blob
-
     @required
     @documentation("Vault creation timestamp")
     createdAt: Timestamp
@@ -175,8 +188,8 @@ structure VaultSummary {
     updatedAt: Timestamp
 
     @required
-    @documentation("Current KEK version")
-    kekVersion: Integer
+    @documentation("Current VMK version")
+    currentVmkVersion: Integer
 
     @required
     @documentation("Current rotation state")
