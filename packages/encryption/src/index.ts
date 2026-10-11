@@ -39,6 +39,8 @@ export {
   registerCleanupHandlers,
   getStorageInfo,
   clearSaltHmacRecord,
+  secureZeroize,
+  zeroizeKeys,
   DEFAULT_CONFIG,
   HIGH_SECURITY_CONFIG,
   type KeysToStore,
@@ -61,6 +63,11 @@ export {
   encryptFileWithDek,
   decryptFileWithDek,
   DekUnwrapError,
+  CURRENT_DEK_VERSION,
+  SUPPORTED_DEK_VERSIONS,
+  DEPRECATED_DEK_VERSIONS,
+  getWrappedDekVersion,
+  isDekVersionDeprecated,
   type DekUnwrapErrorCode,
 } from './lib/envelope-encryption';
 

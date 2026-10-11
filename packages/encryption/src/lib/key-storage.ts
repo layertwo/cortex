@@ -1222,6 +1222,48 @@ export async function clearKeys(vaultId: string): Promise<void> {
 }
 
 /**
+ * Overwrite a key buffer in place: zeros, then cryptographically random bytes
+ * (spec 6.16 / REQ-34). Best-effort — JavaScript cannot stop the GC from having
+ * copied a value, so this only shrinks the window for casual memory recovery.
+ */
+export function secureZeroize(buffer: Uint8Array | null | undefined): void {
+  if (!buffer) return;
+  buffer.fill(0);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(buffer);
+  }
+}
+
+/**
+ * Zeroize every present key in a derived-key set. Pass only the keys you hold.
+ */
+export function zeroizeKeys(keys: Partial<KeysToStore> | null | undefined): void {
+  if (!keys) return;
+  for (const value of Object.values(keys)) {
+    if (value instanceof Uint8Array) secureZeroize(value);
+  }
+}
+
+/**
+ * Removes our key-material entries from a Storage (localStorage or sessionStorage).
+ */
+function clearPrefixedKeys(storage: Storage): void {
+  const toRemove: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (
+      key &&
+      (key.startsWith(STORAGE_KEY_PREFIX) ||
+        key.startsWith(SALT_HMAC_STORAGE_KEY_PREFIX) ||
+        key.includes('cortex_device'))
+    ) {
+      toRemove.push(key);
+    }
+  }
+  toRemove.forEach((key) => storage.removeItem(key));
+}
+
+/**
  * Clears all stored keys and device-specific data from all storage mechanisms.
  * 
  * This is a complete cleanup that removes:
@@ -1246,21 +1288,9 @@ export async function clearAllKeys(): Promise<void> {
     // Ignore errors, continue to fallback cleanup
   }
 
-  // Clear localStorage (fallback)
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (
-      key &&
-      (key.startsWith(STORAGE_KEY_PREFIX) ||
-        key.startsWith(SALT_HMAC_STORAGE_KEY_PREFIX) ||
-        key.includes('cortex_device'))
-    ) {
-      keysToRemove.push(key);
-    }
-  }
-
-  keysToRemove.forEach(key => localStorage.removeItem(key));
+  // Clear localStorage and sessionStorage (fallback)
+  if (typeof localStorage !== 'undefined') clearPrefixedKeys(localStorage);
+  if (typeof sessionStorage !== 'undefined') clearPrefixedKeys(sessionStorage);
 }
 
 /**

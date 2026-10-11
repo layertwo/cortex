@@ -16,6 +16,8 @@ import {
   HIGH_SECURITY_CONFIG,
   storeSaltHmacRecord,
   retrieveSaltHmacRecord,
+  secureZeroize,
+  zeroizeKeys,
 } from '../../src/lib/key-storage';
 
 // Mock crypto.getRandomValues and crypto.subtle
@@ -588,5 +590,50 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       // For actual concurrency tests, see key-storage-concurrency.test.ts
       expect(true).toBe(true);
     });
+  });
+});
+
+describe('Key zeroization (spec 6.16)', () => {
+  beforeEach(() => {
+    mockLocalStorage.clear();
+    mockSessionStorage.clear();
+    jest.clearAllMocks();
+  });
+
+  it('secureZeroize overwrites the buffer so it no longer holds the original', () => {
+    const buf = new Uint8Array(32).fill(9);
+    const original = buf.slice();
+
+    secureZeroize(buf);
+
+    expect(buf.length).toBe(32);
+    expect(buf).not.toEqual(original);
+  });
+
+  it('secureZeroize tolerates null/undefined', () => {
+    expect(() => secureZeroize(undefined)).not.toThrow();
+    expect(() => secureZeroize(null)).not.toThrow();
+  });
+
+  it('zeroizeKeys overwrites every present key buffer', () => {
+    const keys = createTestKeys();
+    const kekBefore = keys.keyEncryptionKey.slice();
+
+    zeroizeKeys(keys);
+
+    expect(keys.keyEncryptionKey).not.toEqual(kekBefore);
+    expect(keys.dateBucketEncryptionKey).not.toEqual(new Uint8Array(32).fill(8));
+  });
+
+  it('clearAllKeys also clears sessionStorage key material', async () => {
+    mockSessionStorage.setItem('cortex_encrypted_keys_v1', 'x');
+    mockSessionStorage.setItem('cortex_device_id', 'y');
+    mockSessionStorage.setItem('unrelated', 'z');
+
+    await clearAllKeys();
+
+    expect(mockSessionStorage.getItem('cortex_encrypted_keys_v1')).toBeNull();
+    expect(mockSessionStorage.getItem('cortex_device_id')).toBeNull();
+    expect(mockSessionStorage.getItem('unrelated')).toBe('z');
   });
 });

@@ -11,6 +11,8 @@ import {
   unwrapDek,
   encryptFileWithDek,
   decryptFileWithDek,
+  getWrappedDekVersion,
+  CURRENT_DEK_VERSION,
   DekUnwrapError,
 } from '../../src/lib/envelope-encryption';
 
@@ -220,6 +222,33 @@ describe('Envelope Encryption Property Tests', () => {
           const decrypted2 = decryptFileWithDek(result2.encryptedContent, result2.wrappedDek, kek);
           expect(decrypted1).toEqual(content);
           expect(decrypted2).toEqual(content);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  /**
+   * Feature: cortex-backup, Property 39: DEK version compatibility
+   *
+   * Validates: Requirements 32.1, 32.2, 32.3, 32.5
+   *
+   * Every freshly wrapped DEK carries CURRENT_DEK_VERSION and unwraps; a version
+   * outside SUPPORTED_DEK_VERSIONS is refused rather than mis-decrypted.
+   */
+  test('Property 39: wrapped DEKs carry a supported version; unknown versions are refused', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.uint8Array({ minLength: 32, maxLength: 32 }), // DEK
+        fc.uint8Array({ minLength: 32, maxLength: 32 }), // KEK
+        async (dek, kek) => {
+          const wrapped = await wrapDek(dek, kek);
+          expect(getWrappedDekVersion(wrapped)).toBe(CURRENT_DEK_VERSION);
+          expect(unwrapDek(wrapped, kek)).toEqual(dek);
+
+          const tampered = wrapped.slice();
+          tampered[0] = 0x7f; // outside SUPPORTED_DEK_VERSIONS
+          expect(() => unwrapDek(tampered, kek)).toThrow(DekUnwrapError);
         }
       ),
       { numRuns: 100 }
