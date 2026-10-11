@@ -109,8 +109,8 @@ export default function RecoverVault() {
         <Banner status="success" title={`Phrase accepted. It opens ${targetName ?? 'this vault'}.`} />
         {unverified && (
           <Text as="p" type="supporting">
-            If this vault has no files yet, we can't confirm the phrase; continuing will re-secure it with your new
-            password.
+            We'll verify the phrase against this vault's encrypted data before changing anything. If the vault has no
+            encrypted data yet, recovery is refused.
           </Text>
         )}
         <form onSubmit={onSetPassword}>

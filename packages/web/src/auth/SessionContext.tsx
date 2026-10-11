@@ -33,8 +33,9 @@ import {
 } from '../api/client';
 import type { VaultRecord, VmkEnvelopeRecord } from '../api/client';
 import { ConflictError } from '@cortex/client';
-import { listAllItems } from '../api/items';
+import { listAllItems, listItems } from '../api/items';
 import { listAllCollections } from '../api/collections';
+import { decryptMetadata } from '../items/metadata';
 import { rotateItems, rotateCollections, stragglers } from '../items/key-rotation';
 import {
   keysFromPhrase,
@@ -77,6 +78,37 @@ export const ROTATION_INCOMPLETE = 'Some files still need re-keying; the key rot
 
 // Thrown by recoverVault while a key rotation holds the lock: the device cannot know the new VMK.
 export const RECOVERY_BLOCKED_BY_ROTATION = 'A key rotation is in progress; finish it before recovering this vault';
+
+// Does the phrase's metadata key open anything already stored in the vault? Used during recovery
+// to prove a phrase when the vault has no server-side encrypted name. An empty vault proves
+// nothing, and the caller must refuse: a wrong but well-formed phrase would otherwise re-wrap the
+// surviving VMK irreversibly.
+async function provesOwnership(vaultId: string, currentVmkVersion: number, metadataKey: Uint8Array): Promise<boolean> {
+  const [items, collections] = await Promise.all([listItems(vaultId), listAllCollections(vaultId)]);
+  const oldKeyItems = items.filter(
+    (i) => i.itemType === 'MEDIA' && i.encryptedMetadata && (i.dekVersion ?? 0) <= currentVmkVersion,
+  );
+  if (oldKeyItems.length) {
+    return oldKeyItems.some((i) => {
+      try {
+        decryptMetadata(i.encryptedMetadata!, metadataKey);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  }
+  const withMetadata = collections.filter((c) => c.encryptedMetadata);
+  if (!withMetadata.length) return false; // nothing to prove against
+  return withMetadata.some((c) => {
+    try {
+      decryptCollectionName(c.encryptedMetadata!, metadataKey);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
 
 export interface SessionValue {
   status: SessionStatus;
@@ -392,17 +424,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           createdAt: e.createdAt,
         }));
         if (!out.length) throw new Error(WRONG_VAULT_PASSWORD);
+        let opened = false;
         for (const envelope of out) {
           let vmk: Uint8Array;
           try {
-            vmk = unwrapVmk(envelope.wrappedVmk, oldKey); // a wrong current password fails here
+            vmk = unwrapVmk(envelope.wrappedVmk, oldKey);
           } catch {
-            throw new Error(WRONG_VAULT_PASSWORD);
+            // A superseded generation (e.g. wrapped before a recovery on another device) that the
+            // current password no longer opens: leave it unchanged rather than blocking the
+            // change forever. The server only requires the version set to be preserved.
+            continue;
           }
+          opened = true;
           envelope.wrappedVmk = await wrapVmk(vmk, newKey);
           envelope.createdAt = new Date();
           secureZeroize(vmk);
         }
+        if (!opened) throw new Error(WRONG_VAULT_PASSWORD); // no envelope opened ⇒ wrong password
         return out;
       };
       try {
@@ -495,9 +533,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setRotationInterrupted(false);
         return generateRecoveryKey(vmkNew);
       } catch (err) {
-        // ACQUIRE already committed and bumped currentVmkVersion; the next unlock derives the
-        // new keys. Leave the registry consistent and the rotation IN_PROGRESS (resumable).
-        patchEntry(vaultId, { currentVmkVersion: newVersion, rotationState: 'IN_PROGRESS', vaultSalt: vault.vaultSalt });
+        // ACQUIRE committed and the server bumped currentVmkVersion, but storeKeys was not called,
+        // so this client still holds the OLD KEK. Do NOT advance currentVmkVersion in the registry:
+        // advertising a version whose KEK the client cannot unwrap would tag uploads with an
+        // unreadable dekVersion. The next unlock reads GetVault and adopts the new keys/version.
+        patchEntry(vaultId, { rotationState: 'IN_PROGRESS', vaultSalt: vault.vaultSalt });
         setRotationInterrupted(true);
         throw err;
       } finally {
@@ -529,8 +569,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const vault = await getVault(vaultId);
         if (vault.rotationState !== 'IDLE') throw new Error(RECOVERY_BLOCKED_BY_ROTATION);
 
-        // Prove the phrase before any write: the vault was encrypted by the phrase's keys, so
-        // decrypting its name must succeed. A well-formed but wrong phrase never overwrites.
+        // Prove the phrase before any write. Normally the vault's encrypted name is the proof;
+        // when it is absent (a name write that failed, or a legacy row) fall back to an old-key
+        // item or a collection. If there is nothing at all to prove against, refuse: a wrong but
+        // well-formed phrase must never overwrite the surviving VMK.
         let name = target?.name ?? known.find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
         if (vault.encryptedName) {
           try {
@@ -538,6 +580,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           } catch {
             throw new Error(PHRASE_ERROR);
           }
+        } else if (!(await provesOwnership(vaultId, vault.currentVmkVersion, keys.metadataEncryptionKey))) {
+          throw new Error(PHRASE_ERROR);
         }
 
         const newKey = await deriveWrappingKey(newPassword, vault.vaultSalt);

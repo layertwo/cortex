@@ -91,7 +91,7 @@ describe('RecoverVault', () => {
     expect(screen.getByText(/family archive/i)).toBeInTheDocument();
   });
 
-  it('the kit path warns that an empty vault cannot be proven before re-securing it', async () => {
+  it('the kit path warns that a vault with no data cannot prove the phrase', async () => {
     recovery.identifyVaultForPhrase.mockReturnValue(null);
     session.vaults = [];
     render(
@@ -103,7 +103,7 @@ describe('RecoverVault', () => {
     const file = new File([kit], 'kit.txt', { type: 'text/plain' });
     await userEvent.upload(screen.getByLabelText(/recovery kit file/i), file);
     await userEvent.click(screen.getByRole('button', { name: /continue · 24 of 24/i }));
-    expect(screen.getByText(/if this vault has no files yet, we can't confirm the phrase/i)).toBeInTheDocument();
+    expect(screen.getByText(/no encrypted data yet, recovery is refused/i)).toBeInTheDocument();
   });
 
   it('does not show the empty-vault warning on the local path', async () => {
@@ -114,7 +114,7 @@ describe('RecoverVault', () => {
     );
     pastePhrase();
     await userEvent.click(screen.getByRole('button', { name: /continue · 24 of 24/i }));
-    expect(screen.queryByText(/can't confirm the phrase/i)).toBeNull();
+    expect(screen.queryByText(/no encrypted data yet, recovery is refused/i)).toBeNull();
   });
 
   it('a recovery failure returns to the password step with the error', async () => {
