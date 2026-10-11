@@ -38,7 +38,7 @@ class TestCreateShareRoute:
             },
             expected_params={
                 "TableName": items_table_name,
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
             },
         )
 
@@ -150,7 +150,7 @@ class TestGetShareRoute:
             },
             expected_params={
                 "TableName": items_table_name,
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
             },
         )
 

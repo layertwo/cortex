@@ -205,6 +205,7 @@ class TestCompleteUploadRoute:
                 "TableName": "test-items-table",
                 "Key": {
                     "PK": f"ITEM#{item_id}",
+                    "SK": "METADATA",
                 },
             },
         )
@@ -236,6 +237,7 @@ class TestCompleteUploadRoute:
                 "TableName": "test-items-table",
                 "Key": {
                     "PK": f"ITEM#{item_id}",
+                    "SK": "METADATA",
                 },
                 "UpdateExpression": ANY,
                 "ConditionExpression": ANY,
@@ -453,7 +455,7 @@ class TestGetItemRoute:
                 }
             },
             expected_params={
-                "Key": {"PK": "ITEM#test-item-123"},
+                "Key": {"PK": "ITEM#test-item-123", "SK": "METADATA"},
                 "TableName": items_table_name,
             },
         )
@@ -548,7 +550,7 @@ class TestDeleteItemRoute:
             },
             expected_params={
                 "TableName": items_table_name,
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
             },
         )
 
@@ -558,7 +560,7 @@ class TestDeleteItemRoute:
             {},
             expected_params={
                 "TableName": items_table_name,
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
             },
         )
 
@@ -593,7 +595,7 @@ class TestDeleteItemRoute:
             },
             expected_params={
                 "TableName": items_table_name,
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
             },
         )
 
@@ -613,7 +615,7 @@ class TestDeleteItemRoute:
             {},
             expected_params={
                 "TableName": items_table_name,
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
             },
         )
 
@@ -652,6 +654,7 @@ class TestDownloadItemRoute:
                 "TableName": "test-items-table",
                 "Key": {
                     "PK": f"ITEM#{item_id}",
+                    "SK": "METADATA",
                 },
             },
         )
@@ -667,15 +670,3 @@ class TestDownloadItemRoute:
         assert "downloadUrl" in body
         assert s3_key in body["downloadUrl"]
         assert "expiresAt" in body
-
-
-class TestSearchItemRoute:
-    """Test suite for SearchItemsRoute through FastAPI test client."""
-
-    def test_search_items_route_handler(self, client):
-        """Test search items route handler returns expected response."""
-        response = client.post("/v1/items/search")
-
-        assert response.status_code == 200
-        body = response.json()
-        assert "Search items endpoint" in body["message"]

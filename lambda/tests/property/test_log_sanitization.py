@@ -273,7 +273,7 @@ class TestRuntimeLogCapture:
                     "encrypted_metadata": {"B": b"opaque"},
                 }
             },
-            {"TableName": self.ITEMS_TABLE, "Key": {"PK": f"ITEM#{item_id}"}},
+            {"TableName": self.ITEMS_TABLE, "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
         # Stub put_item for shares table.
         dynamodb_stubber.add_response("put_item", {}, {"TableName": self.SHARES_TABLE, "Item": ANY})

@@ -84,7 +84,7 @@ class ShareService:
             NotFoundError: If item not found or user doesn't own it
         """
         # Verify user owns the item
-        item_key = {"PK": f"ITEM#{request.item_id}"}
+        item_key = {"PK": f"ITEM#{request.item_id}", "SK": "METADATA"}
         item = self.items_repo.get_item(item_key)
 
         if not item:
@@ -129,12 +129,10 @@ class ShareService:
             },
         )
 
-        # ponytail: password-protected shares aren't implemented yet — always False.
         return CreateShareResponseContent(
             share_id=share_id,
             created_at=now,
             expires_at=expires_at,
-            is_password_protected=False,
         )
 
     def get_share(self, share_id: str, client_ip: str) -> GetShareResponseContent:
@@ -180,7 +178,7 @@ class ShareService:
 
         # Fetch item to get S3 key
         item_id = share["item_id"]
-        item_key = {"PK": f"ITEM#{item_id}"}
+        item_key = {"PK": f"ITEM#{item_id}", "SK": "METADATA"}
         item = self.items_repo.get_item(item_key)
 
         if not item:
@@ -221,7 +219,6 @@ class ShareService:
             url_expires_at=url_expires_at,
             encrypted_metadata=_encode_binary(item["encrypted_metadata"]),
             expires_at=int(expires_at) if expires_at is not None else None,
-            is_password_protected=False,
         )
 
     def revoke_share(self, user_id: str, share_id: str) -> RevokeShareResponseContent:

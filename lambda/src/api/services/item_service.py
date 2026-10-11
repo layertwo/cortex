@@ -63,6 +63,11 @@ def tag_index_key(vault_id: str, item_id: str, tag: bytes) -> dict:
     }
 
 
+def item_key(item_id: str) -> dict:
+    """Primary key of an item row. The items table has a required constant SK."""
+    return {"PK": f"ITEM#{item_id}", "SK": "METADATA"}
+
+
 class ItemService:
     """Service layer for item operations."""
 
@@ -303,7 +308,7 @@ class ItemService:
         The client requests fresh batches as it uploads, so URLs never outlive
         the 15-minute presign window during a long transfer.
         """
-        item = self.items_repo.get_item({"PK": f"ITEM#{item_id}"})
+        item = self.items_repo.get_item(item_key(item_id))
         if not item or item["user_id"] != user_id:
             raise NotFoundError("Item not found")
 
@@ -329,7 +334,7 @@ class ItemService:
         self, user_id: str, item_id: str, request: AbortItemUploadRequestContent
     ) -> AbortItemUploadResponseContent:
         """Abort an in-progress multipart upload and delete the pending item."""
-        key = {"PK": f"ITEM#{item_id}"}
+        key = item_key(item_id)
         item = self.items_repo.get_item(key)
         if not item or item["user_id"] != user_id:
             raise NotFoundError("Item not found")
@@ -374,7 +379,7 @@ class ItemService:
             StorageError: If DynamoDB operation fails or S3 verification fails
         """
         # Retrieve item from DynamoDB
-        key = {"PK": f"ITEM#{item_id}"}
+        key = item_key(item_id)
 
         item = self.items_repo.get_item(key)
 
@@ -539,9 +544,7 @@ class ItemService:
                     raise
 
             # Delete DynamoDB metadata
-            key = {
-                "PK": f"ITEM#{item_id}",
-            }
+            key = item_key(item_id)
 
             self.items_repo.delete_item(key)
             logger.info("Cleaned up DynamoDB metadata", **{"item_id": item_id})
@@ -656,7 +659,7 @@ class ItemService:
             AuthorizationError: If user doesn't own the item
             StorageError: If DynamoDB operation fails
         """
-        key = {"PK": f"ITEM#{item_id}"}
+        key = item_key(item_id)
 
         item = self.items_repo.get_item(key)
 
@@ -695,7 +698,7 @@ class ItemService:
         tag-index rows are reconciled best-effort; orphans are harmless, exactly
         as on the delete path.
         """
-        key = {"PK": f"ITEM#{item_id}"}
+        key = item_key(item_id)
         item = self.items_repo.get_item(key)
         if not item or item["user_id"] != user_id:
             raise NotFoundError("Item not found")
@@ -814,9 +817,7 @@ class ItemService:
             StorageError: If DynamoDB or S3 operation fails
         """
         # Retrieve item from DynamoDB
-        key = {
-            "PK": f"ITEM#{item_id}",
-        }
+        key = item_key(item_id)
 
         item = self.items_repo.get_item(key)
 
@@ -849,13 +850,18 @@ class ItemService:
         # Get S3 key
         s3_key = item["s3_key"]
 
-        # Verify S3 object exists
+        # Verify S3 object exists. object_exists is False only on a definitive
+        # 404 (transient errors raise), so a missing object means this metadata
+        # row is dangling: it lists fine but every download 404s. Clean it up.
         if not self.s3_repo.object_exists(s3_key):
-            # TODO consider if all checks pass but object does not exist
             logger.error(
-                "S3 object not found for item",
+                "S3 object not found for item - removing dangling metadata",
                 **{"item_id": item_id},
             )
+            self.items_repo.delete_item(key)
+            encrypted_tags = item.get("encrypted_tags")
+            if encrypted_tags:
+                self._delete_tag_index_rows(item["vault_id"], item_id, encrypted_tags)
             raise NotFoundError("File not found in storage")
 
         # Generate presigned download URL
@@ -894,8 +900,8 @@ class ItemService:
             AuthorizationError: If user doesn't own the item
             StorageError: If deletion operation fails
         """
-        # Direct get using item_id only (no item_type in SK needed)
-        key = {"PK": f"ITEM#{item_id}"}
+        # Direct get by item id (constant SK, shared with the tag index rows)
+        key = item_key(item_id)
 
         item = self.items_repo.get_item(key)
 

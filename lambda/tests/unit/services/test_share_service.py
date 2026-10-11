@@ -44,7 +44,7 @@ class TestCreateShare:
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
                 }
             },
-            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}"}},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
 
         # Stub put_item for shares table
@@ -79,7 +79,7 @@ class TestCreateShare:
                     "item_type": {"S": "MEDIA"},
                 }
             },
-            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}"}},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
 
         # Stub put_item for shares table
@@ -119,7 +119,7 @@ class TestCreateShare:
                     "vault_id": {"S": "vault-123"},
                 }
             },
-            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}"}},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
 
         request = CreateShareRequest(item_id=item_id)
@@ -205,7 +205,7 @@ class TestGetShare:
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
                 }
             },
-            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}"}},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
 
         # Stub update access count
