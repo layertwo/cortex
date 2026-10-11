@@ -260,7 +260,7 @@ class TestCompleteUpload:
                     "upload_status": {"S": "PENDING"},
                 }
             },
-            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}"}},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
         )
 
         s3_stubber.add_response(
@@ -279,7 +279,7 @@ class TestCompleteUpload:
             },
             {
                 "TableName": "test-items-table",
-                "Key": {"PK": f"ITEM#{item_id}"},
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
                 "UpdateExpression": ANY,
                 "ConditionExpression": ANY,
                 "ExpressionAttributeValues": ANY,
@@ -532,7 +532,7 @@ class TestGetItem:
                     "version": {"N": "1"},
                 }
             },
-            {"TableName": "test-items-table", "Key": {"PK": "ITEM#item-1"}},
+            {"TableName": "test-items-table", "Key": {"PK": "ITEM#item-1", "SK": "METADATA"}},
         )
 
         item = item_service.get_item("user-123", "item-1")
@@ -545,7 +545,9 @@ class TestGetItem:
     def test_get_item_not_found(self, item_service, dynamodb_stubber):
         """Test retrieving non-existent item."""
         dynamodb_stubber.add_response(
-            "get_item", {}, {"TableName": "test-items-table", "Key": {"PK": "ITEM#nonexistent"}}
+            "get_item",
+            {},
+            {"TableName": "test-items-table", "Key": {"PK": "ITEM#nonexistent", "SK": "METADATA"}},
         )
 
         with pytest.raises(NotFoundError):
@@ -756,9 +758,20 @@ class TestGetDownloadUrl:
         )
         # head_object returns 404 → object_exists returns False
         s3_stubber.add_client_error("head_object", service_error_code="404")
+        # The dangling metadata row is removed so the item stops listing.
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"},
+            },
+        )
 
         with pytest.raises(NotFoundError, match="File not found"):
             item_service.get_download_url(user_id, item_id)
+
+        dynamodb_stubber.assert_no_pending_responses()
 
 
 class TestDeleteItem:

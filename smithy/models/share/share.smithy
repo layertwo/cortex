@@ -70,9 +70,6 @@ structure CreateShareInput {
 
     @documentation("Share expiration timestamp (optional)")
     expiresAt: Timestamp
-
-    @documentation("Whether share is password protected")
-    isPasswordProtected: Boolean = false
 }
 
 structure CreateShareOutput {
@@ -86,10 +83,6 @@ structure CreateShareOutput {
 
     @documentation("Expiration timestamp")
     expiresAt: Timestamp
-
-    @required
-    @documentation("Whether share is password protected")
-    isPasswordProtected: Boolean
 }
 
 structure GetShareInput {
@@ -122,10 +115,6 @@ structure GetShareOutput {
 
     @documentation("Share expiration timestamp")
     expiresAt: Timestamp
-
-    @required
-    @documentation("Whether share is password protected")
-    isPasswordProtected: Boolean
 }
 
 structure RevokeShareInput {

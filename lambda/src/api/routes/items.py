@@ -436,21 +436,3 @@ class DownloadItemRoute(BaseRoute):
                 download_url=download_url,
                 expires_at=expires_at.timestamp(),
             )
-
-
-class SearchItemsRoute(BaseRoute):
-    """Handle item search across types."""
-
-    def __init__(self, item_service: ItemService):
-        self.item_service = item_service
-
-    def register(self, app: APIRouter) -> None:
-        @app.post("/v1/items/search")
-        def handle():
-            """
-            Search across types or specific type.
-
-            This endpoint will be implemented in task 15.1.
-            """
-            logger.info("Search items endpoint called")
-            return {"message": "Search items endpoint - to be implemented in task 15.1"}

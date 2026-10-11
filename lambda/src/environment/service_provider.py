@@ -39,7 +39,6 @@ from src.api.routes.items import (
     GetItemRoute,
     InitiateUploadRoute,
     ListItemsRoute,
-    SearchItemsRoute,
     UpdateItemRoute,
 )
 from src.api.routes.shares import CreateShareRoute, GetShareRoute, RevokeShareRoute
@@ -299,7 +298,6 @@ class ServiceProvider:
             UpdateItemRoute(item_service=self.item_service),
             DeleteItemRoute(item_service=self.item_service, vault_service=self.vault_service),
             DownloadItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-            SearchItemsRoute(item_service=self.item_service),
             CreateCollectionRoute(
                 collection_service=self.collection_service, vault_service=self.vault_service
             ),
