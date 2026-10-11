@@ -1385,3 +1385,21 @@ class TestVaultRotation:
         )
         with pytest.raises(ConflictError, match="already in progress"):
             self._rotate(vault_service, "RELEASE", "IN_PROGRESS")
+
+    def test_unknown_action_is_bad_request(self, vault_service):
+        """An action outside ACQUIRE/RELEASE is rejected before any write."""
+        with pytest.raises(BadRequestError, match="Unknown rotation action"):
+            self._rotate(vault_service, "PAUSE", "IDLE")
+
+    def test_acquire_on_a_deleting_vault_is_conflict(self, vault_service, dynamodb_stubber):
+        """ACQUIRE refuses a vault already marked for deletion (no write)."""
+        self._stub_read(dynamodb_stubber, deletion_state={"S": "DELETING"})
+        with pytest.raises(ConflictError, match="being deleted"):
+            self._rotate(
+                vault_service,
+                "ACQUIRE",
+                "IDLE",
+                expected_envelope_version=1,
+                new_vmk_version=2,
+                wrapped_new_vmk=WRAPPED,
+            )
