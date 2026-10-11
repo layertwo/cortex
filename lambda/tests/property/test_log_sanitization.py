@@ -280,7 +280,7 @@ class TestRuntimeLogCapture:
 
         from src.shared.models import CreateShareRequest
 
-        request = CreateShareRequest(item_id=item_id)
+        request = CreateShareRequest(item_id=item_id, encrypted_metadata=b"share-meta")
         share_service.create_share(user_id, request)
 
         entries = self._capture_log_entries(capsys)

@@ -4,9 +4,9 @@ import {
   verifyShareHmac,
   decodeShareBlob,
   unwrapDek,
+  base64ToBytes,
   DekUnwrapError,
 } from '@cortex/encryption';
-import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
 import { Banner } from '@astryxdesign/core/Banner';
@@ -14,23 +14,16 @@ import { Spinner } from '@astryxdesign/core/Spinner';
 import { VStack } from '@astryxdesign/core/VStack';
 import AuthFrame from './common/AuthFrame';
 import SubmitButton from './common/SubmitButton';
+import { getPublicShare, ShareFetchError } from '../api/shares';
+import { decryptMetadata } from '../items/metadata';
+import { blobSink, decryptStreamToSink } from '../items/streamingDownload';
 
-const NONCE_SIZE = 12;
 const MAX_FAILURES_BEFORE_BACKOFF = 3;
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
 
 interface ShareAccessProps {
   apiBaseUrl: string;
-}
-
-interface ShareMetadata {
-  itemId: string;
-  wrappedDek: string; // base64
-  fileName: string;
-  contentType: string;
-  expiresAt: number | null;
-  downloadUrl: string;
 }
 
 type AccessState =
@@ -40,6 +33,10 @@ type AccessState =
   | { step: 'decrypting' }
   | { step: 'done'; fileName: string };
 
+/**
+ * Anonymous share access: the password derives the share key, which unwraps the DEK
+ * carried in the URL fragment and decrypts the file metadata stored on the server.
+ */
 export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
   const [state, setState] = useState<AccessState>({ step: 'loading' });
   const [password, setPassword] = useState('');
@@ -76,6 +73,24 @@ export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
     setState({ step: 'password' });
   }, []);
 
+  const handleFailure = useCallback(
+    (message: string) => {
+      const newCount = failureCount + 1;
+      setFailureCount(newCount);
+
+      if (newCount >= MAX_FAILURES_BEFORE_BACKOFF) {
+        const backoffMs = Math.min(
+          BASE_BACKOFF_MS * Math.pow(2, newCount - MAX_FAILURES_BEFORE_BACKOFF),
+          MAX_BACKOFF_MS
+        );
+        setBackoffUntil(Date.now() + backoffMs);
+      }
+
+      setState({ step: 'error', message });
+    },
+    [failureCount]
+  );
+
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -98,61 +113,44 @@ export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
       const blobString = blobRef.current;
 
       try {
-        // 1. Decode the blob from the URL fragment
+        // 1. Decode the key material from the URL fragment
         const blob = decodeShareBlob(blobString);
 
-        // 2. Fetch share metadata from API
-        const metaResponse = await fetch(
-          `${apiBaseUrl}/v1/shares/${encodeURIComponent(shareId)}`
-        );
+        // 2. Fetch share metadata (anonymous)
+        const metadata = await getPublicShare(apiBaseUrl, shareId);
 
-        if (metaResponse.status === 410) {
-          setState({
-            step: 'error',
-            message: 'This share link has expired or been revoked.',
-          });
-          return;
-        }
-
-        if (metaResponse.status === 429) {
-          setState({
-            step: 'error',
-            message: 'Too many requests. Please try again later.',
-          });
-          return;
-        }
-
-        if (!metaResponse.ok) {
-          throw new Error(
-            `Failed to fetch share metadata: ${metaResponse.status}`
-          );
-        }
-
-        const metadata: ShareMetadata = await metaResponse.json();
-
-        // 3. Derive share keys from password + salt (from blob)
+        // 3. Derive share keys from password + salt (from the fragment)
         const shareKeys = await deriveShareKeys(password, blob.salt);
 
-        // 4. Verify HMAC
+        // 4. Verify the fragment HMAC against the server-reported expiry
         const hmacValid = verifyShareHmac(
           shareKeys.hmacKey,
           shareId,
           metadata.expiresAt ?? undefined,
           blob.hmac
         );
-
         if (!hmacValid) {
-          handleFailure('Incorrect password or tampered share link.');
           shareKeys.encryptionKey.fill(0);
           shareKeys.hmacKey.fill(0);
+          handleFailure('Incorrect password or tampered share link.');
           return;
         }
 
-        // 5. Unwrap the DEK using the share encryption key
-        const shareWrappedDek = base64ToUint8(metadata.wrappedDek);
+        // 5. Decrypt the file metadata (name/type/size/contentId) with the share key
+        let meta;
+        try {
+          meta = decryptMetadata(base64ToBytes(metadata.encryptedMetadata), shareKeys.encryptionKey);
+        } catch {
+          shareKeys.encryptionKey.fill(0);
+          shareKeys.hmacKey.fill(0);
+          handleFailure('Incorrect password or corrupted share data.');
+          return;
+        }
+
+        // 6. Unwrap the DEK carried in the fragment
         let dek: Uint8Array;
         try {
-          dek = unwrapDek(shareWrappedDek, shareKeys.encryptionKey);
+          dek = unwrapDek(blob.wrappedDek, shareKeys.encryptionKey);
         } catch (err) {
           shareKeys.encryptionKey.fill(0);
           shareKeys.hmacKey.fill(0);
@@ -162,94 +160,40 @@ export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
           }
           throw err;
         }
-
-        // Zero share keys
         shareKeys.encryptionKey.fill(0);
         shareKeys.hmacKey.fill(0);
 
-        // 6. Download encrypted file
-        const fileResponse = await fetch(metadata.downloadUrl);
-        if (!fileResponse.ok) {
-          dek.fill(0);
-          throw new Error(
-            `Failed to download encrypted file: ${fileResponse.status}`
-          );
-        }
-        const encryptedContent = new Uint8Array(
-          await fileResponse.arrayBuffer()
+        // 7. Stream-decrypt the file straight into a download (zeroes the DEK).
+        await decryptStreamToSink(
+          metadata.downloadUrl,
+          meta,
+          dek,
+          blobSink(meta.name, meta.contentType),
         );
 
-        // 7. Decrypt with chacha20poly1305
-        //    Format: [nonce(12)][ciphertext + authTag]
-        if (encryptedContent.length < NONCE_SIZE + 16) {
-          dek.fill(0);
-          throw new Error('Encrypted file is too small to be valid.');
-        }
-
-        const nonce = encryptedContent.slice(0, NONCE_SIZE);
-        const ciphertext = encryptedContent.slice(NONCE_SIZE);
-
-        let plaintext: Uint8Array;
-        try {
-          const cipher = chacha20poly1305(dek, nonce);
-          plaintext = cipher.decrypt(ciphertext);
-        } catch {
-          dek.fill(0);
-          handleFailure('Decryption failed. The file may be corrupted.');
-          return;
-        } finally {
-          dek.fill(0);
-        }
-
-        // 8. Trigger browser download
-        const downloadBlob = new Blob([new Uint8Array(plaintext) as BlobPart], {
-          type: metadata.contentType || 'application/octet-stream',
-        });
-        const url = URL.createObjectURL(downloadBlob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = metadata.fileName || 'download';
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
-        URL.revokeObjectURL(url);
-
-        // Reset failure count on success
         setFailureCount(0);
         setBackoffUntil(null);
-
-        setState({ step: 'done', fileName: metadata.fileName || 'download' });
+        setState({ step: 'done', fileName: meta.name });
       } catch (err) {
-        if (
-          (state as { step: string }).step !== 'error'
-        ) {
+        if (err instanceof ShareFetchError) {
           setState({
             step: 'error',
             message:
-              err instanceof Error ? err.message : 'An unexpected error occurred.',
+              err.status === 410
+                ? 'This share link has expired or been revoked.'
+                : err.status === 429
+                  ? 'Too many requests. Please try again later.'
+                  : 'This share link could not be opened.',
           });
+          return;
         }
+        setState({
+          step: 'error',
+          message: err instanceof Error ? err.message : 'An unexpected error occurred.',
+        });
       }
     },
-    [password, apiBaseUrl, backoffUntil, state]
-  );
-
-  const handleFailure = useCallback(
-    (message: string) => {
-      const newCount = failureCount + 1;
-      setFailureCount(newCount);
-
-      if (newCount >= MAX_FAILURES_BEFORE_BACKOFF) {
-        const backoffMs = Math.min(
-          BASE_BACKOFF_MS * Math.pow(2, newCount - MAX_FAILURES_BEFORE_BACKOFF),
-          MAX_BACKOFF_MS
-        );
-        setBackoffUntil(Date.now() + backoffMs);
-      }
-
-      setState({ step: 'error', message });
-    },
-    [failureCount]
+    [password, apiBaseUrl, backoffUntil, handleFailure]
   );
 
   const handleRetry = useCallback(() => {
@@ -328,14 +272,4 @@ export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
       </form>
     </AuthFrame>
   );
-}
-
-/** Convert base64 string to Uint8Array */
-function base64ToUint8(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }

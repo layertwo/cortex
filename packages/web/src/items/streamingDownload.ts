@@ -95,15 +95,71 @@ async function readExactly(
 }
 
 /**
- * Stream-decrypt a chunked object straight to a sink.
+ * Stream-decrypt an already-fetched object URL to a sink using an already-unwrapped DEK.
  *
- * Reads the `header(13)` prefix off the response stream and unwraps the DEK
- * (passed in from the item record), then frames the rest into `chunkSize+16`
- * blocks. A block is emitted
+ * Reads the `header(13)` prefix off the response stream, then frames the rest into
+ * `chunkSize+16` blocks. A block is emitted
  * non-final only while strictly more than one block is buffered; whatever remains
  * at EOF is decrypted with `isFinal=true` — so a dropped tail makes a non-final
  * chunk read as final and fail authentication. Any decrypt failure discards the
- * partial sink. Memory stays O(chunkSize).
+ * partial sink. Memory stays O(chunkSize). Zeroes the DEK when done.
+ *
+ * Shared by the authenticated download and anonymous share access.
+ */
+export async function decryptStreamToSink(
+  url: string,
+  meta: FileMetadata,
+  dek: Uint8Array,
+  sink: DownloadSink,
+): Promise<void> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok || !res.body) throw new Error(`Download failed: ${(res as Response).status ?? 'no body'}`);
+    const reader = res.body.getReader();
+
+    const { head: header, rest } = await readExactly(reader, PREFIX_SIZE);
+    const { chunkSize, noncePrefix } = parseStreamHeader(header);
+
+    const blockSize = chunkSize + TAG_SIZE;
+    let buf = rest;
+    let index = 0;
+    // ponytail: one broad catch maps loop failures to the integrity message. The
+    // dominant failure here is a decryptChunk auth failure; a rare sink.write error
+    // (e.g. disk full) is mislabeled "integrity". Split the try if that matters.
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (value && value.length) buf = concat([buf, value]);
+        // Emit every block we KNOW is non-final: strictly more than one block buffered.
+        while (buf.length > blockSize) {
+          const block = buf.slice(0, blockSize);
+          buf = buf.slice(blockSize);
+          await sink.write(decryptChunk(block, {
+            dek, noncePrefix, index, isFinal: false, contentId: meta.contentId, header,
+          }));
+          index += 1;
+        }
+        if (done) break;
+      }
+      // Whatever remains is the final block (truncation makes a non-final chunk land here → reject).
+      await sink.write(decryptChunk(buf, {
+        dek, noncePrefix, index, isFinal: true, contentId: meta.contentId, header,
+      }));
+      await sink.close();
+    } catch {
+      await Promise.resolve(sink.abort()).catch(() => {});
+      throw new Error('File failed integrity check');
+    }
+  } finally {
+    dek.fill(0);
+  }
+}
+
+/**
+ * Download and stream-decrypt an authenticated item to a sink.
+ *
+ * Fetches the presigned URL and unwraps the item's DEK (bound to `meta.contentId`),
+ * then delegates to `decryptStreamToSink`.
  */
 export async function downloadFileStreaming(
   itemId: string,
@@ -113,45 +169,6 @@ export async function downloadFileStreaming(
   sink: DownloadSink,
 ): Promise<void> {
   const url = await getDownloadUrl(itemId);
-  const res = await fetch(url);
-  if (!res.ok || !res.body) throw new Error(`Download failed: ${(res as Response).status ?? 'no body'}`);
-  const reader = res.body.getReader();
-
-  // Prefix is just the stream header now; `rest` is the start of chunk 0.
-  const { head: header, rest } = await readExactly(reader, PREFIX_SIZE);
-  const { chunkSize, noncePrefix } = parseStreamHeader(header);
   const dek = unwrapDek(wrappedDek, kek, meta.contentId); // throws DekUnwrapError on wrong key/tamper
-
-  const blockSize = chunkSize + TAG_SIZE;
-  let buf = rest;
-  let index = 0;
-  // ponytail: one broad catch maps loop failures to the integrity message. The
-  // dominant failure here is a decryptChunk auth failure; a rare sink.write error
-  // (e.g. disk full) is mislabeled "integrity". Split the try if that matters.
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (value && value.length) buf = concat([buf, value]);
-      // Emit every block we KNOW is non-final: strictly more than one block buffered.
-      while (buf.length > blockSize) {
-        const block = buf.slice(0, blockSize);
-        buf = buf.slice(blockSize);
-        await sink.write(decryptChunk(block, {
-          dek, noncePrefix, index, isFinal: false, contentId: meta.contentId, header,
-        }));
-        index += 1;
-      }
-      if (done) break;
-    }
-    // Whatever remains is the final block (truncation makes a non-final chunk land here → reject).
-    await sink.write(decryptChunk(buf, {
-      dek, noncePrefix, index, isFinal: true, contentId: meta.contentId, header,
-    }));
-    await sink.close();
-  } catch {
-    await Promise.resolve(sink.abort()).catch(() => {});
-    throw new Error('File failed integrity check');
-  } finally {
-    dek.fill(0);
-  }
+  await decryptStreamToSink(url, meta, dek, sink);
 }

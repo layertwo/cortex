@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import {
   deriveShareKeys,
   computeShareHmac,
@@ -6,30 +6,33 @@ import {
   unwrapDek,
   wrapDek,
 } from '@cortex/encryption';
-
-/** Expiration option for share links */
-interface ExpirationOption {
-  label: string;
-  value: number | null; // seconds from now, or null for never
-}
-
-const EXPIRATION_OPTIONS: ExpirationOption[] = [
-  { label: 'Never', value: null },
-  { label: '1 hour', value: 3600 },
-  { label: '1 day', value: 86400 },
-  { label: '7 days', value: 604800 },
-  { label: '30 days', value: 2592000 },
-];
+import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
+import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
+import { TextInput } from '@astryxdesign/core/TextInput';
+import { Selector } from '@astryxdesign/core/Selector';
+import { Banner } from '@astryxdesign/core/Banner';
+import { Button } from '@astryxdesign/core/Button';
+import { HStack } from '@astryxdesign/core/HStack';
+import { VStack } from '@astryxdesign/core/VStack';
+import { createShare } from '../api/shares';
+import { encryptMetadata, type FileMetadata } from '../items/metadata';
+import { useAsyncAction } from './common/useAsyncAction';
 
 const MIN_PASSWORD_LENGTH = 16;
 const MIN_ENTROPY_BITS = 80;
 const SALT_SIZE = 16;
 const BLOB_VERSION = 0x01;
 
-/**
- * Estimate Shannon entropy of a password in bits.
- * Counts unique character classes and uses charset size * length.
- */
+// Expiration choices: label + seconds from now ('0' = never).
+const EXPIRATIONS = [
+  { value: '0', label: 'Never' },
+  { value: '3600', label: '1 hour' },
+  { value: '86400', label: '1 day' },
+  { value: '604800', label: '7 days' },
+  { value: '2592000', label: '30 days' },
+];
+
+/** Rough Shannon entropy estimate (charset size × length) in bits. */
 function estimatePasswordEntropy(password: string): number {
   let charsetSize = 0;
   if (/[a-z]/.test(password)) charsetSize += 26;
@@ -42,220 +45,157 @@ function estimatePasswordEntropy(password: string): number {
 
 interface ShareCreateProps {
   itemId: string;
+  /** Decrypted file metadata (carries the contentId that binds the DEK). */
+  meta: FileMetadata;
+  /** The item's vault-wrapped DEK. */
   wrappedDek: Uint8Array;
   vaultKek: Uint8Array;
-  apiBaseUrl: string;
+  onClose: () => void;
 }
 
-interface ShareResult {
-  shareUrl: string;
-  shareId: string;
-}
-
-export function ShareCreate({
-  itemId,
-  wrappedDek,
-  vaultKek,
-  apiBaseUrl,
-}: ShareCreateProps) {
+/**
+ * Create a password-protected share link.
+ *
+ * The share-wrapped DEK, salt, and HMAC travel in the URL fragment; the server only
+ * stores the share-key-encrypted metadata. Requires a vault-unlocked session (the
+ * caller supplies the KEK) but the recipient needs only the password.
+ */
+export function ShareCreate({ itemId, meta, wrappedDek, vaultKek, onClose }: ShareCreateProps) {
   const [password, setPassword] = useState('');
-  const [expirationIndex, setExpirationIndex] = useState(0);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ShareResult | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [expiration, setExpiration] = useState('0');
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const { pending, error, run } = useAsyncAction();
 
-  const passwordEntropy = estimatePasswordEntropy(password);
-  const isPasswordValid = password.length >= MIN_PASSWORD_LENGTH && passwordEntropy >= MIN_ENTROPY_BITS;
+  const entropy = estimatePasswordEntropy(password);
+  const isPasswordValid = password.length >= MIN_PASSWORD_LENGTH && entropy >= MIN_ENTROPY_BITS;
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!isPasswordValid || isSubmitting) return;
-
-      setIsSubmitting(true);
-      setError(null);
-      setResult(null);
-
+  function submit() {
+    void run(async () => {
+      const salt = crypto.getRandomValues(new Uint8Array(SALT_SIZE));
+      const shareKeys = await deriveShareKeys(password, salt);
       try {
-        // 1. Generate random salt
-        const salt = crypto.getRandomValues(new Uint8Array(SALT_SIZE));
-
-        // 2. Derive share encryption + HMAC keys from password + salt
-        const shareKeys = await deriveShareKeys(password, salt);
-
-        // 3. Unwrap the file DEK using vault KEK
-        const dek = unwrapDek(wrappedDek, vaultKek);
-
-        // 4. Re-wrap the DEK with the share encryption key
+        // Unwrap the item DEK (HMAC-bound to contentId), then re-wrap it under the
+        // share key. encodeShareBlob requires the unbound 65-byte form.
+        const dek = unwrapDek(wrappedDek, vaultKek, meta.contentId);
         const shareWrappedDek = await wrapDek(dek, shareKeys.encryptionKey);
-
-        // Zero the plaintext DEK
         dek.fill(0);
 
-        // 5. Compute expiration
-        const selectedExpiration = EXPIRATION_OPTIONS[expirationIndex];
-        const expiresAt = selectedExpiration.value
-          ? Math.floor(Date.now() / 1000) + selectedExpiration.value
-          : undefined;
-
-        // 6. POST /v1/shares to create the share record
-        const response = await fetch(`${apiBaseUrl}/v1/shares`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            item_id: itemId,
-            expires_at: expiresAt ?? null,
-          }),
-        });
-
-        if (!response.ok) {
-          const body = await response.text();
-          throw new Error(`Failed to create share: ${response.status} ${body}`);
-        }
-
-        const { share_id: shareId } = (await response.json()) as { share_id: string };
-
-        // 7. Compute HMAC over shareId (and optional expiry)
-        const hmacValue = computeShareHmac(
-          shareKeys.hmacKey,
-          shareId,
-          expiresAt
+        const seconds = Number(expiration);
+        const expiresAt = seconds > 0 ? Math.floor(Date.now() / 1000) + seconds : undefined;
+        // The recipient needs the filename, type, size, and the contentId that binds
+        // the stream — all opaque to the server.
+        const encryptedMetadata = await encryptMetadata(
+          {
+            name: meta.name,
+            contentType: meta.contentType,
+            size: meta.size,
+            contentId: meta.contentId,
+            ...(meta.streamVersion ? { streamVersion: meta.streamVersion } : {}),
+          },
+          shareKeys.encryptionKey,
         );
 
-        // 8. Encode the share blob
-        const blob = encodeShareBlob(
-          BLOB_VERSION,
-          salt,
-          shareWrappedDek,
-          hmacValue
-        );
+        const { shareId } = await createShare({ itemId, encryptedMetadata, expiresAt });
 
-        // 9. Construct share URL with blob in fragment
-        const origin = window.location.origin;
-        const shareUrl = `${origin}/s/${shareId}#${blob}`;
-
-        // Zero keys
+        const hmac = computeShareHmac(shareKeys.hmacKey, shareId, expiresAt);
+        const blob = encodeShareBlob(BLOB_VERSION, salt, shareWrappedDek, hmac);
+        setShareUrl(`${window.location.origin}/s/${shareId}#${blob}`);
+      } finally {
         shareKeys.encryptionKey.fill(0);
         shareKeys.hmacKey.fill(0);
-
-        setResult({ shareUrl, shareId });
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'An unexpected error occurred'
-        );
-      } finally {
-        setIsSubmitting(false);
       }
-    },
-    [password, isPasswordValid, isSubmitting, expirationIndex, itemId, wrappedDek, vaultKek, apiBaseUrl]
-  );
-
-  const handleCopy = useCallback(async () => {
-    if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result.shareUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback: select the text in the input
-      const input = document.querySelector<HTMLInputElement>(
-        '[data-testid="share-url-input"]'
-      );
-      if (input) {
-        input.select();
-      }
-    }
-  }, [result]);
-
-  // --- Result view ---
-  if (result) {
-    return (
-      <div style={{ padding: '1rem' }}>
-        <h3>Share Link Created</h3>
-
-        <div style={{ marginBottom: '0.5rem' }}>
-          <label htmlFor="share-url">Share URL</label>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-            <input
-              id="share-url"
-              data-testid="share-url-input"
-              type="text"
-              readOnly
-              value={result.shareUrl}
-              style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
-              onClick={(e) => (e.target as HTMLInputElement).select()}
-            />
-            <button type="button" onClick={handleCopy}>
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-        </div>
-
-        <p style={{ fontSize: '0.85rem', color: '#666' }}>
-          Share ID: <code>{result.shareId}</code>
-        </p>
-
-        <p style={{ fontSize: '0.8rem', color: '#996600' }}>
-          Warning: Do not use URL shorteners -- the fragment (after #) contains
-          encrypted key material and may be stripped by some services.
-        </p>
-      </div>
-    );
+    }, 'Could not create the share');
   }
 
-  // --- Form view ---
+  const copy = useCallback(async () => {
+    if (shareUrl) await navigator.clipboard.writeText(shareUrl);
+  }, [shareUrl]);
+
   return (
-    <form onSubmit={handleSubmit} style={{ padding: '1rem' }}>
-      <h3>Create Share Link</h3>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label htmlFor="share-password">
-          Password (minimum {MIN_PASSWORD_LENGTH} characters)
-        </label>
-        <input
-          id="share-password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          minLength={MIN_PASSWORD_LENGTH}
-          required
-          style={{ display: 'block', width: '100%', marginTop: '0.25rem' }}
-          disabled={isSubmitting}
-        />
-        {password.length > 0 && !isPasswordValid && (
-          <p style={{ color: 'red', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
-            {password.length < MIN_PASSWORD_LENGTH
-              ? `Password must be at least ${MIN_PASSWORD_LENGTH} characters (${password.length}/${MIN_PASSWORD_LENGTH})`
-              : `Password too weak — use a mix of upper/lowercase, numbers, and symbols (${passwordEntropy}/${MIN_ENTROPY_BITS} bits)`}
-          </p>
-        )}
-      </div>
-
-      <div style={{ marginBottom: '1rem' }}>
-        <label htmlFor="share-expiration">Expiration</label>
-        <select
-          id="share-expiration"
-          value={expirationIndex}
-          onChange={(e) => setExpirationIndex(Number(e.target.value))}
-          style={{ display: 'block', marginTop: '0.25rem' }}
-          disabled={isSubmitting}
-        >
-          {EXPIRATION_OPTIONS.map((opt, i) => (
-            <option key={i} value={i}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {error && (
-        <p style={{ color: 'red', marginBottom: '1rem' }}>{error}</p>
-      )}
-
-      <button type="submit" disabled={!isPasswordValid || isSubmitting}>
-        {isSubmitting ? 'Creating...' : 'Create Share Link'}
-      </button>
-    </form>
+    <Dialog
+      isOpen
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      purpose="form"
+    >
+      <Layout
+        height="auto"
+        header={<DialogHeader title="Create share link" onOpenChange={() => onClose()} />}
+        content={
+          <LayoutContent>
+            <VStack gap={3}>
+              {shareUrl ? (
+                <>
+                  <TextInput
+                    label="Share URL"
+                    value={shareUrl}
+                    isReadOnly
+                    description="Send this link and the password separately."
+                    onChange={() => {}}
+                  />
+                  <Banner
+                    status="warning"
+                    title="Do not use URL shorteners"
+                    description="The fragment after # holds the encrypted key material and some services strip it."
+                  />
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    label="Password"
+                    type="password"
+                    value={password}
+                    onChange={setPassword}
+                    description={`At least ${MIN_PASSWORD_LENGTH} characters with a mix of character types.`}
+                    status={
+                      password.length > 0 && !isPasswordValid
+                        ? {
+                            type: 'error',
+                            message:
+                              password.length < MIN_PASSWORD_LENGTH
+                                ? `Must be at least ${MIN_PASSWORD_LENGTH} characters (${password.length}/${MIN_PASSWORD_LENGTH}).`
+                                : `Too weak — mix upper/lowercase, numbers, and symbols (${entropy}/${MIN_ENTROPY_BITS} bits).`,
+                          }
+                        : undefined
+                    }
+                  />
+                  <Selector
+                    label="Expiration"
+                    options={EXPIRATIONS}
+                    value={expiration}
+                    onChange={setExpiration}
+                  />
+                  {error && <Banner status="error" title={error} />}
+                </>
+              )}
+            </VStack>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter>
+            <HStack gap={2} hAlign="end">
+              {shareUrl ? (
+                <>
+                  <Button label="Copy link" variant="primary" onClick={() => void copy()} />
+                  <Button label="Done" variant="ghost" onClick={onClose} />
+                </>
+              ) : (
+                <>
+                  <Button label="Cancel" variant="ghost" onClick={onClose} />
+                  <Button
+                    label="Create link"
+                    variant="primary"
+                    isLoading={pending}
+                    isDisabled={!isPasswordValid}
+                    onClick={submit}
+                  />
+                </>
+              )}
+            </HStack>
+          </LayoutFooter>
+        }
+      />
+    </Dialog>
   );
 }

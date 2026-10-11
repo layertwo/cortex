@@ -23,6 +23,7 @@ import { pickSink, downloadFileStreaming } from '../items/streamingDownload';
 import { formatBytes } from './common/formatBytes';
 import FileTypeGlyph from './common/FileTypeGlyph';
 import { useAsyncAction } from './common/useAsyncAction';
+import { ShareCreate } from './ShareCreate';
 import type { View } from './CollectionSidebar';
 
 // Astryx's data-driven Table requires row types to extend Record<string, unknown>.
@@ -51,6 +52,7 @@ export default function FileList({
   const [error, setError] = useState('');
   const [editing, setEditing] = useState<Row | null>(null);
   const [deleting, setDeleting] = useState<Row | null>(null);
+  const [sharing, setSharing] = useState<{ row: Row; kek: Uint8Array } | null>(null);
 
   // Callers may pass an inline callback; keep its identity out of `load`'s deps.
   const onLoadedRef = useRef(onLoaded);
@@ -119,6 +121,15 @@ export default function FileList({
       setError(err instanceof Error ? err.message : 'Delete failed');
     } finally {
       setDeleting(null);
+    }
+  }
+
+  async function onShare(row: Row) {
+    try {
+      const { kek } = await getVaultKeys();
+      setSharing({ row, kek });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open the share dialog');
     }
   }
 
@@ -194,6 +205,11 @@ export default function FileList({
               onClick: () => void onDownload(row),
             },
             {
+              label: 'Share',
+              isDisabled: !row.meta || !row.wrappedDek,
+              onClick: () => void onShare(row),
+            },
+            {
               label: 'Add to collection',
               isDisabled: !row.meta || collections.length === 0,
               items: collections.map((c) => ({
@@ -229,6 +245,15 @@ export default function FileList({
             setEditing(null);
             void load();
           }}
+        />
+      )}
+      {sharing?.row.meta && sharing.row.wrappedDek && (
+        <ShareCreate
+          itemId={sharing.row.itemId}
+          meta={sharing.row.meta}
+          wrappedDek={sharing.row.wrappedDek}
+          vaultKek={sharing.kek}
+          onClose={() => setSharing(null)}
         />
       )}
       <AlertDialog

@@ -202,7 +202,7 @@ class TestCreateShareRequest:
 
     def test_valid_request_minimal(self):
         """Should create valid request with minimal fields."""
-        request = CreateShareRequest(item_id="item-123")
+        request = CreateShareRequest(item_id="item-123", encrypted_metadata=b"share-meta")
 
         assert request.item_id == "item-123"
         assert request.expires_at is None
@@ -210,7 +210,9 @@ class TestCreateShareRequest:
     def test_with_expiration(self):
         """Should accept expiration timestamp as Unix epoch."""
         expires_at = 1738800000
-        request = CreateShareRequest(item_id="item-123", expires_at=expires_at)
+        request = CreateShareRequest(
+            item_id="item-123", encrypted_metadata=b"share-meta", expires_at=expires_at
+        )
 
         assert request.expires_at == expires_at
 
