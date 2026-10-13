@@ -66,3 +66,8 @@ jobs:
       # Runs test:encryption (jest) then test:web (vitest).
       - name: Run TypeScript/JS unit tests
         run: npm run test:all
+
+      # vitest transpiles without typechecking, so build:web's `tsc` is the only gate on
+      # the web tree's types (and the only thing that catches a broken vite build).
+      - name: Build web app (typecheck + bundle)
+        run: npm run build:web
