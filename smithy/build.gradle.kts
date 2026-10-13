@@ -12,12 +12,12 @@ smithy {
 }
 
 dependencies {
-    smithyBuild("software.amazon.smithy:smithy-aws-traits:1.73.0")
-    smithyBuild("software.amazon.smithy:smithy-aws-apigateway-traits:1.73.0")
-    smithyBuild("software.amazon.smithy:smithy-validation-model:1.73.0")
-    smithyBuild("software.amazon.smithy:smithy-openapi:1.73.0")
-    smithyBuild("software.amazon.smithy:smithy-aws-apigateway-openapi:1.73.0")
-    smithyBuild("software.amazon.smithy.typescript:smithy-aws-typescript-codegen:0.53.0")
+    smithyBuild("software.amazon.smithy:smithy-aws-traits:1.74.0")
+    smithyBuild("software.amazon.smithy:smithy-aws-apigateway-traits:1.74.0")
+    smithyBuild("software.amazon.smithy:smithy-validation-model:1.74.0")
+    smithyBuild("software.amazon.smithy:smithy-openapi:1.74.0")
+    smithyBuild("software.amazon.smithy:smithy-aws-apigateway-openapi:1.74.0")
+    smithyBuild("software.amazon.smithy.typescript:smithy-aws-typescript-codegen:0.54.0")
 }
 
 // Stage the generated TS client into the npm workspace so `npm ci` can resolve
