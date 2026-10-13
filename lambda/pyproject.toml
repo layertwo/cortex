@@ -1,14 +1,14 @@
 [project]
 name = "cortex-lambda-handler"
 version = "0.1.0"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
-    "boto3==1.43.98",
+    "boto3==1.43.112",
     "cryptography==50.0.2",
-    "pydantic==2.13.5",
-    "fastapi==0.141.1",
+    "pydantic==2.14.1",
+    "fastapi==0.143.0",
     "mangum==0.22.0",
-    "uvicorn[standard]==0.53.0",
+    "uvicorn[standard]==0.54.0",
     "structlog==26.1.0",
     "slowapi==0.1.10",
 ]
@@ -18,15 +18,15 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "pytest-xdist==3.8.0",
-    "black==26.5.1",
+    "black==26.10.1",
     "isort==8.0.1",
-    "flake8==7.3.0",
+    "flake8==7.4.1",
     "Flake8-pyproject==1.2.4",
-    "mypy==2.3.1",
-    "types-boto3==1.43.98",
+    "mypy==2.4.0",
+    "types-boto3==1.43.112",
     "hypothesis>=6.0.0",
     "httpx==0.28.1",
-    "datamodel-code-generator==0.82.0",
+    "datamodel-code-generator==0.83.0",
 ]
 
 [tool.pytest.ini_options]
