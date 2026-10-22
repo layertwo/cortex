@@ -15,6 +15,10 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['tests/**/*.test.ts'],
+    // Property tests run many HMAC/key-derivation iterations; Jest's 5s default
+    // is tight on CI runners.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
