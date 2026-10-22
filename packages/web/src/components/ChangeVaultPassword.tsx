@@ -79,7 +79,7 @@ export default function ChangeVaultPassword({ onDone }: { onDone: () => void }) 
                   isDisabled={pending}
                   status={confirm && confirm !== next ? { type: 'error' } : undefined}
                 />
-                {error && <Banner status="error" title={error} />}
+                {error && <Banner role="alert" status="error" title={error} />}
               </VStack>
             </form>
           </LayoutContent>

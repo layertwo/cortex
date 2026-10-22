@@ -55,6 +55,7 @@ export default function VaultUnlock() {
           />
           {error && (
             <Banner
+              role="alert"
               status="error"
               title={wrong ? `That isn't the vault password for ${chosen?.name ?? 'this vault'}.` : error}
               endContent={wrong && <Link href="/vault/recover">Recover with your 24 words</Link>}

@@ -226,7 +226,7 @@ export function ShareAccess({ apiBaseUrl }: ShareAccessProps) {
   if (state.step === 'error') {
     return (
       <AuthFrame title="Shared file access">
-        <Banner status="error" title="Could not open this share" description={state.message} />
+        <Banner role="alert" status="error" title="Could not open this share" description={state.message} />
         {shareIdRef.current && (
           <Button label="Try again" variant="primary" width="100%" onClick={handleRetry} />
         )}

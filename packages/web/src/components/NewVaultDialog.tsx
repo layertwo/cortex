@@ -76,7 +76,7 @@ export default function NewVaultDialog({ onClose }: { onClose: () => void }) {
                     onChange={setConfirm}
                     status={confirm && confirm !== password ? { type: 'error' } : undefined}
                   />
-                  {error && <Banner status="error" title={error} />}
+                  {error && <Banner role="alert" status="error" title={error} />}
                 </VStack>
               </form>
             )}

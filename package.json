@@ -26,8 +26,8 @@
   "author": "",
   "license": "MIT",
   "allowScripts": {
-    "@astryxdesign/cli@0.6.8": true,
-    "@astryxdesign/core@0.6.8": true,
+    "@astryxdesign/cli@0.7.2": true,
+    "@astryxdesign/core@0.7.2": true,
     "@parcel/watcher@2.6.0": true,
     "fsevents@2.3.3": true,
     "unrs-resolver@1.12.2": true

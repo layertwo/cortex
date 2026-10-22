@@ -81,7 +81,7 @@ export default function ManageVaultsDialog({
           content={
             <LayoutContent>
               <VStack gap={3}>
-                {error && <Banner status="error" title={error} />}
+                {error && <Banner role="alert" status="error" title={error} />}
                 {vaults.map((v) => {
                   const isOpen = v.vaultId === activeVault?.vaultId;
                   return (

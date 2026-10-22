@@ -77,7 +77,7 @@ export default function RotateKeysDialog({ onDone }: { onDone: () => void }) {
                     value={password}
                     onChange={setPassword}
                   />
-                  {error && <Banner status="error" title={error} />}
+                  {error && <Banner role="alert" status="error" title={error} />}
                 </VStack>
               </form>
             )}

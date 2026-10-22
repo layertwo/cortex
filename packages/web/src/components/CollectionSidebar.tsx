@@ -137,7 +137,7 @@ export default function CollectionSidebar({
           />
         ))}
       </SideNavSection>
-      {error && <Banner status="error" title={error} />}
+      {error && <Banner role="alert" status="error" title={error} />}
 
       <Dialog
         isOpen={creating}
@@ -159,7 +159,7 @@ export default function CollectionSidebar({
                   onChange={setNewName}
                   onEnter={onCreate}
                 />
-                {create.error && <Banner status="error" title={create.error} />}
+                {create.error && <Banner role="alert" status="error" title={create.error} />}
               </VStack>
             </LayoutContent>
           }

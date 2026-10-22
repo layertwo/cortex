@@ -83,7 +83,7 @@ export default function VaultSetup() {
             onChange={setConfirm}
             status={confirm && confirm !== password ? { type: 'error' } : undefined}
           />
-          {error && <Banner status="error" title={error} />}
+          {error && <Banner role="alert" status="error" title={error} />}
           <SubmitButton label="Create vault" isLoading={pending} isDisabled={!password || !confirm} />
         </VStack>
       </form>

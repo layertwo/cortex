@@ -63,7 +63,7 @@ export default function DeleteVaultDialog({ vault, onClose }: { vault: VaultEntr
                   isDisabled={pending}
                 />
                 {pending && <Text as="p">{`Deleting… ${removed} files removed`}</Text>}
-                {error && <Banner status="error" title={error.message} />}
+                {error && <Banner role="alert" status="error" title={error.message} />}
               </VStack>
             </form>
           </LayoutContent>
