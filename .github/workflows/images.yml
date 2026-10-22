@@ -1,0 +1,112 @@
+name: images
+
+on:
+  push:
+    paths:
+      - '.github/workflows/images.yml'
+      - 'packages/**'
+      - 'lambda/**'
+      - 'smithy/**'
+      - 'package.json'
+      - 'package-lock.json'
+    branches: [ "mainline" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: corretto
+          java-version: 17
+          cache: gradle
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: 'lambda/uv.lock'
+
+      - name: Install Lambda dev dependencies (codegen)
+        working-directory: lambda
+        run: uv sync --group dev
+
+      # Generates lambda/src/shared/generated/models.py (baked into the API image) and
+      # stages the Smithy TS client into packages/client (needed by the web build).
+      - name: Generate Smithy artifacts
+        run: bash lambda/scripts/codegen.sh
+
+      - name: Install workspace dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build client + encryption packages
+        run: |
+          npm run build:client
+          npm run build:encryption
+
+      # The OIDC issuer/client are baked into the SPA at build time (Vite), so the
+      # repository variables must point at this deployment's provider.
+      - name: Require OIDC build config
+        env:
+          VITE_OIDC_ISSUER: ${{ vars.VITE_OIDC_ISSUER }}
+          VITE_OIDC_CLIENT_ID: ${{ vars.VITE_OIDC_CLIENT_ID }}
+        run: |
+          test -n "$VITE_OIDC_ISSUER" || { echo "::error::Set repository variable VITE_OIDC_ISSUER"; exit 1; }
+          test -n "$VITE_OIDC_CLIENT_ID" || { echo "::error::Set repository variable VITE_OIDC_CLIENT_ID"; exit 1; }
+
+      - name: Build web app
+        env:
+          VITE_OIDC_ISSUER: ${{ vars.VITE_OIDC_ISSUER }}
+          VITE_OIDC_CLIENT_ID: ${{ vars.VITE_OIDC_CLIENT_ID }}
+        run: npm run build:web
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log into the registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v7
+        with:
+          context: lambda
+          push: true
+          tags: |
+            ghcr.io/layertwo/cortex-api:latest
+            ghcr.io/layertwo/cortex-api:${{ github.sha }}
+          cache-from: type=gha,scope=cortex-api
+          cache-to: type=gha,mode=max,scope=cortex-api
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v7
+        with:
+          context: packages/web
+          push: true
+          tags: |
+            ghcr.io/layertwo/cortex-web:latest
+            ghcr.io/layertwo/cortex-web:${{ github.sha }}
+          cache-from: type=gha,scope=cortex-web
+          cache-to: type=gha,mode=max,scope=cortex-web

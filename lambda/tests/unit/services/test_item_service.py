@@ -214,7 +214,6 @@ class TestInitiateUpload:
                 "Key": ANY,
                 # presigned PUT is signed with a fixed content type (zero-knowledge)
                 "ContentType": "application/octet-stream",
-                "ServerSideEncryption": "AES256",
             },
         )
 
@@ -1185,7 +1184,6 @@ class TestInitiateReturnsUploadId:
                 "Bucket": files_bucket_name,
                 "Key": ANY,
                 "ContentType": ANY,
-                "ServerSideEncryption": "AES256",
             },
         )
         dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})

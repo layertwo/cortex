@@ -84,6 +84,18 @@ npm run build
 npm test
 ```
 
+### Container Images
+
+`.github/workflows/images.yml` publishes two images to GHCR on every push to `mainline`:
+
+- `ghcr.io/layertwo/cortex-api` — the FastAPI backend (`lambda/Dockerfile`)
+- `ghcr.io/layertwo/cortex-web` — the static SPA (`packages/web/Dockerfile`)
+
+The SPA bakes in `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID` at build time; set both as
+repository variables. The API reads `OIDC_ISSUER` / `OIDC_CLIENT_ID` at runtime and, for
+S3-compatible storage or DynamoDB alternatives, `AWS_ENDPOINT_URL_S3` /
+`AWS_ENDPOINT_URL_DYNAMODB`.
+
 ## Architecture
 
 ### Technology Stack

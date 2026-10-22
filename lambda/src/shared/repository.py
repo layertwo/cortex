@@ -521,11 +521,12 @@ class S3Repository:
             StorageError: If initiation fails
         """
         try:
+            # No SSE-S3: files are client-side encrypted, and S3-compatible stores
+            # (Garage) do not implement the header.
             response = self._client.create_multipart_upload(
                 Bucket=self.bucket_name,
                 Key=object_key,
                 ContentType=content_type,
-                ServerSideEncryption="AES256",
             )
 
             upload_id = response["UploadId"]
