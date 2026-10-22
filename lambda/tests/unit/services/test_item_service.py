@@ -49,7 +49,7 @@ class TestCreateItem:
     """Tests for create_item method (NOTE, TASK, EVENT items)."""
 
     def test_create_note_item(self, item_service, dynamodb_stubber):
-        """Test creating a NOTE item with inline content and tags uses transact_write_items."""
+        """Creating a tagged item writes the item row, then the tag-index rows."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
             item_type=ItemType.NOTE,
@@ -61,24 +61,18 @@ class TestCreateItem:
         # Tag rows are keyed by tag_index_key; item_id is generated inside the call.
         tag_row = {"SK": ANY, "item_id": ANY, "vault_id": "vault-123", "user_id": "user-123"}
         dynamodb_stubber.add_response(
-            "transact_write_items",
-            {},
+            "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
+        )
+        dynamodb_stubber.add_response(
+            "batch_write_item",
+            {"UnprocessedItems": {}},
             {
-                "TransactItems": [
-                    {"Put": {"TableName": "test-items-table", "Item": ANY}},
-                    {
-                        "Put": {
-                            "TableName": "test-items-table",
-                            "Item": {"PK": "VAULT#vault-123#TAG#dGFnMQ==", **tag_row},
-                        }
-                    },
-                    {
-                        "Put": {
-                            "TableName": "test-items-table",
-                            "Item": {"PK": "VAULT#vault-123#TAG#dGFnMg==", **tag_row},
-                        }
-                    },
-                ]
+                "RequestItems": {
+                    "test-items-table": [
+                        {"PutRequest": {"Item": {"PK": "VAULT#vault-123#TAG#dGFnMQ==", **tag_row}}},
+                        {"PutRequest": {"Item": {"PK": "VAULT#vault-123#TAG#dGFnMg==", **tag_row}}},
+                    ]
+                }
             },
         )
 
@@ -87,6 +81,29 @@ class TestCreateItem:
         assert response.item_id is not None
         assert response.item_type == ItemType.NOTE
         assert isinstance(response.created_at, (int, float))
+
+    def test_create_item_survives_tag_index_failure(self, item_service, dynamodb_stubber):
+        """A failed tag-index write must not fail the create or lose the item row."""
+        request = CreateItemRequestContent(
+            vault_id="vault-123",
+            item_type=ItemType.NOTE,
+            encrypted_content=base64.b64encode(b"encrypted-note-content"),
+            encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
+            encrypted_tags=[base64.b64encode(b"tag1")],
+        )
+
+        dynamodb_stubber.add_response(
+            "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
+        )
+        dynamodb_stubber.add_client_error(
+            "batch_write_item",
+            service_error_code="ValidationException",
+            http_status_code=400,
+        )
+
+        response = item_service.create_item("user-123", request)
+
+        assert response.item_id is not None
 
     def test_create_task_item_with_date_bucket(self, item_service, dynamodb_stubber):
         """Test creating a TASK item with date bucket."""

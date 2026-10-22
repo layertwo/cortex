@@ -219,31 +219,6 @@ class DynamoDBRepository:
             )
             raise
 
-    def transact_write_items(self, transact_items: List[Dict[str, Any]]) -> None:
-        """
-        Execute a transactional write across multiple items.
-
-        Args:
-            transact_items: List of transact item operations (Put, Delete, Update, ConditionCheck)
-
-        Raises:
-            ClientError: If transaction fails
-        """
-        try:
-            # transact_write_items is a client-level operation, not table-level
-            self.table.meta.client.transact_write_items(TransactItems=transact_items)
-
-        except ClientError as e:
-            logger.error(
-                "DynamoDB transact_write_items failed",
-                **{
-                    "error": str(e),
-                    "table": self.table_name,
-                    "item_count": len(transact_items),
-                },
-            )
-            raise
-
     def batch_get_items(self, keys: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Batch get multiple items by their primary keys.

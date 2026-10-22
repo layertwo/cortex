@@ -144,23 +144,15 @@ class ItemService:
         item["GSI2PK"] = f"VAULT#{request.vault_id}"
         item["GSI2SK"] = f"ITEM#{item_id}"
 
-        # Store item in DynamoDB
+        # Write the item row first: it is the source of truth, so a failed tag-index
+        # write can only cost a search hit, never leave an orphan (no Transactions in
+        # DynamoDB-compatible stores such as ScyllaDB Alternator).
+        self.items_repo.put_item(item)
+
         if request.encrypted_tags:
-            # Use transact_write_items to atomically write item + tag index rows
-            transact_items = [{"Put": {"TableName": self.items_repo.table_name, "Item": item}}]
-            for tag in request.encrypted_tags:
-                tag_row = {
-                    **tag_index_key(request.vault_id, item_id, tag),
-                    "item_id": item_id,
-                    "vault_id": request.vault_id,
-                    "user_id": user_id,
-                }
-                transact_items.append(
-                    {"Put": {"TableName": self.items_repo.table_name, "Item": tag_row}}
-                )
-            self.items_repo.transact_write_items(transact_items)
-        else:
-            self.items_repo.put_item(item)
+            self._reconcile_tag_rows(
+                request.vault_id, item_id, user_id, delete_tags=[], add_tags=request.encrypted_tags
+            )
 
         logger.info(
             "Created item",
@@ -770,12 +762,13 @@ class ItemService:
         )
 
     def _reconcile_tag_rows(self, vault_id, item_id, user_id, delete_tags, add_tags) -> None:
-        """Add/remove tag-index rows for a tags edit. Best-effort (orphans harmless).
+        """Add/remove tag-index rows after an item write. Best-effort (orphans harmless).
 
         ponytail: best-effort index: a crash mid-reconcile can leave a removed tag
-        still matching this item until cleanup; the item row stays correct. Go
-        transactional (≤100-op TransactWriteItems) only if false-positive search hits
-        ever matter.
+        still matching this item (or, on create, a tag not yet indexed) until the
+        item is edited again; the item row stays correct. Go transactional only if
+        false-positive search hits ever matter -- and note DynamoDB-compatible
+        stores such as ScyllaDB Alternator have no TransactWriteItems anyway.
         """
         try:
             with self.items_repo.table.batch_writer() as writer:
