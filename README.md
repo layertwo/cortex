@@ -86,10 +86,13 @@ npm test
 
 ### Container Images
 
-`.github/workflows/images.yml` publishes two images to GHCR on every push to `mainline`:
+`.github/workflows/images.yml` publishes two images to GHCR:
 
 - `ghcr.io/layertwo/cortex-api` — the FastAPI backend (`lambda/Dockerfile`)
 - `ghcr.io/layertwo/cortex-web` — the static SPA (`packages/web/Dockerfile`)
+
+Tags follow the tunnels convention: `:latest` only on `mainline`, `:sha-<short>` on every
+build, and `:vX.Y.Z` for `v*` release tags.
 
 Both digests are signed with cosign in keyless mode (Sigstore Fulcio + the workflow's
 GitHub OIDC identity); pin and verify by digest in the deployment.
