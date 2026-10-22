@@ -129,6 +129,7 @@ export default function UploadQueue({ onUploaded }: { onUploaded: () => void }) 
         i.state === 'failed' ? (
           <Banner
             key={i.id}
+            role="alert"
             status="error"
             title={`${i.file.name}: ${i.error}`}
             isDismissable

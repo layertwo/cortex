@@ -166,7 +166,7 @@ export function ShareCreate({ itemId, meta, wrappedDek, vaultKek, onClose }: Sha
                     value={expiration}
                     onChange={setExpiration}
                   />
-                  {error && <Banner status="error" title={error} />}
+                  {error && <Banner role="alert" status="error" title={error} />}
                 </>
               )}
             </VStack>

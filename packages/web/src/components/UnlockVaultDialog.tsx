@@ -54,7 +54,7 @@ export default function UnlockVaultDialog({
                   value={password}
                   onChange={setPassword}
                 />
-                {error && <Banner status="error" title={error} />}
+                {error && <Banner role="alert" status="error" title={error} />}
                 <Link href="/vault/recover" isStandalone>
                   Forgot your vault password?
                 </Link>

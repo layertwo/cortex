@@ -136,7 +136,7 @@ export default function RecoverVault() {
               Your old vault password stops working. Your files stay encrypted the whole time, and your 24 words
               keep working.
             </Text>
-            {error && <Banner status="error" title={error} />}
+            {error && <Banner role="alert" status="error" title={error} />}
             <SubmitButton label="Set new password" isDisabled={!password || !confirm} />
           </VStack>
         </form>
@@ -151,7 +151,7 @@ export default function RecoverVault() {
       rail={{ steps: STEPS, active: 0 }}
     >
       <PhraseInput words={words} onChange={setWords} />
-      {error && <Banner status="error" title={error} />}
+      {error && <Banner role="alert" status="error" title={error} />}
       <Button
         label={`Continue · ${filled} of ${PHRASE_LENGTH}`}
         variant="primary"

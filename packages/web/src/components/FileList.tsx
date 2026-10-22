@@ -227,14 +227,14 @@ export default function FileList({
     },
   ];
 
-  if (error && rows.length === 0) return <Banner status="error" title={error} />;
+  if (error && rows.length === 0) return <Banner role="alert" status="error" title={error} />;
   if (rows.length === 0) {
     return <EmptyState title="No files yet" description="Upload a file to get started." />;
   }
 
   return (
     <VStack gap={2}>
-      {error && <Banner status="error" title={error} />}
+      {error && <Banner role="alert" status="error" title={error} />}
       <Table aria-label="Files" data={rows} columns={columns} idKey="itemId" hasHover />
       {editing?.meta && (
         <EditTagsDialog
@@ -325,7 +325,7 @@ function EditTagsDialog({
                 onChange={setValue}
                 onEnter={save}
               />
-              {err && <Banner status="error" title={err} />}
+              {err && <Banner role="alert" status="error" title={err} />}
             </VStack>
           </LayoutContent>
         }

@@ -1,4 +1,6 @@
 import {Construct} from "constructs";
+import * as path from "path";
+import {PythonFunction} from "uv-python-lambda";
 
 import {Duration, RemovalPolicy, Stack, StackProps} from "aws-cdk-lib";
 import {
@@ -21,8 +23,6 @@ import {
     TableV2,
 } from "aws-cdk-lib/aws-dynamodb";
 import {Architecture, Runtime} from "aws-cdk-lib/aws-lambda";
-import * as path from "path";
-import {PythonFunction} from "uv-python-lambda";
 import {LogGroup, RetentionDays} from "aws-cdk-lib/aws-logs";
 import {
     BlockPublicAccess,
