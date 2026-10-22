@@ -91,6 +91,9 @@ npm test
 - `ghcr.io/layertwo/cortex-api` — the FastAPI backend (`lambda/Dockerfile`)
 - `ghcr.io/layertwo/cortex-web` — the static SPA (`packages/web/Dockerfile`)
 
+Both digests are signed with cosign in keyless mode (Sigstore Fulcio + the workflow's
+GitHub OIDC identity); pin and verify by digest in the deployment.
+
 The web image is environment-agnostic: the SPA loads its OIDC settings from
 `GET /v1/config` at startup, so only the API needs `OIDC_ISSUER` / `OIDC_CLIENT_ID` at
 runtime. Set `VITE_API_BASE_URL` only if the API is on a different origin. For

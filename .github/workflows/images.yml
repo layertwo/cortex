@@ -21,6 +21,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless cosign signing: Fulcio accepts the workflow's GitHub OIDC token.
+      id-token: write
 
     steps:
 
@@ -76,7 +78,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v4
+
       - name: Build and push API image
+        id: api
         uses: docker/build-push-action@v7
         with:
           context: lambda
@@ -88,6 +94,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=cortex-api
 
       - name: Build and push web image
+        id: web
         uses: docker/build-push-action@v7
         with:
           context: packages/web
@@ -97,3 +104,10 @@ jobs:
             ghcr.io/layertwo/cortex-web:${{ github.sha }}
           cache-from: type=gha,scope=cortex-web
           cache-to: type=gha,mode=max,scope=cortex-web
+
+      # Sign the pushed digests (not the tags), so a moved tag cannot borrow a signature.
+      - name: Sign the API image
+        run: cosign sign --yes ghcr.io/layertwo/cortex-api@${{ steps.api.outputs.digest }}
+
+      - name: Sign the web image
+        run: cosign sign --yes ghcr.io/layertwo/cortex-web@${{ steps.web.outputs.digest }}
