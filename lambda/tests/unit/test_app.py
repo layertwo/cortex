@@ -10,11 +10,12 @@ class TestCreateApp:
     def test_creates_fastapi_app(self, mock_service_provider):
         assert mock_service_provider.app is not None
 
-    def test_health_endpoint(self, mock_service_provider):
-        client = TestClient(mock_service_provider.app)
-        response = client.get("/health")
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
+    def test_health_routes_registered(self, mock_service_provider):
+        # The endpoint calls AWS, so assert registration rather than probing it here;
+        # response behaviour is covered in tests/unit/routes/test_health_routes.py.
+        paths = mock_service_provider.app.openapi()["paths"]
+        assert "get" in paths["/v1/health"]
+        assert "get" in paths["/health"]
 
 
 class TestExceptionHandlers:

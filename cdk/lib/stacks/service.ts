@@ -264,6 +264,9 @@ export class ServiceStack extends Stack {
         this.bucket.grantReadWrite(fn);
         this.bucket.grantDelete(fn);
 
+        // The public health endpoint reports Cognito availability.
+        this.props.userPool.grant(fn, "cognito-idp:DescribeUserPool");
+
         return fn;
     }
 
@@ -327,6 +330,11 @@ export class ServiceStack extends Stack {
                 authorizationType: AuthorizationType.COGNITO,
             },
         });
+
+        // Uptime probes can't hold a Cognito token, so expose the health routes
+        // without the authorizer. Explicit resources win over the root proxy.
+        api.root.addResource("health").addMethod("GET", lambdaIntegration);
+        api.root.addResource("v1").addResource("health").addMethod("GET", lambdaIntegration);
 
         // Usage plan for rate limiting
         const usagePlan = api.addUsagePlan("UsagePlan", {
