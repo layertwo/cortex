@@ -11,7 +11,7 @@ Cortex is a privacy-first backup system where all encryption happens client-side
 - **Zero-Knowledge Architecture**: Server never sees plaintext data or encryption keys
 - **Client-Side Encryption**: ChaCha20-Poly1305 encryption on all user devices
 - **Two-Password Model**: Separate account password (authentication) and vault password (encryption)
-- **Account Recovery**: Cognito-hosted email forgot-password for the account password; separate 24-word BIP39 mnemonic for vault recovery
+- **Account Recovery**: handled by the deployment's OIDC provider; separate 24-word BIP39 mnemonic for vault recovery
 - **Multi-Device Support**: Access encrypted data from any device using vault password
 - **Collections**: Organize items into collections with many-to-many relationships
 - **Encrypted Search**: Tag-based organization with deterministic encryption
@@ -92,15 +92,15 @@ npm test
 - **Backend**: AWS Lambda (Python 3.11+) with Lambda Powertools
 - **API**: AWS API Gateway + Smithy models
 - **Storage**: AWS S3 (encrypted files) + DynamoDB (encrypted metadata)
-- **Authentication**: AWS Cognito
+- **Authentication**: OIDC (Pocket ID in the homelab, Cognito's hosted UI on AWS)
 - **Client Encryption**: ChaCha20-Poly1305 via @noble/ciphers
 - **Web UI**: React 19 + Astryx design system with a custom Cortex theme; multiple vaults per account (device-local registry); recovery from the 24-word phrase with a downloadable recovery kit.
 - **Key Derivation**: Argon2id + HKDF
 
 ### Security Model
 
-1. **Account Password**: Authenticates with AWS Cognito via Amplify (SRP) directly from the browser; the account password is never transmitted to the Cortex backend
-2. **Account Recovery**: Cognito-hosted forgot-password (email-based) resets the account password; no recovery codes are stored by Cortex
+1. **Account Login**: The SPA signs in with the OIDC provider (authorization code + PKCE) and sends the ID token; the API validates it against the provider's JWKS. The provider password/credential is never transmitted to the Cortex backend
+2. **Account Recovery**: handled by the OIDC provider; no recovery codes are stored by Cortex
 3. **Vault Password**: Derives encryption keys (never transmitted to server)
 4. **Vault Salt**: Stored on server (non-secret), enables multi-device key derivation
 5. **Vault Master Key**: Derived from vault password + salt using Argon2id
@@ -108,7 +108,7 @@ npm test
 7. **Envelope Encryption**: Each media file encrypted with a unique DEK, DEK wrapped with KEK
 
 **Recovery Options:**
-- **Account Recovery**: Cognito forgot-password flow (email verification) resets the account password; the account password and recovery flow are handled entirely by Cognito and never reach the Cortex backend
+- **Account Recovery**: the OIDC provider's own flow resets the account credential; it never reaches the Cortex backend
 - **Vault Recovery**: 24-word BIP39 mnemonic enables vault password reset without re-encrypting data
 
 ## Implementation Status
@@ -116,7 +116,7 @@ npm test
 ### ✅ Completed Features
 
 - **Infrastructure**: CDK stacks for S3, DynamoDB, Cognito, API Gateway, Lambda
-- **Authentication**: Account authentication via AWS Cognito (Amplify frontend-direct SRP; API Gateway Cognito authorizer validates JWTs), vault salt management
+- **Authentication**: Generic OIDC client (Pocket ID locally, Cognito hosted UI on AWS); the API validates the ID token (API Gateway's Cognito authorizer on AWS), vault salt management
 - **Item Management**: Create, upload, list, retrieve, update, delete items (MEDIA, NOTE, TASK, EVENT types)
 - **Collection Management**: Create, list, retrieve, update, delete collections with many-to-many item associations
 - **Tag Search**: Search items by encrypted tags with vault isolation and pagination

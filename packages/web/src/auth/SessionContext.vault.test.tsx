@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
-import { getCurrentUser } from 'aws-amplify/auth';
 import {
   deriveKeys,
   generateVaultMasterKey,
@@ -44,12 +43,24 @@ const { api } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('aws-amplify/auth', () => ({
-  signUp: vi.fn(),
-  confirmSignUp: vi.fn(),
-  signIn: vi.fn(),
-  signOut: vi.fn(),
-  getCurrentUser: vi.fn(async () => ({ userId: 'u1' })), // already signed in
+// The ingress resolves the identity; the test just picks which account.
+const accountState = vi.hoisted(() => ({ id: 'u1' }));
+
+vi.mock('./account', () => ({
+  ACCOUNT_KEY: 'cortex_account',
+  getAccountId: () => localStorage.getItem('cortex_account'),
+  resolveAccount: async () => {
+    localStorage.setItem('cortex_account', accountState.id);
+    return accountState.id;
+  },
+  clearAccount: () => localStorage.removeItem('cortex_account'),
+}));
+
+vi.mock('./oidc', () => ({
+  getUserManager: () => ({
+    removeUser: vi.fn(async () => {}),
+    signinRedirect: vi.fn(async () => {}),
+  }),
 }));
 
 vi.mock('../api/client', () => api);
@@ -124,7 +135,6 @@ function Probe() {
         rename-v1
       </button>
       <button onClick={() => s.logout()}>logout</button>
-      <button onClick={() => s.signInAccount('a@b.com', 'pw')}>signin</button>
       <button
         onClick={() =>
           s.recoverVault(document.body.dataset.phrase ?? '', 'newpw')
@@ -157,12 +167,13 @@ function Probe() {
 }
 
 async function renderProbe() {
-  render(
+  const view = render(
     <SessionProvider>
       <Probe />
     </SessionProvider>,
   );
   await waitFor(() => expect(screen.getByTestId('status')).not.toHaveTextContent('loading'));
+  return view;
 }
 
 function summary(over: Partial<VaultSummary> = {}): VaultSummary {
@@ -219,6 +230,7 @@ async function mediaItem(dekVersion: number, keys: ReturnType<typeof deriveKeys>
 
 beforeEach(() => {
   localStorage.clear();
+  accountState.id = 'u1';
   document.title = '';
   delete document.body.dataset.deleted;
   api.listAllVaults.mockRejectedValue(new Error('offline'));
@@ -255,9 +267,9 @@ describe('account gate', () => {
     expect(localStorage.getItem('cortex_vault_id:u1')).toBeNull(); // pointed at the dropped vault
   });
 
-  it('logout clears the in-memory vaults but keeps the registry; another account signing in offline sees none of them', async () => {
+  it('logout clears the in-memory vaults but keeps the registry; another account sees none of them', async () => {
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
-    await renderProbe();
+    const view = await renderProbe();
     expect(screen.getByTestId('vaults')).toHaveTextContent('Personal');
     await act(async () => {
       screen.getByText('logout').click();
@@ -267,10 +279,10 @@ describe('account gate', () => {
     expect(localStorage.getItem('cortex_account')).toBeNull();
     expect(localStorage.getItem('cortex_vaults:u1')).not.toBeNull();
 
-    vi.mocked(getCurrentUser).mockResolvedValueOnce({ userId: 'u2' } as never);
-    await act(async () => {
-      screen.getByText('signin').click();
-    });
+    // The ingress hands over a different account on the next mount.
+    view.unmount();
+    accountState.id = 'u2';
+    await renderProbe();
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
     expect(localStorage.getItem('cortex_account')).toBe('u2');
     expect(screen.getByTestId('vaults')).toHaveTextContent('');

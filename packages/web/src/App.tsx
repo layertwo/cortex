@@ -5,11 +5,7 @@ import { cortexTheme } from './theme/cortex';
 import { SessionProvider, useSession } from './auth/SessionContext';
 import { RequireAuth, RequireVault } from './auth/guards';
 import RouterLink from './components/common/RouterLink';
-import Landing from './components/Landing';
-import Signup from './components/Signup';
-import VerifyEmail from './components/VerifyEmail';
-import Login from './components/Login';
-import ForgotPassword from './components/ForgotPassword';
+import SignIn from './components/SignIn';
 import VaultSetup from './components/VaultSetup';
 import VaultUnlock from './components/VaultUnlock';
 import RecoverVault from './components/RecoverVault';
@@ -18,10 +14,11 @@ import { ShareAccess } from './components/ShareAccess';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-// "/" is the hero for visitors and the dashboard for everyone with a session.
+// "/" is the dashboard once OIDC sign-in has resolved. A signedOut status means there is
+// no (or an expired) provider session, so offer sign-in.
 function Home() {
   const { status } = useSession();
-  if (status === 'signedOut') return <Landing />;
+  if (status === 'signedOut') return <SignIn />;
   return (
     <RequireAuth>
       <RequireVault>
@@ -39,10 +36,6 @@ export default function App() {
           <LinkProvider component={RouterLink}>
             <Routes>
               <Route path="/s/*" element={<ShareAccess apiBaseUrl={API_BASE_URL} />} />
-              <Route path="/signup" element={<Signup />} />
-              <Route path="/verify" element={<VerifyEmail />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/forgot" element={<ForgotPassword />} />
               <Route
                 path="/vault/setup"
                 element={

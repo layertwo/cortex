@@ -6,7 +6,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **B2C Single-User Architecture:**
 - Individual users, not organizations or teams
-- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name), `UpdateVaultPassword` (the password-wrapped VMK envelopes, guarded by `envelopeVersion`), `UpdateVaultRotation` (`ACQUIRE` then `RELEASE` only) and a resumable `DeleteVault` (see PRs #287, #290 and #291). Each vault holds a random 256-bit VMK; the vault password never reaches the server and only unwraps the VMK's envelope. The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the Cognito sub, `cortex_vaults:<sub>` the entries (name, `encryptedName`, `currentVmkVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, and salts stay in memory.
+- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name), `UpdateVaultPassword` (the password-wrapped VMK envelopes, guarded by `envelopeVersion`), `UpdateVaultRotation` (`ACQUIRE` then `RELEASE` only) and a resumable `DeleteVault` (see PRs #287, #290 and #291). Each vault holds a random 256-bit VMK; the vault password never reaches the server and only unwraps the VMK's envelope. The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the OIDC subject (`sub`), `cortex_vaults:<sub>` the entries (name, `encryptedName`, `currentVmkVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, and salts stay in memory.
 - No multi-tenancy or team collaboration features
 - Simplified security model focused on personal data protection
 - Usage tracking and quotas per individual user
@@ -26,7 +26,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - Lambda functions only handle presigned URL generation and encrypted metadata operations
 
 **Two-Password Security Model:**
-- **Account Password**: Used for AWS Cognito authentication, can be changed without re-encrypting vault data
+- **Account Login**: Delegated to the deployment's OIDC provider (Pocket ID in the homelab, Cognito on AWS) and can change without re-encrypting vault data
 - **Vault Password**: Used exclusively for deriving vault encryption keys, never transmitted to server
 - Separation allows flexible credential management without expensive re-encryption
 - Vault password + server-stored vault salt → Argon2id → wrapping key; that key wraps (or unwraps) a *random* 256-bit vault master key (VMK), stored server-side only as an envelope
@@ -88,10 +88,10 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - DynamoDB: Use composite keys (PK/SK) and GSIs for query optimization
 - Implement proper partition key design to avoid hot partitions
 
-**Security**: AWS Cognito + SigV4
-- Cognito handles account password authentication only (not vault password)
-- Custom authentication flow for account recovery codes
-- SigV4 request signing for all API calls
+**Security**: OIDC (Pocket ID / Cognito) + API Gateway
+- The OIDC provider handles account authentication only (not the vault password); the SPA is a generic OIDC client (authorization code + PKCE) and the API validates the ID token against the provider's JWKS
+- API Gateway's Cognito authorizer validates the token when deployed to AWS
+- API Gateway request routing (the Lambda proxy needs no SigV4)
 - Lambda generates scoped presigned URLs (no per-user IAM policies needed)
 - Never store unencrypted sensitive data
 
@@ -155,7 +155,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 **Health Checks & Monitoring:**
 - `/health` endpoint for service health checks
 - Return service status, version, and dependency health
-- Monitor DynamoDB, S3, and Cognito availability
+- Monitor DynamoDB and S3 availability (the OIDC provider is not a data-plane dependency)
 - Zero-knowledge logging with vault_id/item_id correlation (never log user_id/PII)
 - CloudWatch metrics for: API latency, error rates, storage usage
 - X-Ray tracing for request flow analysis
@@ -352,16 +352,16 @@ packages/encryption/src/
 packages/web/src/
 ├── components/        # Screens + feature components (flat)
 │   ├── common/        # AuthFrame, RecoveryPhrase, RouterLink, formatBytes, useAsyncAction
-│   ├── Login.tsx Signup.tsx VerifyEmail.tsx ForgotPassword.tsx
+│   ├── SignIn.tsx (OIDC redirect; the provider owns signup/reset)
 │   ├── VaultSetup.tsx VaultUnlock.tsx ChangeVaultPassword.tsx
 │   ├── Dashboard.tsx CollectionSidebar.tsx FileList.tsx FileUpload.tsx TagSearch.tsx
 │   └── ShareAccess.tsx ShareCreate.tsx (ShareCreate is unwired; see design doc follow-ups)
-├── auth/              # SessionContext (Cognito + vault keys), route guards
+├── auth/              # SessionContext (OIDC + vault keys), route guards, oidc.ts (UserManager)
 ├── api/               # Smithy client wrappers (client, items, collections)
 ├── items/             # metadata, streaming upload/download, key rotation
 ├── vault/             # key access, VMK envelopes, rotation bridge
 ├── App.tsx            # Theme > SessionProvider > BrowserRouter > LinkProvider > Routes
-└── main.tsx           # Amplify config + Astryx CSS imports
+└── main.tsx           # Astryx CSS imports
 ```
 
 **Encryption Flow:**
@@ -439,7 +439,7 @@ pytest-cov>=4.0
     "@stylexjs/stylex": "0.19.0",
     "@cortex/client": "*",
     "@cortex/encryption": "*",
-    "aws-amplify": "^6.x",
+    "oidc-client-ts": "^3.x",
     "react": "^19.x",
     "react-dom": "^19.x",
     "react-router-dom": "^7.x"
@@ -754,9 +754,9 @@ def handle():
 ## Security Requirements
 
 - Never log sensitive data (keys, passwords, PII, encrypted payloads)
-- **Zero-knowledge logging: NEVER log `user_id` (Cognito sub), S3 object keys, or full request context.** Use `vault_id`, `item_id`, `collection_id`, `share_id` (random UUIDs) for correlation instead.
+- **Zero-knowledge logging: NEVER log `user_id` (OIDC sub), S3 object keys, or full request context.** Use `vault_id`, `item_id`, `collection_id`, `share_id` (random UUIDs) for correlation instead.
 - Log with operational context: vault IDs, item IDs, timestamps, operation types, error codes, performance metrics
-- Never log: vault password, vault keys, 24-word vault recovery keys, share keys, account recovery codes, user_id (Cognito sub), S3 object keys, request_context
+- Never log: vault password, vault keys, 24-word vault recovery keys, share keys, account recovery codes, user_id (OIDC sub), S3 object keys, request_context
 - Use AWS Secrets Manager or Parameter Store for secrets
 - Implement least-privilege IAM policies for Lambda execution roles
 - No per-user IAM policies (use scoped presigned URLs instead)
@@ -822,8 +822,8 @@ logger.info("File uploaded", extra={
     "operation": "file_upload"
 })
 
-# BAD: never log user_id (Cognito sub), s3_key, or request_context
-# logger.info("...", extra={"user_id": user_id})       # PII - Cognito sub
+# BAD: never log user_id (OIDC sub), s3_key, or request_context
+# logger.info("...", extra={"user_id": user_id})       # PII - OIDC sub
 # logger.info("...", extra={"s3_key": s3_key})         # reveals vault/file structure
 # logger.info("...", request_context=str(ctx))         # contains authorizer claims
 ```

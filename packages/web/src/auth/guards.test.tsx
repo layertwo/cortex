@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
 const state = vi.hoisted(() => ({ status: 'signedOut' as string }));
-vi.mock('./SessionContext', () => ({ useSession: () => ({ status: state.status }) }));
+vi.mock('./SessionContext', () => ({ useSession: () => ({ status: state.status, signIn: vi.fn() }) }));
 
 import { RequireAuth, RequireVault } from './guards';
 
@@ -27,10 +27,10 @@ beforeEach(() => {
 });
 
 describe('guards', () => {
-  it('RequireAuth redirects to /login when signedOut', () => {
+  it('RequireAuth shows the sign-in screen when signedOut', () => {
     state.status = 'signedOut';
     renderAt('/secret', <RequireAuth><div>protected</div></RequireAuth>);
-    expect(screen.getByText('login-screen')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /sign in to cortex/i })).toBeInTheDocument();
   });
 
   it('RequireAuth renders children when unlocked', () => {

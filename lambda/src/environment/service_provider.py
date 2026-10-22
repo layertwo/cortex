@@ -158,16 +158,6 @@ class ServiceProvider:
         """Get S3 files bucket name from environment."""
         return os.environ["FILES_BUCKET_NAME"]
 
-    @cached_property
-    def user_pool_id(self):  # pragma: nocover
-        """Get Cognito user pool id from environment."""
-        return os.environ["COGNITO_USER_POOL_ID"]
-
-    @cached_property
-    def cognito_client(self):  # pragma: nocover
-        """Create Cognito IDP client."""
-        return self.session.client("cognito-idp")
-
     # S3 client
     @cached_property
     def s3_client(self):  # pragma: nocover
@@ -328,9 +318,6 @@ class ServiceProvider:
                         Key={"PK": "HEALTH#PROBE", "SK": "HEALTH#PROBE"}
                     ),
                     "s3": lambda: self.s3_client.head_bucket(Bucket=self.files_bucket_name),
-                    "cognito": lambda: self.cognito_client.describe_user_pool(
-                        UserPoolId=self.user_pool_id
-                    ),
                 }
             ),
         ]

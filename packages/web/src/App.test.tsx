@@ -12,6 +12,7 @@ vi.mock('./auth/SessionContext', async (o) => ({
     vaultVersion: 0,
     switchVault: vi.fn(),
     unlockVault: vi.fn(),
+    signIn: vi.fn(),
   }),
 }));
 
@@ -22,26 +23,25 @@ beforeEach(() => {
 });
 
 describe('App routing', () => {
-  it('shows Login at /login when signed out', () => {
-    state.status = 'signedOut';
-    window.history.pushState({}, '', '/login');
-    render(<App />);
-    expect(screen.getByRole('heading', { name: /welcome back/i })).toBeInTheDocument();
-    expect(document.querySelector('[data-astryx-theme="cortex"]')).not.toBeNull();
-  });
-
-  it('shows the Dashboard at / when unlocked', () => {
+  it('shows the dashboard at / when unlocked', () => {
     state.status = 'unlocked';
     window.history.pushState({}, '', '/');
     render(<App />);
     expect(screen.getByRole('heading', { name: /all files/i })).toBeInTheDocument();
+    expect(document.querySelector('[data-astryx-theme="cortex"]')).not.toBeNull();
   });
 
-  it('shows the landing hero at / when signed out', () => {
+  it('offers OIDC sign-in at / when signed out', () => {
     state.status = 'signedOut';
     window.history.pushState({}, '', '/');
     render(<App />);
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/a vault for your memories/i);
-    expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /sign in to cortex/i })).toBeInTheDocument();
+  });
+
+  it('keeps the public share route reachable without a session', () => {
+    state.status = 'signedOut';
+    window.history.pushState({}, '', '/s/share-1');
+    render(<App />);
+    expect(screen.queryByRole('heading', { name: /sign in to cortex/i })).not.toBeInTheDocument();
   });
 });

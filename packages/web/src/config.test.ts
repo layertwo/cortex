@@ -2,21 +2,21 @@ import { describe, it, expect, vi } from 'vitest';
 import { getConfig } from './config';
 
 describe('getConfig', () => {
-  it('returns the configured values when env vars are set', () => {
-    vi.stubEnv('VITE_USER_POOL_ID', 'us-east-1_abc');
-    vi.stubEnv('VITE_USER_POOL_CLIENT_ID', 'client123');
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.com');
-    expect(getConfig()).toEqual({
-      userPoolId: 'us-east-1_abc',
-      userPoolClientId: 'client123',
-      apiBaseUrl: 'https://api.example.com',
-    });
+  it('defaults the API base to the same origin', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '');
+    vi.stubEnv('VITE_OIDC_ISSUER', '');
+    vi.stubEnv('VITE_OIDC_CLIENT_ID', '');
+    expect(getConfig()).toEqual({ apiBaseUrl: '', oidcIssuer: '', oidcClientId: '' });
   });
 
-  it('throws naming the missing var', () => {
-    vi.stubEnv('VITE_USER_POOL_ID', '');
-    vi.stubEnv('VITE_USER_POOL_CLIENT_ID', 'client123');
+  it('uses the configured API origin and OIDC client', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.com');
-    expect(() => getConfig()).toThrow('VITE_USER_POOL_ID');
+    vi.stubEnv('VITE_OIDC_ISSUER', 'https://idp.example.com');
+    vi.stubEnv('VITE_OIDC_CLIENT_ID', 'cortex');
+    expect(getConfig()).toEqual({
+      apiBaseUrl: 'https://api.example.com',
+      oidcIssuer: 'https://idp.example.com',
+      oidcClientId: 'cortex',
+    });
   });
 });

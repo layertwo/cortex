@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// The generated SDK owns HTTP + auth + serde; our client.ts only constructs the
-// client (endpoint + Cognito bearer token) and maps command I/O. So we mock the
+// The generated SDK owns HTTP/auth/serde; our client.ts only constructs the
+// client (endpoint + auth identity) and maps command I/O. So we mock the
 // SDK and assert that wiring rather than re-testing smithy's transport.
 const { sendMock, configs, commands } = vi.hoisted(() => ({
   sendMock: vi.fn(),
@@ -32,16 +32,11 @@ vi.mock('@cortex/client', () => {
     DeleteVaultCommand: cmd('DeleteVault'),
   };
 });
-vi.mock('aws-amplify/auth', () => ({
-  fetchAuthSession: vi.fn(async () => ({
-    tokens: { idToken: { toString: () => 'JWT123' } },
-  })),
+vi.mock('../auth/oidc', () => ({
+  getUserManager: () => ({ getUser: async () => ({ id_token: 'JWT123' }) }),
 }));
 vi.mock('../config', () => ({
   getConfig: () => ({
-    userPoolId: 'p',
-    userPoolClientId: 'c',
-    region: 'r',
     apiBaseUrl: 'https://api',
   }),
 }));
@@ -73,7 +68,7 @@ beforeEach(() => {
 });
 
 describe('api client', () => {
-  it('configures the client with the endpoint and a Cognito bearer token', async () => {
+  it('configures the client with the endpoint and the OIDC ID token', async () => {
     sendMock.mockResolvedValueOnce({ vaultId: 'v1', vaultSalt: new Uint8Array(16) });
 
     await createVault();
