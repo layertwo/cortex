@@ -9,7 +9,7 @@ again until the response says DELETED, or the vault answers 404.
 
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
@@ -63,13 +63,13 @@ class VaultDeletionService:
         items_table_name: str,
         shares_table_name: str,
         s3_bucket_name: str,
-        s3_session: Optional[boto3.Session] = None,
+        s3_session: boto3.Session,
     ):
         self.vault_service = vault_service
         self.collection_service = collection_service
         self.items_repo = DynamoDBRepository(session, items_table_name)
         self.shares_repo = DynamoDBRepository(session, shares_table_name)
-        self.s3_repo = S3Repository(s3_session or session, s3_bucket_name)
+        self.s3_repo = S3Repository(s3_session, s3_bucket_name)
 
     def delete_vault(self, user_id: str, vault_id: str) -> dict:
         """

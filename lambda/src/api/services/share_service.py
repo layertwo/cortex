@@ -10,7 +10,6 @@ Requirements: 6.12
 import hashlib
 import time
 import uuid
-from typing import Optional
 
 import boto3
 
@@ -51,7 +50,7 @@ class ShareService:
         shares_table_name: str,
         items_table_name: str,
         s3_bucket_name: str,
-        s3_session: Optional[boto3.Session] = None,
+        s3_session: boto3.Session,
     ):
         """
         Initialize share service.
@@ -61,10 +60,11 @@ class ShareService:
             shares_table_name: DynamoDB shares table name
             items_table_name: DynamoDB items table name
             s3_bucket_name: S3 bucket name for file storage
+            s3_session: Session for the blob store (may differ from DynamoDB's)
         """
         self.shares_repo = DynamoDBRepository(session, shares_table_name)
         self.items_repo = DynamoDBRepository(session, items_table_name)
-        self.s3_repo = S3Repository(s3_session or session, s3_bucket_name)
+        self.s3_repo = S3Repository(s3_session, s3_bucket_name)
 
     def create_share(
         self, user_id: str, request: CreateShareRequestContent

@@ -76,7 +76,7 @@ class ItemService:
         session: boto3.Session,
         items_table_name: str,
         s3_bucket_name: str,
-        s3_session: Optional[boto3.Session] = None,
+        s3_session: boto3.Session,
     ):
         """
         Initialize item service.
@@ -85,9 +85,10 @@ class ItemService:
             session: Boto3 session
             items_table_name: DynamoDB items table name
             s3_bucket_name: S3 bucket name for media storage
+            s3_session: Session for the blob store (may differ from DynamoDB's)
         """
         self.items_repo = DynamoDBRepository(session, items_table_name)
-        self.s3_repo = S3Repository(s3_session or session, s3_bucket_name)
+        self.s3_repo = S3Repository(s3_session, s3_bucket_name)
 
     def create_item(
         self, user_id: str, request: CreateItemRequestContent

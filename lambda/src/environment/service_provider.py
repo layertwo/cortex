@@ -128,22 +128,31 @@ class ServiceProvider:
         self.config = config or ConfigProvider()
 
     @cached_property
+    def boto_session(self) -> boto3.Session:  # pragma: nocover
+        """Default session, using the standard AWS credential chain."""
+        return boto3.Session(region_name=self.config.aws_region)
+
+    @cached_property
     def dynamodb_session(self) -> boto3.Session:  # pragma: nocover
-        """DynamoDB session (Alternator uses its own key in the homelab)."""
-        return boto3.Session(
-            region_name=self.config.aws_region,
-            aws_access_key_id=self.config.dynamodb_access_key_id,
-            aws_secret_access_key=self.config.dynamodb_secret_access_key,
-        )
+        """Alternator's own key when configured; the default session otherwise."""
+        if self.config.dynamodb_access_key_id and self.config.dynamodb_secret_access_key:
+            return boto3.Session(
+                region_name=self.config.aws_region,
+                aws_access_key_id=self.config.dynamodb_access_key_id,
+                aws_secret_access_key=self.config.dynamodb_secret_access_key,
+            )
+        return self.boto_session
 
     @cached_property
     def s3_session(self) -> boto3.Session:  # pragma: nocover
-        """S3 session (Garage uses its own key in the homelab)."""
-        return boto3.Session(
-            region_name=self.config.aws_region,
-            aws_access_key_id=self.config.s3_access_key_id,
-            aws_secret_access_key=self.config.s3_secret_access_key,
-        )
+        """Garage's own key when configured; the default session otherwise."""
+        if self.config.s3_access_key_id and self.config.s3_secret_access_key:
+            return boto3.Session(
+                region_name=self.config.aws_region,
+                aws_access_key_id=self.config.s3_access_key_id,
+                aws_secret_access_key=self.config.s3_secret_access_key,
+            )
+        return self.boto_session
 
     # S3 client
     @cached_property

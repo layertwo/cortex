@@ -100,6 +100,7 @@ def item_service(boto_session, items_table_name, files_bucket_name):
         session=boto_session,
         items_table_name=items_table_name,
         s3_bucket_name=files_bucket_name,
+        s3_session=boto_session,
     )
 
 
@@ -111,6 +112,7 @@ def share_service(boto_session, shares_table_name, items_table_name, files_bucke
         shares_table_name=shares_table_name,
         items_table_name=items_table_name,
         s3_bucket_name=files_bucket_name,
+        s3_session=boto_session,
     )
 
 
@@ -131,6 +133,7 @@ def vault_deletion_service(
         items_table_name=items_table_name,
         shares_table_name=shares_table_name,
         s3_bucket_name=files_bucket_name,
+        s3_session=boto_session,
     )
 
 
