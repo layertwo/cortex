@@ -24,16 +24,17 @@
 | src/entrypoint/api.py                        |        4 |        4 |        0 |        0 |      0% |       3-8 |
 | src/entrypoint/container.py                  |        5 |        5 |        0 |        0 |      0% |      3-10 |
 | src/environment/\_\_init\_\_.py              |        0 |        0 |        0 |        0 |    100% |           |
-| src/environment/service\_provider.py         |       90 |        6 |        6 |        1 |     93% |112-118, 245, 346 |
+| src/environment/service\_provider.py         |       90 |        6 |        6 |        1 |     93% |112-118, 235, 333 |
 | src/shared/\_\_init\_\_.py                   |        0 |        0 |        0 |        0 |    100% |           |
 | src/shared/\_codegen\_base.py                |        3 |        0 |        0 |        0 |    100% |           |
-| src/shared/auth.py                           |       28 |        8 |       10 |        0 |     63% |     68-78 |
+| src/shared/auth.py                           |       28 |        1 |        8 |        1 |     94% |        70 |
 | src/shared/exceptions.py                     |       39 |        0 |        0 |        0 |    100% |           |
 | src/shared/logger.py                         |        7 |        0 |        0 |        0 |    100% |           |
 | src/shared/models.py                         |      294 |       12 |       14 |        3 |     94% |126-128, 140, 376, 379-384, 409 |
+| src/shared/oidc.py                           |       34 |        4 |        2 |        0 |     89% | 29, 35-37 |
 | src/shared/repository.py                     |      214 |       44 |       38 |        5 |     81% |62-67, 98-99, 137-142, 215-220, 248-250, 254-259, 320-325, 366-371, 418-423, 453-458, 498-507, 537-542, 649-653, 691-695, 736-737, 765-767 |
 | src/shared/util.py                           |       12 |        3 |        4 |        0 |     69% |     42-44 |
-| **TOTAL**                                    | **2040** |  **200** |  **382** |   **50** | **89%** |           |
+| **TOTAL**                                    | **2074** |  **197** |  **382** |   **51** | **89%** |           |
 
 
 ## Setup coverage badge
