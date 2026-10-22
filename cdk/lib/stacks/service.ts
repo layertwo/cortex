@@ -328,10 +328,12 @@ export class ServiceStack extends Stack {
             },
         });
 
-        // Uptime probes can't hold a Cognito token, so expose the health routes
-        // without the authorizer. Explicit resources win over the root proxy.
+        // Uptime probes and the SPA's startup config can't hold a Cognito token, so expose
+        // those routes without the authorizer. Explicit resources win over the root proxy.
         api.root.addResource("health").addMethod("GET", lambdaIntegration);
-        api.root.addResource("v1").addResource("health").addMethod("GET", lambdaIntegration);
+        const v1 = api.root.addResource("v1");
+        v1.addResource("health").addMethod("GET", lambdaIntegration);
+        v1.addResource("config").addMethod("GET", lambdaIntegration);
 
         // Usage plan for rate limiting
         const usagePlan = api.addUsagePlan("UsagePlan", {

@@ -6,12 +6,22 @@ export interface AppConfig {
   oidcClientId: string;
 }
 
+let cached: AppConfig | null = null;
+
+// Runtime settings come from the API so one image works in every deployment. The issuer
+// and client id are public by design: they appear in every authorization request.
+export async function loadConfig(): Promise<AppConfig> {
+  // Optional build-time override for an API on another origin; empty = same origin.
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '';
+  const response = await fetch(`${apiBaseUrl}/v1/config`, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error(`Configuration unavailable (${response.status})`);
+  const body = (await response.json()) as { oidcIssuer?: string; oidcClientId?: string };
+  if (!body.oidcIssuer || !body.oidcClientId) throw new Error('Configuration is incomplete');
+  cached = { apiBaseUrl, oidcIssuer: body.oidcIssuer, oidcClientId: body.oidcClientId };
+  return cached;
+}
+
 export function getConfig(): AppConfig {
-  // Static member access only — Vite replaces `import.meta.env.VITE_*` literals at
-  // build time; bracket/dynamic access is NOT replaced and breaks in production.
-  return {
-    apiBaseUrl: import.meta.env.VITE_API_BASE_URL ?? '',
-    oidcIssuer: import.meta.env.VITE_OIDC_ISSUER ?? '',
-    oidcClientId: import.meta.env.VITE_OIDC_CLIENT_ID ?? '',
-  };
+  if (!cached) throw new Error('Configuration not loaded');
+  return cached;
 }

@@ -84,6 +84,25 @@ npm run build
 npm test
 ```
 
+### Container Images
+
+`.github/workflows/images.yml` publishes two images to GHCR:
+
+- `ghcr.io/layertwo/cortex-api` — the FastAPI backend (`lambda/Dockerfile`)
+- `ghcr.io/layertwo/cortex-web` — the static SPA (`packages/web/Dockerfile`)
+
+Tags follow the tunnels convention: `:latest` only on `mainline`, `:sha-<short>` on every
+build, and `:vX.Y.Z` for `v*` release tags.
+
+Both digests are signed with cosign in keyless mode (Sigstore Fulcio + the workflow's
+GitHub OIDC identity); pin and verify by digest in the deployment.
+
+The web image is environment-agnostic: the SPA loads its OIDC settings from
+`GET /v1/config` at startup, so only the API needs `OIDC_ISSUER` / `OIDC_CLIENT_ID` at
+runtime. Set `VITE_API_BASE_URL` only if the API is on a different origin. For
+S3-compatible storage or DynamoDB alternatives, set `AWS_ENDPOINT_URL_S3` /
+`AWS_ENDPOINT_URL_DYNAMODB` on the API.
+
 ## Architecture
 
 ### Technology Stack

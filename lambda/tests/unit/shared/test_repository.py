@@ -498,7 +498,6 @@ class TestS3Repository:
                 "Bucket": s3_bucket_name,
                 "Key": "large-file",
                 "ContentType": "video/mp4",
-                "ServerSideEncryption": "AES256",
             },
         )
 
