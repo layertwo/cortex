@@ -29,6 +29,7 @@ from src.api.routes.collections import (
     RemoveItemFromCollectionRoute,
     UpdateCollectionRoute,
 )
+from src.api.routes.health import HealthRoute
 from src.api.routes.items import (
     AbortItemUploadRoute,
     CompleteUploadRoute,
@@ -156,6 +157,16 @@ class ServiceProvider:
     def files_bucket_name(self):  # pragma: nocover
         """Get S3 files bucket name from environment."""
         return os.environ["FILES_BUCKET_NAME"]
+
+    @cached_property
+    def user_pool_id(self):  # pragma: nocover
+        """Get Cognito user pool id from environment."""
+        return os.environ["COGNITO_USER_POOL_ID"]
+
+    @cached_property
+    def cognito_client(self):  # pragma: nocover
+        """Create Cognito IDP client."""
+        return self.session.client("cognito-idp")
 
     # S3 client
     @cached_property
@@ -311,14 +322,21 @@ class ServiceProvider:
             CreateShareRoute(share_service=self.share_service),
             GetShareRoute(share_service=self.share_service),
             RevokeShareRoute(share_service=self.share_service),
+            HealthRoute(
+                checks={
+                    "dynamodb": lambda: self.vault_service.vaults_table.get_item(
+                        Key={"PK": "HEALTH#PROBE", "SK": "HEALTH#PROBE"}
+                    ),
+                    "s3": lambda: self.s3_client.head_bucket(Bucket=self.files_bucket_name),
+                    "cognito": lambda: self.cognito_client.describe_user_pool(
+                        UserPoolId=self.user_pool_id
+                    ),
+                }
+            ),
         ]
         for route in routes:
             route.register(router)
         app.include_router(router)
-
-        @app.get("/health")
-        def health():
-            return {"status": "ok"}
 
         return app
 

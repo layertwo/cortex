@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -24,6 +24,11 @@ import Login from './Login';
 import ForgotPassword from './ForgotPassword';
 
 describe('auth screens', () => {
+  beforeEach(() => {
+    // Signup checks the password against HIBP; default to "not breached".
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, text: async () => '' })));
+  });
+
   it('Signup calls signUpAccount with email + account password and navigates to /verify', async () => {
     render(
       <MemoryRouter>
@@ -31,10 +36,55 @@ describe('auth screens', () => {
       </MemoryRouter>,
     );
     await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
-    await userEvent.type(screen.getByLabelText(/password/i), 'Abcdefg1!2345');
+    await userEvent.type(screen.getByLabelText('Password'), 'Abcdefg1!2345');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-    expect(session.signUpAccount).toHaveBeenCalledWith('a@b.com', 'Abcdefg1!2345');
+    await waitFor(() =>
+      expect(session.signUpAccount).toHaveBeenCalledWith('a@b.com', 'Abcdefg1!2345'),
+    );
     expect(navigate).toHaveBeenCalledWith('/verify', { state: { email: 'a@b.com' } });
+  });
+
+  it('Signup keeps Continue disabled while the password fails the policy', async () => {
+    render(
+      <MemoryRouter>
+        <Signup />
+      </MemoryRouter>,
+    );
+    await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'short1!');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(session.signUpAccount).not.toHaveBeenCalled();
+  });
+
+  it('Signup refuses a breached password', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      // Suffix of the SHA-1 of 'Abcdefg1!2345'.
+      text: async () => '25DD76BD138AD4D04FF0166EFD788D16300:1\r\n',
+    } as Response);
+    render(
+      <MemoryRouter>
+        <Signup />
+      </MemoryRouter>,
+    );
+    await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'Abcdefg1!2345');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(await screen.findByText(/exposed in a data breach/i)).toBeInTheDocument();
+    expect(session.signUpAccount).not.toHaveBeenCalled();
+  });
+
+  it('Signup proceeds when the breach lookup is unavailable', async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError('offline'));
+    render(
+      <MemoryRouter>
+        <Signup />
+      </MemoryRouter>,
+    );
+    await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
+    await userEvent.type(screen.getByLabelText('Password'), 'Abcdefg1!2345');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await waitFor(() => expect(session.signUpAccount).toHaveBeenCalled());
   });
 
   it('Login calls signInAccount and navigates to / on success', async () => {
@@ -44,7 +94,7 @@ describe('auth screens', () => {
       </MemoryRouter>,
     );
     await userEvent.type(screen.getByLabelText(/email/i), 'a@b.com');
-    await userEvent.type(screen.getByLabelText(/password/i), 'Abcdefg1!2345');
+    await userEvent.type(screen.getByLabelText('Password'), 'Abcdefg1!2345');
     await userEvent.click(screen.getByRole('button', { name: /log in/i }));
     expect(session.signInAccount).toHaveBeenCalledWith('a@b.com', 'Abcdefg1!2345');
     expect(navigate).toHaveBeenCalledWith('/');
