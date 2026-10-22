@@ -91,10 +91,11 @@ npm test
 - `ghcr.io/layertwo/cortex-api` — the FastAPI backend (`lambda/Dockerfile`)
 - `ghcr.io/layertwo/cortex-web` — the static SPA (`packages/web/Dockerfile`)
 
-The SPA bakes in `VITE_OIDC_ISSUER` and `VITE_OIDC_CLIENT_ID` at build time; set both as
-repository variables. The API reads `OIDC_ISSUER` / `OIDC_CLIENT_ID` at runtime and, for
-S3-compatible storage or DynamoDB alternatives, `AWS_ENDPOINT_URL_S3` /
-`AWS_ENDPOINT_URL_DYNAMODB`.
+The web image is environment-agnostic: the SPA loads its OIDC settings from
+`GET /v1/config` at startup, so only the API needs `OIDC_ISSUER` / `OIDC_CLIENT_ID` at
+runtime. Set `VITE_API_BASE_URL` only if the API is on a different origin. For
+S3-compatible storage or DynamoDB alternatives, set `AWS_ENDPOINT_URL_S3` /
+`AWS_ENDPOINT_URL_DYNAMODB` on the API.
 
 ## Architecture
 

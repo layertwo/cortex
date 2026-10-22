@@ -29,6 +29,7 @@ from src.api.routes.collections import (
     RemoveItemFromCollectionRoute,
     UpdateCollectionRoute,
 )
+from src.api.routes.config import ConfigRoute
 from src.api.routes.health import HealthRoute
 from src.api.routes.items import (
     AbortItemUploadRoute,
@@ -312,6 +313,7 @@ class ServiceProvider:
             CreateShareRoute(share_service=self.share_service),
             GetShareRoute(share_service=self.share_service),
             RevokeShareRoute(share_service=self.share_service),
+            ConfigRoute(),
             HealthRoute(
                 checks={
                     "dynamodb": lambda: self.vault_service.vaults_table.get_item(

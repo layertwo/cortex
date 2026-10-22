@@ -63,20 +63,7 @@ jobs:
           npm run build:client
           npm run build:encryption
 
-      # The OIDC issuer/client are baked into the SPA at build time (Vite), so the
-      # repository variables must point at this deployment's provider.
-      - name: Require OIDC build config
-        env:
-          VITE_OIDC_ISSUER: ${{ vars.VITE_OIDC_ISSUER }}
-          VITE_OIDC_CLIENT_ID: ${{ vars.VITE_OIDC_CLIENT_ID }}
-        run: |
-          test -n "$VITE_OIDC_ISSUER" || { echo "::error::Set repository variable VITE_OIDC_ISSUER"; exit 1; }
-          test -n "$VITE_OIDC_CLIENT_ID" || { echo "::error::Set repository variable VITE_OIDC_CLIENT_ID"; exit 1; }
-
       - name: Build web app
-        env:
-          VITE_OIDC_ISSUER: ${{ vars.VITE_OIDC_ISSUER }}
-          VITE_OIDC_CLIENT_ID: ${{ vars.VITE_OIDC_CLIENT_ID }}
         run: npm run build:web
 
       - name: Set up Docker Buildx

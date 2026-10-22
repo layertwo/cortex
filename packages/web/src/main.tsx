@@ -8,9 +8,18 @@ import './theme/cortex.css';
 import '@fontsource-variable/inter';
 import './app.css';
 import App from './App';
+import { loadConfig } from './config';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+loadConfig().then(
+  () => {
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>
+    );
+  },
+  (error: unknown) => {
+    document.getElementById('root')!.textContent =
+      error instanceof Error ? error.message : 'Cortex is unavailable';
+  }
 );
