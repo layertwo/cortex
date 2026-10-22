@@ -9,6 +9,7 @@
 | src/api/routes/\_\_init\_\_.py               |        0 |        0 |        0 |        0 |    100% |           |
 | src/api/routes/base\_route.py                |        3 |        0 |        0 |        0 |    100% |           |
 | src/api/routes/collections.py                |      101 |       11 |       16 |        4 |     87% |165-169, 245-253, 286-299, 329-340 |
+| src/api/routes/config.py                     |       16 |        0 |        2 |        0 |    100% |           |
 | src/api/routes/health.py                     |       24 |        0 |        2 |        0 |    100% |           |
 | src/api/routes/items.py                      |      118 |        4 |        6 |        2 |     95% |219, 239, 274, 328 |
 | src/api/routes/shares.py                     |       49 |        5 |        6 |        3 |     85% |85, 90-92, 131 |
@@ -24,7 +25,7 @@
 | src/entrypoint/api.py                        |        4 |        4 |        0 |        0 |      0% |       3-8 |
 | src/entrypoint/container.py                  |        5 |        5 |        0 |        0 |      0% |      3-10 |
 | src/environment/\_\_init\_\_.py              |        0 |        0 |        0 |        0 |    100% |           |
-| src/environment/service\_provider.py         |       90 |        6 |        6 |        1 |     93% |112-118, 235, 333 |
+| src/environment/service\_provider.py         |       91 |        6 |        6 |        1 |     93% |113-119, 236, 335 |
 | src/shared/\_\_init\_\_.py                   |        0 |        0 |        0 |        0 |    100% |           |
 | src/shared/\_codegen\_base.py                |        3 |        0 |        0 |        0 |    100% |           |
 | src/shared/auth.py                           |       28 |        1 |        8 |        1 |     94% |        70 |
@@ -32,9 +33,9 @@
 | src/shared/logger.py                         |        7 |        0 |        0 |        0 |    100% |           |
 | src/shared/models.py                         |      294 |       12 |       14 |        3 |     94% |126-128, 140, 376, 379-384, 409 |
 | src/shared/oidc.py                           |       34 |        4 |        2 |        0 |     89% | 29, 35-37 |
-| src/shared/repository.py                     |      214 |       44 |       38 |        5 |     81% |62-67, 98-99, 137-142, 215-220, 248-250, 254-259, 320-325, 366-371, 418-423, 453-458, 498-507, 537-542, 649-653, 691-695, 736-737, 765-767 |
+| src/shared/repository.py                     |      214 |       44 |       38 |        5 |     81% |62-67, 98-99, 137-142, 215-220, 248-250, 254-259, 320-325, 366-371, 418-423, 453-458, 498-507, 538-543, 650-654, 692-696, 737-738, 766-768 |
 | src/shared/util.py                           |       12 |        3 |        4 |        0 |     69% |     42-44 |
-| **TOTAL**                                    | **2074** |  **197** |  **382** |   **51** | **89%** |           |
+| **TOTAL**                                    | **2091** |  **197** |  **384** |   **51** | **90%** |           |
 
 
 ## Setup coverage badge
