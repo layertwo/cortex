@@ -5,7 +5,7 @@
  * prevents nonce reuse race conditions in concurrent encryption scenarios.
  */
 
-import { jest } from '@jest/globals';
+import { vi } from 'vitest';
 import {
   storeKeys,
   clearAllKeys,
@@ -15,7 +15,7 @@ import {
 } from '../../src/lib/key-storage';
 
 // Mock crypto.getRandomValues
-const mockRandomValues = jest.fn((array: Uint8Array) => {
+const mockRandomValues = vi.fn((array: Uint8Array) => {
   for (let i = 0; i < array.length; i++) {
     array[i] = Math.floor(Math.random() * 256);
   }
@@ -29,8 +29,8 @@ const mockCryptoKey = { type: 'secret', algorithm: { name: 'AES-GCM' } } as Cryp
 let actualCounterValues: number[] = [];
 
 const mockSubtle = {
-  generateKey: jest.fn(() => Promise.resolve(mockCryptoKey)),
-  encrypt: jest.fn((_algorithm: any, _key: any, data: any) => {
+  generateKey: vi.fn(() => Promise.resolve(mockCryptoKey)),
+  encrypt: vi.fn((_algorithm: any, _key: any, data: any) => {
     // Extract nonce from the encryption call to verify uniqueness
     // In real implementation, this would be the IV parameter
     const iv = new Uint8Array(12);
@@ -41,7 +41,7 @@ const mockSubtle = {
     result.set(new Uint8Array(data), iv.length);
     return Promise.resolve(result.buffer);
   }),
-  decrypt: jest.fn((_algorithm: any, _key: any, data: any) => {
+  decrypt: vi.fn((_algorithm: any, _key: any, data: any) => {
     const dataArray = new Uint8Array(data);
     return Promise.resolve(dataArray.slice(12).buffer);
   }),
@@ -60,16 +60,16 @@ const createMockIndexedDB = () => {
   const databases: Record<string, Record<string, any>> = {};
   
   return {
-    open: jest.fn((name: string, _version: number) => {
+    open: vi.fn((name: string, _version: number) => {
       if (!databases[name]) {
         databases[name] = {};
       }
       
       const request: any = {
         result: {
-          transaction: jest.fn((_storeNames: string[], _mode: string) => {
+          transaction: vi.fn((_storeNames: string[], _mode: string) => {
             const transaction: any = {
-              objectStore: jest.fn((storeName: string) => {
+              objectStore: vi.fn((storeName: string) => {
                 if (!databases[name][storeName]) {
                   databases[name][storeName] = {};
                 }
@@ -77,7 +77,7 @@ const createMockIndexedDB = () => {
                 const store = databases[name][storeName];
                 
                 return {
-                  put: jest.fn((data: any) => {
+                  put: vi.fn((data: any) => {
                     // Store data immediately (synchronous for testing)
                     const key = data.id || data.vaultId;
                     store[key] = data;
@@ -97,7 +97,7 @@ const createMockIndexedDB = () => {
                     
                     return putRequest;
                   }),
-                  get: jest.fn((key: string) => {
+                  get: vi.fn((key: string) => {
                     const data = store[key] || null;
                     
                     // Track counter reads for race condition detection IMMEDIATELY
@@ -120,7 +120,7 @@ const createMockIndexedDB = () => {
                     
                     return getRequest;
                   }),
-                  delete: jest.fn((key: string) => {
+                  delete: vi.fn((key: string) => {
                     delete store[key];
                     const deleteRequest: any = {
                       onsuccess: null,
@@ -133,7 +133,7 @@ const createMockIndexedDB = () => {
                     }, 0);
                     return deleteRequest;
                   }),
-                  clear: jest.fn(() => {
+                  clear: vi.fn(() => {
                     databases[name][storeName] = {};
                     const clearRequest: any = {
                       onsuccess: null,
@@ -161,9 +161,9 @@ const createMockIndexedDB = () => {
             
             return transaction;
           }),
-          close: jest.fn(),
+          close: vi.fn(),
           objectStoreNames: {
-            contains: jest.fn(() => false),
+            contains: vi.fn(() => false),
           },
         },
         onsuccess: null,
@@ -241,7 +241,7 @@ describe('Key Storage - Concurrency Tests', () => {
   beforeEach(async () => {
     mockLocalStorage.clear();
     actualCounterValues = [];
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     await clearAllKeys();
   });
 
