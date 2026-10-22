@@ -36,7 +36,7 @@ cortex/
 │   │   │   ├── routes/    # vaults, items, collections, tags, shares
 │   │   │   └── services/  # Business logic layer
 │   │   ├── entrypoint/    # Lambda entry point (api.py)
-│   │   ├── environment/   # Service provider
+│   │   ├── environment/   # Service provider + config provider
 │   │   └── shared/        # Common utilities (auth, models, repository, util)
 │   └── tests/             # Unit, integration, and property tests
 ├── packages/              # Monorepo packages (npm workspaces)

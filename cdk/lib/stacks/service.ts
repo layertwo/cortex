@@ -247,6 +247,9 @@ export class ServiceStack extends Stack {
                 FILES_BUCKET_NAME: this.bucket.bucketName,
                 COGNITO_USER_POOL_ID: this.props.userPool.userPoolId,
                 COGNITO_USER_POOL_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
+                // The SPA reads its OIDC settings from GET /v1/config.
+                OIDC_ISSUER: `https://cognito-idp.${this.region}.amazonaws.com/${this.props.userPool.userPoolId}`,
+                OIDC_CLIENT_ID: this.props.userPoolClient.userPoolClientId,
                 LOG_LEVEL: "INFO",
             },
             timeout: Duration.seconds(30),

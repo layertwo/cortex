@@ -8,7 +8,6 @@ provider's JWKS. Claims are never logged: the subject is PII.
 """
 
 import json
-import os
 import urllib.request
 from functools import lru_cache
 
@@ -37,7 +36,7 @@ def _jwks_uri(issuer: str) -> str:
         return json.load(response)["jwks_uri"]
 
 
-def verify_token(token: str) -> str:
+def verify_token(token: str, issuer: str, client_id: str) -> str:
     """
     Validate an OIDC ID token and return its subject.
 
@@ -45,8 +44,7 @@ def verify_token(token: str) -> str:
         UnauthorizedError: if the token is malformed, expired, for another
             audience/issuer, or the provider is unreachable.
     """
-    issuer = os.environ.get("OIDC_ISSUER", "").rstrip("/")
-    client_id = os.environ.get("OIDC_CLIENT_ID", "")
+    issuer = issuer.rstrip("/")
     if not issuer or not client_id:
         logger.error("OIDC issuer/client id not configured")
         raise UnauthorizedError("Authentication is not configured")

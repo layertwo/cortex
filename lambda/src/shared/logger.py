@@ -6,11 +6,12 @@ Replaces aws-lambda-powertools Logger.
 """
 
 import logging
-import os
 
 import structlog
 
-_log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+from src.environment.config_provider import log_level
+
+_log_level = getattr(logging, log_level().upper(), logging.INFO)
 
 structlog.configure(
     processors=[
