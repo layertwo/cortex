@@ -1,9 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-const { getCurrentUser } = vi.hoisted(() => ({ getCurrentUser: vi.fn() }));
-vi.mock('aws-amplify/auth', () => ({ getCurrentUser }));
-
 import { ACCOUNT_KEY, getAccountId, resolveAccount, clearAccount } from './account';
+
+const { getUser } = vi.hoisted(() => ({ getUser: vi.fn() }));
+vi.mock('./oidc', () => ({ getUserManager: () => ({ getUser }) }));
 
 beforeEach(() => {
   localStorage.clear();
@@ -15,21 +14,27 @@ describe('account gate', () => {
     expect(getAccountId()).toBeNull();
   });
 
-  it('resolves the Cognito sub from getCurrentUser().userId and stores it', async () => {
-    getCurrentUser.mockResolvedValueOnce({ userId: 'sub-1', username: 'a@b.c' });
-    await expect(resolveAccount()).resolves.toBe('sub-1');
-    expect(localStorage.getItem('cortex_account')).toBe('sub-1');
-    expect(getAccountId()).toBe('sub-1');
+  it('stores the OIDC subject and returns it', async () => {
+    getUser.mockResolvedValueOnce({ expired: false, profile: { sub: 'u1' } });
+    await expect(resolveAccount()).resolves.toBe('u1');
+    expect(localStorage.getItem('cortex_account')).toBe('u1');
+    expect(getAccountId()).toBe('u1');
   });
 
-  it('propagates an Amplify failure and stores nothing', async () => {
-    getCurrentUser.mockRejectedValueOnce(new Error('not signed in'));
-    await expect(resolveAccount()).rejects.toThrow('not signed in');
+  it('rejects without a user and stores nothing', async () => {
+    getUser.mockResolvedValueOnce(null);
+    await expect(resolveAccount()).rejects.toThrow('Not authenticated');
+    expect(getAccountId()).toBeNull();
+  });
+
+  it('rejects an expired user', async () => {
+    getUser.mockResolvedValueOnce({ expired: true, profile: { sub: 'u1' } });
+    await expect(resolveAccount()).rejects.toThrow('Not authenticated');
     expect(getAccountId()).toBeNull();
   });
 
   it('clearAccount removes the stored subject', async () => {
-    getCurrentUser.mockResolvedValueOnce({ userId: 'sub-1' });
+    getUser.mockResolvedValueOnce({ expired: false, profile: { sub: 'u1' } });
     await resolveAccount();
     clearAccount();
     expect(getAccountId()).toBeNull();

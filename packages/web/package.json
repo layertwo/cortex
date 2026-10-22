@@ -20,7 +20,7 @@
     "@cortex/encryption": "*",
     "@fontsource-variable/inter": "^5.3.0",
     "@stylexjs/stylex": "^0.19.0",
-    "aws-amplify": "^6.18.0",
+    "oidc-client-ts": "^3.3.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router-dom": "^7.18.0"

@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
 from src.shared.auth import get_current_user
 from src.shared.exceptions import UnauthorizedError
@@ -67,3 +68,27 @@ class TestGetCurrentUser:
         event: dict[str, Any] = {}
         with pytest.raises(UnauthorizedError, match="User identity not found"):
             extract_user_id(event)
+
+    def test_validates_the_bearer_token_outside_api_gateway(self, monkeypatch):
+        from src.shared import auth
+
+        monkeypatch.setattr(auth, "verify_token", lambda token: "user-789")
+        client = TestClient(self._make_app())
+
+        response = client.get("/test", headers={"Authorization": "Bearer token-1"})
+
+        assert response.status_code == 200
+        assert response.json() == {"user_id": "user-789"}
+
+    def test_requires_a_bearer_token_outside_api_gateway(self):
+        from starlette.requests import Request
+
+        with pytest.raises(UnauthorizedError, match="Authentication required"):
+            get_current_user(Request({"type": "http", "headers": []}))
+
+    def test_ignores_non_bearer_authorization(self):
+        from starlette.requests import Request
+
+        request = Request({"type": "http", "headers": [(b"authorization", b"Basic abc")]})
+        with pytest.raises(UnauthorizedError, match="Authentication required"):
+            get_current_user(request)

@@ -1,15 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import {
-  signUp,
-  confirmSignUp,
-  signIn,
-  signOut,
-  resetPassword,
-  confirmResetPassword,
-  resendSignUpCode,
-  updatePassword,
-} from 'aws-amplify/auth';
-import {
   deriveWrappingKey,
   deriveKeys,
   generateVaultMasterKey,
@@ -45,6 +35,7 @@ import {
 } from '../vault/recovery';
 import { encryptCollectionName, decryptCollectionName } from '../items/collectionMetadata';
 import { resolveAccount, clearAccount } from './account';
+import { getUserManager } from './oidc';
 import {
   listVaults,
   upsertVault,
@@ -134,17 +125,9 @@ async function unwrapCurrentVmk(vault: VaultRecord, password: string): Promise<U
 
 export interface SessionValue {
   status: SessionStatus;
-  signUpAccount(email: string, password: string): Promise<void>;
-  confirmAccount(email: string, code: string): Promise<void>;
-  resendCode(email: string): Promise<void>;
-  signInAccount(email: string, password: string): Promise<void>;
-  // Cognito *account* password reset (emails a code). NOT the vault password, that
-  // opens the VMK envelope client-side and is unrecoverable except via BIP39 recovery.
-  requestPasswordReset(email: string): Promise<void>;
-  confirmPasswordReset(email: string, code: string, newPassword: string): Promise<void>;
-  // Change the signed-in account's Cognito password. The vault password and keys are
-  // untouched — no re-encryption, no new recovery phrase.
-  changeAccountPassword(currentPassword: string, newPassword: string): Promise<void>;
+  // Redirects to the OIDC provider; the provider sends the browser back to /auth/callback.
+  signIn(): Promise<void>;
+  // Ends the local session (keys, registry namespace) and clears the OIDC user.
   logout(): Promise<void>;
   // Creates the vault, bootstraps its first VMK envelope server-side, stores the vault name;
   // returns the BIP39 recovery phrase (which encodes the VMK).
@@ -258,11 +241,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [setVaults, refreshVaults]);
 
-  // Account gate: resolve the Cognito subject once (it namespaces the registry), adopt a
-  // pre-account registry, merge the server's list, then let the guards route. Status stays
-  // 'loading' (guards render nothing) until the subject is known.
+  // Account gate: complete the OIDC redirect if we're on the callback, otherwise resolve the
+  // current subject (it namespaces the registry), adopt a pre-account registry, merge the
+  // server's list, then let the guards route. Status stays 'loading' (guards render nothing)
+  // until the subject is known.
   const gate = useCallback(async () => {
     try {
+      if (window.location.pathname === '/auth/callback') {
+        await getUserManager().signinRedirectCallback();
+        // Reload at "/" so BrowserRouter sees the authenticated location and stored user.
+        window.location.replace('/');
+        return;
+      }
       await resolveAccount();
     } catch {
       setStatus('signedOut');
@@ -277,52 +267,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void gate();
   }, [gate]);
 
-  const signUpAccount = useCallback(async (email: string, password: string) => {
-    await signUp({ username: email, password, options: { userAttributes: { email } } });
+  const signIn = useCallback(async () => {
+    await getUserManager().signinRedirect();
   }, []);
-
-  const confirmAccount = useCallback(async (email: string, code: string) => {
-    await confirmSignUp({ username: email, confirmationCode: code });
-  }, []);
-
-  const resendCode = useCallback(async (email: string) => {
-    await resendSignUpCode({ username: email });
-  }, []);
-
-  const signInAccount = useCallback(
-    async (email: string, password: string) => {
-      await signIn({ username: email, password });
-      await gate();
-    },
-    [gate],
-  );
-
-  const requestPasswordReset = useCallback(async (email: string) => {
-    await resetPassword({ username: email });
-  }, []);
-
-  const confirmPasswordReset = useCallback(
-    async (email: string, code: string, newPassword: string) => {
-      await confirmResetPassword({ username: email, confirmationCode: code, newPassword });
-    },
-    [],
-  );
-
-  // Cognito owns the account password; the server never sees it. Because the vault key is
-  // derived from the separate vault password, nothing encrypted needs to change.
-  const changeAccountPassword = useCallback(
-    async (currentPassword: string, newPassword: string): Promise<void> => {
-      await updatePassword({ oldPassword: currentPassword, newPassword });
-    },
-    [],
-  );
 
   // Keys and the in-memory salts go; the registry stays so a returning user is never routed to
   // setup. Clearing the account makes the readers return nothing until the next gate resolves
   // a subject.
   const logout = useCallback(async () => {
     for (const v of listVaults()) await clearKeys(v.vaultId);
-    await signOut();
+    await getUserManager().removeUser();
     clearAccount();
     setVaults([]);
     setRotationInterrupted(false);
@@ -715,13 +669,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const value: SessionValue = {
     status,
-    signUpAccount,
-    confirmAccount,
-    resendCode,
-    signInAccount,
-    requestPasswordReset,
-    confirmPasswordReset,
-    changeAccountPassword,
+    signIn,
     logout,
     setupVault,
     unlockVault,

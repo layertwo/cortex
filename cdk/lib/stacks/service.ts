@@ -264,9 +264,6 @@ export class ServiceStack extends Stack {
         this.bucket.grantReadWrite(fn);
         this.bucket.grantDelete(fn);
 
-        // The public health endpoint reports Cognito availability.
-        this.props.userPool.grant(fn, "cognito-idp:DescribeUserPool");
-
         return fn;
     }
 

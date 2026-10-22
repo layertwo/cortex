@@ -10,29 +10,32 @@ import {
   type RotationState,
   type VaultSummary,
 } from '@cortex/client';
-import { fetchAuthSession } from 'aws-amplify/auth';
+import { getUserManager } from '../auth/oidc';
 import { getConfig } from '../config';
 
 /**
  * Build the Smithy-generated Cortex SDK client.
  *
- * Auth is the Cognito idToken supplied as an HTTP bearer token (the contract is
- * @httpBearerAuth). The generated restJson1 serde honors the camelCase contract
- * and marshals Blob fields as Uint8Array<->base64, so callers work in raw bytes
- * — no manual casing or base64 handling here.
+ * The generated client sends the bearer token from the configured provider; we hand it
+ * the OIDC ID token from the generic OIDC login (Pocket ID locally, Cognito hosted UI on
+ * AWS). The API validates it against the provider's JWKS.
  *
  * Exported so sibling API modules (e.g. ./items) send their own commands through
- * the same endpoint + Cognito-bearer configuration.
+ * the same endpoint + auth configuration.
  */
 export function makeClient(): CortexClient {
   const { apiBaseUrl } = getConfig();
   return new CortexClient({
     endpoint: apiBaseUrl,
     token: async () => {
-      const session = await fetchAuthSession();
-      const jwt = session.tokens?.idToken?.toString();
-      if (!jwt) throw new Error('No Cognito session, sign in first');
-      return { token: jwt };
+      let user = await getUserManager().getUser();
+      // Renew with the refresh token when the provider issued one; otherwise the caller
+      // sees "Not signed in" and the sign-in screen comes back.
+      if (user?.expired && user.refresh_token) {
+        user = await getUserManager().signinSilent();
+      }
+      if (!user?.id_token) throw new Error('Not signed in');
+      return { token: user.id_token };
     },
   });
 }

@@ -23,9 +23,6 @@ vi.mock('@cortex/client', () => {
     RemoveItemFromCollectionCommand: cmd('RemoveItemFromCollection'),
   };
 });
-vi.mock('aws-amplify/auth', () => ({
-  fetchAuthSession: vi.fn(async () => ({ tokens: { idToken: { toString: () => 'JWT' } } })),
-}));
 vi.mock('../config', () => ({ getConfig: () => ({ apiBaseUrl: 'https://api' }) }));
 
 import {
