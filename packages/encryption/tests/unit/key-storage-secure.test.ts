@@ -2,7 +2,7 @@
  * Unit tests for key storage module (IndexedDB + Web Crypto API)
  */
 
-import { jest } from '@jest/globals';
+import { vi } from 'vitest';
 import {
   storeKeys,
   retrieveKeys,
@@ -21,7 +21,7 @@ import {
 } from '../../src/lib/key-storage';
 
 // Mock crypto.getRandomValues and crypto.subtle
-const mockRandomValues = jest.fn((array: Uint8Array) => {
+const mockRandomValues = vi.fn((array: Uint8Array) => {
   for (let i = 0; i < array.length; i++) {
     array[i] = i % 256;
   }
@@ -32,8 +32,8 @@ const mockRandomValues = jest.fn((array: Uint8Array) => {
 const mockCryptoKey = { type: 'secret', algorithm: { name: 'AES-GCM' } } as CryptoKey;
 
 const mockSubtle = {
-  generateKey: jest.fn<() => Promise<CryptoKey>>().mockResolvedValue(mockCryptoKey),
-  encrypt: jest.fn((_algorithm: any, _key: any, data: any) => {
+  generateKey: vi.fn<() => Promise<CryptoKey>>().mockResolvedValue(mockCryptoKey),
+  encrypt: vi.fn((_algorithm: any, _key: any, data: any) => {
     // Simple mock: just return the data with a fake IV prepended
     const iv = new Uint8Array(12);
     const result = new Uint8Array(iv.length + data.byteLength);
@@ -41,12 +41,12 @@ const mockSubtle = {
     result.set(new Uint8Array(data), iv.length);
     return Promise.resolve(result.buffer);
   }),
-  decrypt: jest.fn((_algorithm: any, _key: any, data: any) => {
+  decrypt: vi.fn((_algorithm: any, _key: any, data: any) => {
     // Simple mock: just return the data without the IV
     const dataArray = new Uint8Array(data);
     return Promise.resolve(dataArray.slice(12).buffer);
   }),
-  exportKey: jest.fn<() => Promise<never>>().mockRejectedValue(new Error('Key is not exportable')),
+  exportKey: vi.fn<() => Promise<never>>().mockRejectedValue(new Error('Key is not exportable')),
 };
 
 Object.defineProperty(global, 'crypto', {
@@ -62,46 +62,46 @@ const createMockIndexedDB = () => {
   const databases: Record<string, Record<string, any>> = {};
   
   return {
-    open: jest.fn((name: string, _version: number) => {
+    open: vi.fn((name: string, _version: number) => {
       if (!databases[name]) {
         databases[name] = {};
       }
       
       const request: any = {
         result: {
-          transaction: jest.fn((_storeNames: string[], _mode: string) => {
+          transaction: vi.fn((_storeNames: string[], _mode: string) => {
             return {
-              objectStore: jest.fn((storeName: string) => {
+              objectStore: vi.fn((storeName: string) => {
                 if (!databases[name][storeName]) {
                   databases[name][storeName] = {};
                 }
                 
                 return {
-                  put: jest.fn((data: any) => ({
+                  put: vi.fn((data: any) => ({
                     onsuccess: null,
                     onerror: null,
                     result: data,
                   })),
-                  get: jest.fn((key: string) => ({
+                  get: vi.fn((key: string) => ({
                     onsuccess: null,
                     onerror: null,
                     result: databases[name][storeName][key] || null,
                   })),
-                  delete: jest.fn((key: string) => {
+                  delete: vi.fn((key: string) => {
                     delete databases[name][storeName][key];
                     return {
                       onsuccess: null,
                       onerror: null,
                     };
                   }),
-                  clear: jest.fn(() => {
+                  clear: vi.fn(() => {
                     databases[name][storeName] = {};
                     return {
                       onsuccess: null,
                       onerror: null,
                     };
                   }),
-                  openCursor: jest.fn(() => ({
+                  openCursor: vi.fn(() => ({
                     onsuccess: null,
                     onerror: null,
                   })),
@@ -111,9 +111,9 @@ const createMockIndexedDB = () => {
               onerror: null,
             };
           }),
-          close: jest.fn(),
+          close: vi.fn(),
           objectStoreNames: {
-            contains: jest.fn(() => false),
+            contains: vi.fn(() => false),
           },
         },
         onsuccess: null,
@@ -197,7 +197,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
   beforeEach(() => {
     mockLocalStorage.clear();
     mockSessionStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('getStorageInfo', () => {
@@ -310,11 +310,11 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
 
   describe('Expiration', () => {
     beforeEach(() => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should return null for expired keys (inactivity timeout)', async () => {
@@ -328,7 +328,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       await storeKeys('vault-123', keys, config);
       
       // Advance time by 31 minutes
-      jest.advanceTimersByTime(31 * 60 * 1000);
+      vi.advanceTimersByTime(31 * 60 * 1000);
       
       const retrieved = await retrieveKeys('vault-123', config);
       expect(retrieved).toBeNull();
@@ -345,7 +345,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       await storeKeys('vault-123', keys, config);
       
       // Advance time by 25 hours
-      jest.advanceTimersByTime(25 * 60 * 60 * 1000);
+      vi.advanceTimersByTime(25 * 60 * 60 * 1000);
       
       const retrieved = await retrieveKeys('vault-123', config);
       expect(retrieved).toBeNull();
@@ -362,7 +362,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       await storeKeys('vault-123', keys, config);
       
       // Advance time by a lot
-      jest.advanceTimersByTime(100 * 60 * 60 * 1000);
+      vi.advanceTimersByTime(100 * 60 * 60 * 1000);
       
       const retrieved = await retrieveKeys('vault-123', config);
       expect(retrieved).not.toBeNull();
@@ -379,13 +379,13 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       await storeKeys('vault-123', keys, config);
       
       // Advance time by 20 minutes
-      jest.advanceTimersByTime(20 * 60 * 1000);
+      vi.advanceTimersByTime(20 * 60 * 1000);
       
       // Access keys (updates timestamp)
       await retrieveKeys('vault-123', config);
       
       // Advance time by another 20 minutes (40 total, but only 20 since last access)
-      jest.advanceTimersByTime(20 * 60 * 1000);
+      vi.advanceTimersByTime(20 * 60 * 1000);
       
       // Should still be valid
       const retrieved = await retrieveKeys('vault-123', config);
@@ -404,7 +404,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       
       // Keep accessing every 20 minutes for 3 hours
       for (let i = 0; i < 9; i++) {
-        jest.advanceTimersByTime(20 * 60 * 1000);
+        vi.advanceTimersByTime(20 * 60 * 1000);
         await retrieveKeys('vault-123', config);
       }
       
@@ -462,11 +462,11 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
 
   describe('cleanupExpiredKeys', () => {
     beforeEach(() => {
-      jest.useFakeTimers();
+      vi.useFakeTimers();
     });
 
     afterEach(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should remove expired keys', async () => {
@@ -483,7 +483,7 @@ describe('Key Storage (IndexedDB + Web Crypto API)', () => {
       await storeKeys('vault-3', keys, config);
       
       // Advance time to expire some keys
-      jest.advanceTimersByTime(31 * 60 * 1000);
+      vi.advanceTimersByTime(31 * 60 * 1000);
       
       const removedCount = await cleanupExpiredKeys(config);
       
@@ -597,7 +597,7 @@ describe('Key zeroization (spec 6.16)', () => {
   beforeEach(() => {
     mockLocalStorage.clear();
     mockSessionStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   it('secureZeroize overwrites the buffer so it no longer holds the original', () => {

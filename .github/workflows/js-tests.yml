@@ -63,7 +63,7 @@ jobs:
           npm run build:client
           npm run build:encryption
 
-      # Runs test:encryption (jest) then test:web (vitest).
+      # Runs test:encryption then test:web (both vitest).
       - name: Run TypeScript/JS unit tests
         run: npm run test:all
 

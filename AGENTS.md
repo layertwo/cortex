@@ -427,8 +427,8 @@ pytest-cov>=4.0
   "devDependencies": {
     "@types/node": "^20.x.x",
     "typescript": "^5.x.x",
-    "jest": "^29.x.x",
-    "ts-jest": "^29.x.x",
+    "vitest": "^5.x.x",
+    "@vitest/coverage-v8": "^5.x.x",
     "fast-check": "^3.0.0"       // Property-based testing
   }
 }
