@@ -6,7 +6,6 @@ and FastAPI application creation for the Cortex API.
 """
 
 import functools
-import os
 from datetime import datetime, timezone
 from functools import cached_property
 
@@ -60,6 +59,7 @@ from src.api.services.item_service import ItemService
 from src.api.services.share_service import ShareService
 from src.api.services.vault_deletion_service import VaultDeletionService
 from src.api.services.vault_service import VaultService
+from src.environment.config_provider import ConfigProvider
 from src.shared.exceptions import CortexError
 from src.shared.logger import get_logger
 
@@ -124,91 +124,92 @@ class ServiceProvider:
     Service provider for dependency injection and service initialization.
     """
 
-    @cached_property
-    def aws_region(self):  # pragma: nocover
-        """Get AWS region from environment."""
-        return os.environ.get("AWS_REGION", "us-east-1")
+    def __init__(self, config: ConfigProvider | None = None):
+        self.config = config or ConfigProvider()
 
     @cached_property
-    def session(self):  # pragma: nocover
-        """Create boto3 session."""
-        return boto3.Session(region_name=self.aws_region)
+    def boto_session(self) -> boto3.Session:  # pragma: nocover
+        """Default session, using the standard AWS credential chain."""
+        return boto3.Session(region_name=self.config.aws_region)
 
     @cached_property
-    def vaults_table_name(self):  # pragma: nocover
-        """Get vaults table name from environment."""
-        return os.environ["VAULTS_TABLE_NAME"]
+    def dynamodb_session(self) -> boto3.Session:  # pragma: nocover
+        """Alternator's own key when configured; the default session otherwise."""
+        if self.config.dynamodb_access_key_id and self.config.dynamodb_secret_access_key:
+            return boto3.Session(
+                region_name=self.config.aws_region,
+                aws_access_key_id=self.config.dynamodb_access_key_id,
+                aws_secret_access_key=self.config.dynamodb_secret_access_key,
+            )
+        return self.boto_session
 
     @cached_property
-    def items_table_name(self):  # pragma: nocover
-        """Get items table name from environment."""
-        return os.environ["ITEMS_TABLE_NAME"]
-
-    @cached_property
-    def collections_table_name(self):  # pragma: nocover
-        """Get collections table name from environment."""
-        return os.environ["COLLECTIONS_TABLE_NAME"]
-
-    @cached_property
-    def shares_table_name(self):  # pragma: nocover
-        """Get shares table name from environment."""
-        return os.environ["SHARES_TABLE_NAME"]
-
-    @cached_property
-    def files_bucket_name(self):  # pragma: nocover
-        """Get S3 files bucket name from environment."""
-        return os.environ["FILES_BUCKET_NAME"]
+    def s3_session(self) -> boto3.Session:  # pragma: nocover
+        """Garage's own key when configured; the default session otherwise."""
+        if self.config.s3_access_key_id and self.config.s3_secret_access_key:
+            return boto3.Session(
+                region_name=self.config.aws_region,
+                aws_access_key_id=self.config.s3_access_key_id,
+                aws_secret_access_key=self.config.s3_secret_access_key,
+            )
+        return self.boto_session
 
     # S3 client
     @cached_property
     def s3_client(self):  # pragma: nocover
         """Create S3 client."""
-        return self.session.client("s3")
+        return self.s3_session.client("s3")
 
     # Services
     @cached_property
     def vault_service(self):
         """Create vault service."""
-        return VaultService(session=self.session, vaults_table_name=self.vaults_table_name)
+        return VaultService(
+            session=self.dynamodb_session,
+            vaults_table_name=self.config.vaults_table_name,
+        )
 
     @cached_property
     def item_service(self) -> ItemService:
         """Create item service."""
         return ItemService(
-            session=self.session,
-            items_table_name=self.items_table_name,
-            s3_bucket_name=self.files_bucket_name,
+            session=self.dynamodb_session,
+            items_table_name=self.config.items_table_name,
+            s3_bucket_name=self.config.files_bucket_name,
+            s3_session=self.s3_session,
         )
 
     @cached_property
     def collection_service(self):
         """Create collection service."""
         return CollectionService(
-            session=self.session,
-            collections_table_name=self.collections_table_name,
-            items_table_name=self.items_table_name,
+            session=self.dynamodb_session,
+            collections_table_name=self.config.collections_table_name,
+            items_table_name=self.config.items_table_name,
         )
 
     @cached_property
     def share_service(self) -> ShareService:
         """Create share service."""
         return ShareService(
-            session=self.session,
-            shares_table_name=self.shares_table_name,
-            items_table_name=self.items_table_name,
-            s3_bucket_name=self.files_bucket_name,
+            session=self.dynamodb_session,
+            shares_table_name=self.config.shares_table_name,
+            items_table_name=self.config.items_table_name,
+            s3_bucket_name=self.config.files_bucket_name,
+            s3_session=self.s3_session,
         )
 
     @cached_property
     def vault_deletion_service(self) -> VaultDeletionService:
         """Create vault deletion service (bounded, resumable DeleteVault sweep)."""
         return VaultDeletionService(
-            session=self.session,
+            session=self.dynamodb_session,
             vault_service=self.vault_service,
             collection_service=self.collection_service,
-            items_table_name=self.items_table_name,
-            shares_table_name=self.shares_table_name,
-            s3_bucket_name=self.files_bucket_name,
+            items_table_name=self.config.items_table_name,
+            shares_table_name=self.config.shares_table_name,
+            s3_bucket_name=self.config.files_bucket_name,
+            s3_session=self.s3_session,
         )
 
     @cached_property
@@ -220,6 +221,7 @@ class ServiceProvider:
             Configured FastAPI application
         """
         app = FastAPI(title="Cortex API", version="1.0.0")
+        app.state.config = self.config
 
         # Rate limiter
         limiter = Limiter(key_func=get_remote_address)
@@ -230,12 +232,10 @@ class ServiceProvider:
         app.add_middleware(SecurityHeadersMiddleware)
 
         # CORS (Lambda gets this from API Gateway; containers need it explicitly)
-        cors_origins = os.environ.get("CORS_ORIGINS", "").split(",")
-        cors_origins = [o.strip() for o in cors_origins if o.strip()]
-        if cors_origins:
+        if self.config.cors_origins:
             app.add_middleware(
                 CORSMiddleware,
-                allow_origins=cors_origins,
+                allow_origins=self.config.cors_origins,
                 allow_credentials=True,
                 allow_methods=["GET", "POST", "PUT", "DELETE"],
                 allow_headers=["Content-Type", "Authorization"],
@@ -313,13 +313,13 @@ class ServiceProvider:
             CreateShareRoute(share_service=self.share_service),
             GetShareRoute(share_service=self.share_service),
             RevokeShareRoute(share_service=self.share_service),
-            ConfigRoute(),
+            ConfigRoute(config=self.config),
             HealthRoute(
                 checks={
                     "dynamodb": lambda: self.vault_service.vaults_table.get_item(
                         Key={"PK": "HEALTH#PROBE", "SK": "HEALTH#PROBE"}
                     ),
-                    "s3": lambda: self.s3_client.head_bucket(Bucket=self.files_bucket_name),
+                    "s3": lambda: self.s3_client.head_bucket(Bucket=self.config.files_bucket_name),
                 }
             ),
         ]

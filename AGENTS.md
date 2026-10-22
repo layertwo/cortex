@@ -88,6 +88,10 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 - DynamoDB: Use composite keys (PK/SK) and GSIs for query optimization
 - Implement proper partition key design to avoid hot partitions
 
+**Configuration**: env vars are read only in `environment/config_provider.py`
+- Every value is a distinct `@cached_property` on `ConfigProvider`; nothing else imports `os.environ`
+- `ServiceProvider` owns the boto3 sessions (`dynamodb_session`, `s3_session`) so the metadata and blob stores can use different keys
+
 **Security**: OIDC (Pocket ID / Cognito) + API Gateway
 - The OIDC provider handles account authentication only (not the vault password); the SPA is a generic OIDC client (authorization code + PKCE) and the API validates the ID token against the provider's JWKS
 - API Gateway's Cognito authorizer validates the token when deployed to AWS

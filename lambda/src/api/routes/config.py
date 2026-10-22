@@ -6,12 +6,11 @@ web image works in every deployment. The issuer and client id are public by desi
 they appear in every authorization request.
 """
 
-import os
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from src.api.routes.base_route import BaseRoute
+from src.environment.config_provider import ConfigProvider
 from src.shared.logger import get_logger
 
 logger = get_logger("config_routes")
@@ -20,11 +19,14 @@ logger = get_logger("config_routes")
 class ConfigRoute(BaseRoute):
     """Serve the client-visible settings for this deployment."""
 
+    def __init__(self, config: ConfigProvider):
+        self.config = config
+
     def register(self, app: APIRouter) -> None:
         @app.get("/v1/config")
         def config():
-            issuer = os.environ.get("OIDC_ISSUER", "").rstrip("/")
-            client_id = os.environ.get("OIDC_CLIENT_ID", "")
+            issuer = self.config.oidc_issuer
+            client_id = self.config.oidc_client_id
             if not issuer or not client_id:
                 logger.error("OIDC issuer/client id not configured")
                 return JSONResponse(

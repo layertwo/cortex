@@ -1,5 +1,6 @@
 """Tests for authentication utilities."""
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +16,9 @@ class TestGetCurrentUser:
 
     def _make_app(self):
         app = FastAPI()
+        app.state.config = SimpleNamespace(
+            oidc_issuer="https://idp.example.com", oidc_client_id="cortex"
+        )
 
         @app.get("/test")
         def test_route(user_id: str = Depends(get_current_user)):
@@ -72,13 +76,25 @@ class TestGetCurrentUser:
     def test_validates_the_bearer_token_outside_api_gateway(self, monkeypatch):
         from src.shared import auth
 
-        monkeypatch.setattr(auth, "verify_token", lambda token: "user-789")
+        seen = {}
+        monkeypatch.setattr(
+            auth,
+            "verify_token",
+            lambda token, issuer, client_id: (
+                seen.update(issuer=issuer, client_id=client_id, token=token) or "user-789"
+            ),
+        )
         client = TestClient(self._make_app())
 
         response = client.get("/test", headers={"Authorization": "Bearer token-1"})
 
         assert response.status_code == 200
         assert response.json() == {"user_id": "user-789"}
+        assert seen == {
+            "issuer": "https://idp.example.com",
+            "client_id": "cortex",
+            "token": "token-1",
+        }
 
     def test_requires_a_bearer_token_outside_api_gateway(self):
         from starlette.requests import Request

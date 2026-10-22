@@ -27,9 +27,7 @@ class _FakeJwkClient:
 
 
 @pytest.fixture(autouse=True)
-def oidc_env(monkeypatch, signing_key):
-    monkeypatch.setenv("OIDC_ISSUER", ISSUER)
-    monkeypatch.setenv("OIDC_CLIENT_ID", CLIENT_ID)
+def jwks(monkeypatch, signing_key):
     monkeypatch.setattr(oidc, "_jwks_uri", lambda issuer: f"{issuer}/jwks")
     monkeypatch.setattr(oidc, "_jwk_client", lambda uri: _FakeJwkClient(signing_key))
 
@@ -49,20 +47,22 @@ def _token(signing_key, **overrides):
 
 class TestVerifyToken:
     def test_returns_the_subject_of_a_valid_token(self, signing_key):
-        assert oidc.verify_token(_token(signing_key)) == "user-1"
+        assert oidc.verify_token(_token(signing_key), ISSUER, CLIENT_ID) == "user-1"
 
     def test_rejects_another_audience(self, signing_key):
         with pytest.raises(UnauthorizedError):
-            oidc.verify_token(_token(signing_key, aud="someone-else"))
+            oidc.verify_token(_token(signing_key, aud="someone-else"), ISSUER, CLIENT_ID)
 
     def test_rejects_another_issuer(self, signing_key):
         with pytest.raises(UnauthorizedError):
-            oidc.verify_token(_token(signing_key, iss="https://evil.example.com"))
+            oidc.verify_token(
+                _token(signing_key, iss="https://evil.example.com"), ISSUER, CLIENT_ID
+            )
 
     def test_rejects_an_expired_token(self, signing_key):
         expired = datetime.now(tz=timezone.utc) - timedelta(minutes=1)
         with pytest.raises(UnauthorizedError):
-            oidc.verify_token(_token(signing_key, exp=expired))
+            oidc.verify_token(_token(signing_key, exp=expired), ISSUER, CLIENT_ID)
 
     def test_rejects_a_token_without_a_subject(self, signing_key):
         now = datetime.now(tz=timezone.utc)
@@ -72,12 +72,11 @@ class TestVerifyToken:
             algorithm="RS256",
         )
         with pytest.raises(UnauthorizedError):
-            oidc.verify_token(token)
+            oidc.verify_token(token, ISSUER, CLIENT_ID)
 
-    def test_rejects_when_oidc_is_not_configured(self, monkeypatch, signing_key):
-        monkeypatch.delenv("OIDC_CLIENT_ID")
+    def test_rejects_when_oidc_is_not_configured(self, signing_key):
         with pytest.raises(UnauthorizedError, match="not configured"):
-            oidc.verify_token(_token(signing_key))
+            oidc.verify_token(_token(signing_key), "", "")
 
     def test_rejects_when_the_provider_is_unreachable(self, monkeypatch, signing_key):
         def boom(_):
@@ -85,4 +84,4 @@ class TestVerifyToken:
 
         monkeypatch.setattr(oidc, "_jwks_uri", boom)
         with pytest.raises(UnauthorizedError):
-            oidc.verify_token(_token(signing_key))
+            oidc.verify_token(_token(signing_key), ISSUER, CLIENT_ID)

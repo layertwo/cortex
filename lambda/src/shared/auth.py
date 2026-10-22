@@ -69,4 +69,10 @@ def get_current_user(request: Request) -> str:
     if aws_event:
         return extract_user_id(aws_event)
 
-    return verify_token(_bearer_token(request))
+    token = _bearer_token(request)
+    config = request.app.state.config
+    return verify_token(
+        token,
+        issuer=config.oidc_issuer,
+        client_id=config.oidc_client_id,
+    )
