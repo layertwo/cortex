@@ -3,10 +3,10 @@ name = "cortex-lambda-handler"
 version = "0.1.0"
 requires-python = ">=3.14"
 dependencies = [
-    "boto3==1.43.112",
+    "boto3==1.43.117",
     "cryptography==50.0.2",
     "pydantic==2.14.1",
-    "fastapi==0.143.0",
+    "fastapi==0.159.1",
     "mangum==0.22.0",
     "uvicorn[standard]==0.54.0",
     "structlog==26.1.0",
@@ -24,7 +24,7 @@ dev = [
     "flake8==7.4.1",
     "Flake8-pyproject==1.2.4",
     "mypy==2.4.0",
-    "types-boto3==1.43.112",
+    "types-boto3==1.43.117",
     "hypothesis>=6.0.0",
     "httpx==0.28.1",
     "datamodel-code-generator==0.86.0",
