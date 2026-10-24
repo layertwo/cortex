@@ -18,7 +18,7 @@ from botocore.stub import ANY
 from src.shared.exceptions import BadRequestError
 from src.shared.generated.models import (
     CreateItemRequestContent,
-    InitiateItemUploadRequestContent,
+    CreateItemUploadRequestContent,
 )
 
 TABLE = "test-items-table"
@@ -96,7 +96,7 @@ class TestReferentialIntegrity:
         # No S3 response was queued; if delete had called S3 it would have failed.
         dynamodb_stubber.assert_no_pending_responses()
 
-    def test_complete_upload_without_s3_object_cleans_up_metadata(
+    def test_finalize_upload_without_s3_object_cleans_up_metadata(
         self, item_service, dynamodb_stubber, s3_stubber
     ):
         """
@@ -115,7 +115,7 @@ class TestReferentialIntegrity:
         dynamodb_stubber.add_response("delete_item", {}, {"TableName": TABLE, "Key": ANY})
 
         with pytest.raises(BadRequestError, match="Uploaded object not found"):
-            item_service.complete_upload("user-123", "item-1")
+            item_service.finalize_upload("user-123", "item-1")
 
         dynamodb_stubber.assert_no_pending_responses()
 
@@ -163,8 +163,8 @@ class TestGenericItemApiSupportsAllTypes:
         dynamodb_stubber.assert_no_pending_responses()
 
     def test_media_upload_initiation_is_consistent(self, item_service, dynamodb_stubber):
-        """MEDIA goes through initiate_upload (presigned PUT) but stores a record the same way."""
-        request = InitiateItemUploadRequestContent(
+        """MEDIA goes through create_item_upload (presigned PUT) but stores a record the same way."""
+        request = CreateItemUploadRequestContent(
             vault_id="vault-123",
             encrypted_metadata=base64.b64encode(b"opaque-metadata"),
             size_bytes=1024,  # below multipart threshold -> single PUT, no uploadId
@@ -173,7 +173,7 @@ class TestGenericItemApiSupportsAllTypes:
         )
         dynamodb_stubber.add_response("put_item", {}, {"TableName": TABLE, "Item": ANY})
 
-        response = item_service.initiate_upload("user-123", request)
+        response = item_service.create_item_upload("user-123", request)
 
         assert response.item_id
         assert response.upload_url

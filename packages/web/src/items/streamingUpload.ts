@@ -11,11 +11,11 @@ import {
 } from '@cortex/encryption';
 import { encryptMetadata, type FileMetadata } from './metadata';
 import {
-  initiateUpload,
+  createItemUpload,
   putToS3,
   createUploadPartUrls,
-  completeUpload,
-  abortUpload,
+  finalizeUpload,
+  deleteUpload,
   type UploadedPart,
 } from '../api/items';
 
@@ -59,7 +59,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = PART_RETRIES): Promi
  * Encrypt a file as a chunked stream and upload it.
  *
  * The on-disk format is the 2.5a chunked layout `[header(13)][chunk0…chunkN]` — the
- * wrapped DEK now travels in the InitiateItemUpload call, not the blob. Transport branches on whether
+ * wrapped DEK now travels in the CreateItemUpload call, not the blob. Transport branches on whether
  * the server returned a multipart `uploadId`: absent → one presigned PUT;
  * present → one S3 part per chunk (1-based) with batched part URLs and per-part
  * retry, aborting on fatal failure. Multipart memory stays O(chunkSize).
@@ -98,7 +98,7 @@ export async function uploadFileStreaming(
     // metadataKey + vaultId so the search path produces matching HMACs.
     const encryptedTags = tags.map((t) => encryptTagForSearch(t, keys.metadataKey, keys.vaultId));
 
-    const { itemId, uploadUrl, uploadId } = await initiateUpload({
+    const { itemId, uploadUrl, uploadId } = await createItemUpload({
       vaultId: keys.vaultId,
       encryptedMetadata,
       sizeBytes,
@@ -136,7 +136,7 @@ export async function uploadFileStreaming(
       const blob = concat(blobs);
       await putToS3(uploadUrl, blob);
       bump(blob.length);
-      await completeUpload(itemId);
+      await finalizeUpload(itemId);
       return;
     }
 
@@ -157,9 +157,9 @@ export async function uploadFileStreaming(
           bump(body.length);
         }
       }
-      await completeUpload(itemId, { uploadId, parts });
+      await finalizeUpload(itemId, { uploadId, parts });
     } catch (err) {
-      await abortUpload(itemId, uploadId).catch(() => {}); // best-effort cleanup
+      await deleteUpload(itemId).catch(() => {}); // best-effort cleanup
       throw err;
     }
   } finally {

@@ -16,13 +16,14 @@ resource Item {
     delete: DeleteItem
     list: ListItems
     collectionOperations: [
-        InitiateItemUpload
+        CreateItemUpload
     ]
     operations: [
-        CompleteItemUpload
-        GetItemDownloadUrl
+        GetItemUpload
+        FinalizeItemUpload
+        GetItemContentUrl
         CreateUploadPartUrls
-        AbortItemUpload
+        DeleteItemUpload
     ]
 }
 
@@ -42,11 +43,11 @@ operation CreateItem {
     ]
 }
 
-@http(method: "POST", uri: "/v1/items/upload/init")
-@documentation("Initialize item upload for MEDIA items and receive presigned S3 URL")
-operation InitiateItemUpload {
-    input: InitiateItemUploadInput
-    output: InitiateItemUploadOutput
+@http(method: "POST", uri: "/v1/items/upload")
+@documentation("Create a blob upload for an item and receive a presigned S3 URL")
+operation CreateItemUpload {
+    input: CreateItemUploadInput
+    output: CreateItemUploadOutput
     errors: [
         AuthenticationError
         AuthorizationError
@@ -55,11 +56,25 @@ operation InitiateItemUpload {
     ]
 }
 
-@http(method: "POST", uri: "/v1/items/{itemId}/upload/complete")
-@documentation("Mark item upload as complete for MEDIA items")
-operation CompleteItemUpload {
-    input: CompleteItemUploadInput
-    output: CompleteItemUploadOutput
+@http(method: "GET", uri: "/v1/items/{itemId}/upload")
+@documentation("Check whether a blob upload is still pending or complete")
+@readonly
+operation GetItemUpload {
+    input: GetItemUploadInput
+    output: GetItemUploadOutput
+    errors: [
+        AuthenticationError
+        AuthorizationError
+        ResourceNotFoundError
+        InternalError
+    ]
+}
+
+@http(method: "POST", uri: "/v1/items/{itemId}/upload/finalize")
+@documentation("Verify the uploaded object (assembling multipart parts) and mark it complete")
+operation FinalizeItemUpload {
+    input: FinalizeItemUploadInput
+    output: FinalizeItemUploadOutput
     errors: [
         AuthenticationError
         AuthorizationError
@@ -112,12 +127,12 @@ operation UpdateItem {
     ]
 }
 
-@http(method: "GET", uri: "/v1/items/{itemId}/download")
-@documentation("Get presigned S3 URL for downloading MEDIA items")
+@http(method: "GET", uri: "/v1/items/{itemId}/content-url")
+@documentation("Get a presigned S3 URL for an item's blob content")
 @readonly
-operation GetItemDownloadUrl {
-    input: GetItemDownloadUrlInput
-    output: GetItemDownloadUrlOutput
+operation GetItemContentUrl {
+    input: GetItemContentUrlInput
+    output: GetItemContentUrlOutput
     errors: [
         AuthenticationError
         AuthorizationError
@@ -181,7 +196,7 @@ structure CreateItemOutput {
     version: Integer
 }
 
-structure InitiateItemUploadInput {
+structure CreateItemUploadInput {
     @required
     @documentation("Vault identifier")
     vaultId: String
@@ -207,7 +222,7 @@ structure InitiateItemUploadInput {
     dekVersion: Integer
 }
 
-structure InitiateItemUploadOutput {
+structure CreateItemUploadOutput {
     @required
     @documentation("Item identifier")
     itemId: String
@@ -227,7 +242,36 @@ structure InitiateItemUploadOutput {
     uploadId: String
 }
 
-structure CompleteItemUploadInput {
+@documentation("Lifecycle of a blob upload")
+enum UploadStatus {
+    @documentation("The object has not been verified yet")
+    PENDING = "PENDING"
+
+    @documentation("The object is present and the item is readable")
+    COMPLETE = "COMPLETE"
+}
+
+structure GetItemUploadInput {
+    @required
+    @httpLabel
+    @documentation("Item identifier")
+    itemId: String
+}
+
+structure GetItemUploadOutput {
+    @required
+    @documentation("Item identifier")
+    itemId: String
+
+    @required
+    @documentation("PENDING until the object is verified, then COMPLETE")
+    status: UploadStatus
+
+    @documentation("When the current presigned upload URLs expire")
+    expiresAt: Timestamp
+}
+
+structure FinalizeItemUploadInput {
     @required
     @httpLabel
     @documentation("Item identifier (must be a BLOB item)")
@@ -240,7 +284,7 @@ structure CompleteItemUploadInput {
     parts: UploadPartList
 }
 
-structure CompleteItemUploadOutput {
+structure FinalizeItemUploadOutput {
     @required
     @documentation("Item identifier")
     itemId: String
@@ -389,17 +433,17 @@ structure UpdateItemOutput {
     version: Integer
 }
 
-structure GetItemDownloadUrlInput {
+structure GetItemContentUrlInput {
     @required
     @httpLabel
     @documentation("Item identifier (must be a BLOB item)")
     itemId: String
 }
 
-structure GetItemDownloadUrlOutput {
+structure GetItemContentUrlOutput {
     @required
-    @documentation("Presigned S3 URL for download")
-    downloadUrl: String
+    @documentation("Presigned S3 URL for the item's content")
+    contentUrl: String
 
     @required
     @documentation("URL expiration timestamp (15 minutes)")
@@ -465,7 +509,7 @@ list UploadPartUrlList {
     member: UploadPartUrl
 }
 
-@http(method: "POST", uri: "/v1/items/{itemId}/upload/parts")
+@http(method: "POST", uri: "/v1/items/{itemId}/upload/part-urls")
 @documentation("Mint a batch of presigned URLs for multipart upload parts")
 operation CreateUploadPartUrls {
     input: CreateUploadPartUrlsInput
@@ -486,7 +530,7 @@ structure CreateUploadPartUrlsInput {
     itemId: String
 
     @required
-    @documentation("Multipart upload id from InitiateItemUpload")
+    @documentation("Multipart upload id from CreateItemUpload")
     uploadId: String
 
     @required
@@ -500,11 +544,11 @@ structure CreateUploadPartUrlsOutput {
     urls: UploadPartUrlList
 }
 
-@http(method: "POST", uri: "/v1/items/{itemId}/upload/abort")
-@documentation("Abort an in-progress multipart upload and clean up the pending item")
-operation AbortItemUpload {
-    input: AbortItemUploadInput
-    output: AbortItemUploadOutput
+@http(method: "DELETE", uri: "/v1/items/{itemId}/upload")
+@documentation("Abort a pending upload and delete the pending item")
+operation DeleteItemUpload {
+    input: DeleteItemUploadInput
+    output: DeleteItemUploadOutput
     errors: [
         AuthenticationError
         AuthorizationError
@@ -514,18 +558,14 @@ operation AbortItemUpload {
     ]
 }
 
-structure AbortItemUploadInput {
+structure DeleteItemUploadInput {
     @required
     @httpLabel
     @documentation("Item identifier")
     itemId: String
-
-    @required
-    @documentation("Multipart upload id to abort")
-    uploadId: String
 }
 
-structure AbortItemUploadOutput {
+structure DeleteItemUploadOutput {
     @documentation("Confirmation message")
     message: String
 }

@@ -13,17 +13,17 @@ vi.mock('@cortex/client', () => ({
     send = sendMock;
     constructor(public config: unknown) {}
   },
-  InitiateItemUploadCommand: class {
-    constructor(public input: unknown) { commands.push(['InitiateItemUpload', input]); }
+  CreateItemUploadCommand: class {
+    constructor(public input: unknown) { commands.push(['CreateItemUpload', input]); }
   },
-  CompleteItemUploadCommand: class {
-    constructor(public input: unknown) { commands.push(['CompleteItemUpload', input]); }
+  FinalizeItemUploadCommand: class {
+    constructor(public input: unknown) { commands.push(['FinalizeItemUpload', input]); }
   },
   ListItemsCommand: class {
     constructor(public input: unknown) { commands.push(['ListItems', input]); }
   },
-  GetItemDownloadUrlCommand: class {
-    constructor(public input: unknown) { commands.push(['GetItemDownloadUrl', input]); }
+  GetItemContentUrlCommand: class {
+    constructor(public input: unknown) { commands.push(['GetItemContentUrl', input]); }
   },
   DeleteItemCommand: class {
     constructor(public input: unknown) { commands.push(['DeleteItem', input]); }
@@ -31,8 +31,8 @@ vi.mock('@cortex/client', () => ({
   CreateUploadPartUrlsCommand: class {
     constructor(public input: unknown) { commands.push(['CreateUploadPartUrls', input]); }
   },
-  AbortItemUploadCommand: class {
-    constructor(public input: unknown) { commands.push(['AbortItemUpload', input]); }
+  DeleteItemUploadCommand: class {
+    constructor(public input: unknown) { commands.push(['DeleteItemUpload', input]); }
   },
   SearchByTagCommand: class {
     constructor(public input: unknown) { commands.push(['SearchByTag', input]); }
@@ -44,14 +44,14 @@ vi.mock('@cortex/client', () => ({
 vi.mock('../config', () => ({ getConfig: () => ({ apiBaseUrl: 'https://api' }) }));
 
 import {
-  initiateUpload,
+  createItemUpload,
   putToS3,
-  completeUpload,
+  finalizeUpload,
   createUploadPartUrls,
-  abortUpload,
+  deleteUpload,
   searchByTag,
   listItems,
-  getDownloadUrl,
+  getContentUrl,
   deleteItem,
   updateItemTags,
 } from './items';
@@ -61,13 +61,13 @@ beforeEach(() => {
 });
 
 describe('items api', () => {
-  it('initiateUpload sends the command and returns itemId+uploadUrl', async () => {
+  it('createItemUpload sends the command and returns itemId+uploadUrl', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put', expiresAt: new Date(0) });
     const meta = new Uint8Array([1, 2, 3]);
     const wrappedDek = new Uint8Array(97);
-    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200, wrappedDek, dekVersion: 1 });
+    const out = await createItemUpload({ vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200, wrappedDek, dekVersion: 1 });
     expect(out).toEqual({ itemId: 'i1', uploadUrl: 'https://s3/put' });
-    expect(commands).toContainEqual(['InitiateItemUpload', { vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200, wrappedDek, dekVersion: 1 }]);
+    expect(commands).toContainEqual(['CreateItemUpload', { vaultId: 'v1', encryptedMetadata: meta, sizeBytes: 200, wrappedDek, dekVersion: 1 }]);
   });
 
   it('putToS3 PUTs raw bytes with NO Authorization header and returns the ETag', async () => {
@@ -93,9 +93,9 @@ describe('items api', () => {
     await expect(putToS3('https://s3/put', new Uint8Array([1]))).rejects.toThrow(/ETag/);
   });
 
-  it('initiateUpload surfaces uploadId when the server sends one (multipart)', async () => {
+  it('createItemUpload surfaces uploadId when the server sends one (multipart)', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
-    const out = await initiateUpload({ vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), sizeBytes: 999, wrappedDek: new Uint8Array(97), dekVersion: 1 });
+    const out = await createItemUpload({ vaultId: 'v1', encryptedMetadata: new Uint8Array([1]), sizeBytes: 999, wrappedDek: new Uint8Array(97), dekVersion: 1 });
     expect(out).toEqual({ itemId: 'i1', uploadUrl: 'https://s3/put', uploadId: 'mp1' });
   });
 
@@ -111,25 +111,25 @@ describe('items api', () => {
     expect(commands).toContainEqual(['CreateUploadPartUrls', { itemId: 'i1', uploadId: 'mp1', partNumbers: [1, 2] }]);
   });
 
-  it('completeUpload sends only the itemId for single-PUT', async () => {
+  it('finalizeUpload sends only the itemId for single-PUT', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', completedAt: new Date(0) });
-    await completeUpload('i1');
-    expect(commands).toContainEqual(['CompleteItemUpload', { itemId: 'i1' }]);
+    await finalizeUpload('i1');
+    expect(commands).toContainEqual(['FinalizeItemUpload', { itemId: 'i1' }]);
   });
 
-  it('completeUpload passes uploadId + parts for multipart', async () => {
+  it('finalizeUpload passes uploadId + parts for multipart', async () => {
     sendMock.mockResolvedValueOnce({ itemId: 'i1', completedAt: new Date(0) });
-    await completeUpload('i1', { uploadId: 'mp1', parts: [{ partNumber: 1, eTag: '"e1"' }] });
+    await finalizeUpload('i1', { uploadId: 'mp1', parts: [{ partNumber: 1, eTag: '"e1"' }] });
     expect(commands).toContainEqual([
-      'CompleteItemUpload',
+      'FinalizeItemUpload',
       { itemId: 'i1', uploadId: 'mp1', parts: [{ partNumber: 1, eTag: '"e1"' }] },
     ]);
   });
 
-  it('abortUpload sends itemId + uploadId', async () => {
-    sendMock.mockResolvedValueOnce({ message: 'Upload aborted' });
-    await abortUpload('i1', 'mp1');
-    expect(commands).toContainEqual(['AbortItemUpload', { itemId: 'i1', uploadId: 'mp1' }]);
+  it('deleteUpload sends only the itemId', async () => {
+    sendMock.mockResolvedValueOnce({ message: 'Upload deleted' });
+    await deleteUpload('i1');
+    expect(commands).toContainEqual(['DeleteItemUpload', { itemId: 'i1' }]);
   });
 
   it('listItems sends vaultId and returns items', async () => {
@@ -145,10 +145,10 @@ describe('items api', () => {
     expect(await listItems('v1')).toEqual([]);
   });
 
-  it('getDownloadUrl returns the url', async () => {
-    sendMock.mockResolvedValueOnce({ downloadUrl: 'https://s3/get', expiresAt: new Date(0) });
-    expect(await getDownloadUrl('i1')).toBe('https://s3/get');
-    expect(commands).toContainEqual(['GetItemDownloadUrl', { itemId: 'i1' }]);
+  it('getContentUrl returns the url', async () => {
+    sendMock.mockResolvedValueOnce({ contentUrl: 'https://s3/get', expiresAt: new Date(0) });
+    expect(await getContentUrl('i1')).toBe('https://s3/get');
+    expect(commands).toContainEqual(['GetItemContentUrl', { itemId: 'i1' }]);
   });
 
   it('searchByTag returns items (or [])', async () => {
