@@ -20,8 +20,8 @@ from botocore.stub import ANY
 
 from src.shared.exceptions import NotFoundError
 from src.shared.generated.models import (
-    FinalizeItemUploadRequestContent,
     CreateUploadPartUrlsRequestContent,
+    FinalizeItemUploadRequestContent,
     UploadPart,
 )
 from src.shared.models import ItemType
