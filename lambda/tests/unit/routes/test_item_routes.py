@@ -93,10 +93,10 @@ class TestCreateItemRoute:
         assert response.json()["error"]["message"] == "Vault not found"
 
 
-class TestInitiateUploadRoute:
+class TestCreateItemUploadRoute:
     """Test suite for InitiateUploadRoute through FastAPI test client."""
 
-    def test_initiate_upload_route_handler(self, client, dynamodb_stubber):
+    def test_create_item_upload_route_handler(self, client, dynamodb_stubber):
         """Test initiate upload route handler returns expected response."""
         vault_id = "test-vault-456"
 
@@ -112,7 +112,7 @@ class TestInitiateUploadRoute:
         )
 
         response = client.post(
-            "/v1/items/upload/init",
+            "/v1/items/upload",
             json={
                 "vaultId": vault_id,
                 "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
@@ -143,7 +143,7 @@ class TestInitiateUploadRoute:
         # expiresAt is an epoch timestamp (number), not an ISO string
         assert isinstance(body["expiresAt"], (int, float))
 
-    def test_initiate_upload_returns_404_for_deleting_vault(self, client, dynamodb_stubber):
+    def test_create_item_upload_returns_404_for_deleting_vault(self, client, dynamodb_stubber):
         """A vault marked DELETING reads as absent; no pending row or presigned URL is made."""
         vault_id = "vault-being-deleted"
         stub_vault_lookup(
@@ -153,28 +153,142 @@ class TestInitiateUploadRoute:
             vault_row(USER_ID, vault_id, deletion_state={"S": "DELETING"}),
         )
 
-        response = client.post("/v1/items/upload/init", json={**UPLOAD_BODY, "vaultId": vault_id})
+        response = client.post("/v1/items/upload", json={**UPLOAD_BODY, "vaultId": vault_id})
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "Vault not found"
 
-    def test_initiate_upload_returns_404_for_vault_owned_by_different_user(
+    def test_create_item_upload_returns_404_for_vault_owned_by_different_user(
         self, client, dynamodb_stubber
     ):
         """A vault the caller does not own misses under USER#{sub}; nothing else is called."""
         vault_id = "vault-owned-by-other-user"
         stub_vault_lookup(dynamodb_stubber, USER_ID, vault_id)
 
-        response = client.post("/v1/items/upload/init", json={**UPLOAD_BODY, "vaultId": vault_id})
+        response = client.post("/v1/items/upload", json={**UPLOAD_BODY, "vaultId": vault_id})
 
         assert response.status_code == 404
         assert response.json()["error"]["message"] == "Vault not found"
 
 
-class TestCompleteUploadRoute:
-    """Test suite for CompleteUploadRoute through FastAPI test client."""
+class TestGetItemUploadRoute:
+    """Test suite for GetItemUploadRoute."""
 
-    def test_complete_upload_route_handler(
+    @staticmethod
+    def _stub_item(stubber, item_id, *, status, storage_kind="BLOB", ttl=None):
+        item = {
+            "PK": {"S": f"ITEM#{item_id}"},
+            "SK": {"S": "METADATA"},
+            "item_id": {"S": item_id},
+            "user_id": {"S": "test-user-id"},
+            "storage_kind": {"S": storage_kind},
+            "upload_status": {"S": status},
+            "s3_key": {"S": f"vaults/v1/files/{item_id}/x"},
+        }
+        if ttl is not None:
+            item["ttl"] = {"N": str(ttl)}
+        stubber.add_response(
+            "get_item",
+            {"Item": item},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
+        )
+
+    def test_pending_upload_reports_status_and_expiry(self, client, dynamodb_stubber):
+        self._stub_item(dynamodb_stubber, "item-1", status="PENDING", ttl=1700000000)
+
+        response = client.get("/v1/items/item-1/upload")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "itemId": "item-1",
+            "status": "PENDING",
+            "expiresAt": 1700000000.0,
+        }
+
+    def test_complete_upload_reports_complete(self, client, dynamodb_stubber):
+        self._stub_item(dynamodb_stubber, "item-1", status="COMPLETE")
+
+        response = client.get("/v1/items/item-1/upload")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "COMPLETE"
+
+    def test_inline_item_has_no_upload(self, client, dynamodb_stubber):
+        self._stub_item(dynamodb_stubber, "item-1", status="COMPLETE", storage_kind="INLINE")
+
+        response = client.get("/v1/items/item-1/upload")
+
+        assert response.status_code == 404
+
+
+class TestDeleteItemUploadRoute:
+    """Test suite for DeleteItemUploadRoute."""
+
+    def test_deletes_pending_upload(self, client, dynamodb_stubber, s3_stubber, files_bucket_name):
+        item_id = "item-1"
+        s3_key = f"vaults/v1/files/{item_id}/x"
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": "test-user-id"},
+                    "storage_kind": {"S": "BLOB"},
+                    "upload_status": {"S": "PENDING"},
+                    "upload_id": {"S": "u1"},
+                    "s3_key": {"S": s3_key},
+                }
+            },
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
+        )
+        s3_stubber.add_response(
+            "abort_multipart_upload",
+            {},
+            {"Bucket": files_bucket_name, "Key": s3_key, "UploadId": "u1"},
+        )
+        dynamodb_stubber.add_response(
+            "delete_item",
+            {},
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
+        )
+
+        response = client.delete(f"/v1/items/{item_id}/upload")
+
+        assert response.status_code == 200
+        assert "message" in response.json()
+        s3_stubber.assert_no_pending_responses()
+        dynamodb_stubber.assert_no_pending_responses()
+
+    def test_rejects_completed_upload(self, client, dynamodb_stubber):
+        item_id = "item-1"
+        dynamodb_stubber.add_response(
+            "get_item",
+            {
+                "Item": {
+                    "PK": {"S": f"ITEM#{item_id}"},
+                    "SK": {"S": "METADATA"},
+                    "item_id": {"S": item_id},
+                    "user_id": {"S": "test-user-id"},
+                    "storage_kind": {"S": "BLOB"},
+                    "upload_status": {"S": "COMPLETE"},
+                    "s3_key": {"S": "vaults/v1/files/item-1/x"},
+                }
+            },
+            {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
+        )
+
+        response = client.delete(f"/v1/items/{item_id}/upload")
+
+        assert response.status_code == 400
+        assert response.json()["error"]["message"] == "Upload is already complete"
+
+
+class TestFinalizeUploadRoute:
+    """Test suite for FinalizeItemUploadRoute through FastAPI test client."""
+
+    def test_finalize_upload_route_handler(
         self, client, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test complete upload route handler returns expected response."""
@@ -244,7 +358,7 @@ class TestCompleteUploadRoute:
         )
 
         # itemId is in the path now (Smithy contract); no request body.
-        response = client.post(f"/v1/items/{item_id}/upload/complete")
+        response = client.post(f"/v1/items/{item_id}/upload/finalize")
 
         assert response.status_code == 200
         body = response.json()
@@ -619,7 +733,7 @@ class TestDeleteItemRoute:
         assert response.status_code == 404
 
 
-class TestDownloadItemRoute:
+class TestContentUrlRoute:
     """Test suite for DownloadItemRoute through FastAPI test client."""
 
     def test_download_item_route_handler(
@@ -658,10 +772,10 @@ class TestDownloadItemRoute:
             "head_object", {}, expected_params={"Bucket": files_bucket_name, "Key": s3_key}
         )
 
-        response = client.get(f"/v1/items/{item_id}/download")
+        response = client.get(f"/v1/items/{item_id}/content-url")
         body = response.json()
 
         assert response.status_code == 200
-        assert "downloadUrl" in body
-        assert s3_key in body["downloadUrl"]
+        assert "contentUrl" in body
+        assert s3_key in body["contentUrl"]
         assert "expiresAt" in body

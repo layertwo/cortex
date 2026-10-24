@@ -4,7 +4,7 @@ import {
 } from '@cortex/encryption';
 import type { FileMetadata } from './metadata';
 
-const api = vi.hoisted(() => ({ getDownloadUrl: vi.fn(async () => 'https://s3/get') }));
+const api = vi.hoisted(() => ({ getContentUrl: vi.fn(async () => 'https://s3/get') }));
 vi.mock('../api/items', () => api);
 
 import { downloadFileStreaming, pickSink, type DownloadSink } from './streamingDownload';

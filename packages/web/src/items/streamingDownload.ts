@@ -6,7 +6,7 @@ import {
   TAG_SIZE,
 } from '@cortex/encryption';
 import { type FileMetadata } from './metadata';
-import { getDownloadUrl } from '../api/items';
+import { getContentUrl } from '../api/items';
 
 const PREFIX_SIZE = STREAM_HEADER_SIZE; // 13 — the wrapped DEK now comes from the item record
 
@@ -168,7 +168,7 @@ export async function downloadFileStreaming(
   kek: Uint8Array,
   sink: DownloadSink,
 ): Promise<void> {
-  const url = await getDownloadUrl(itemId);
+  const url = await getContentUrl(itemId);
   const dek = unwrapDek(wrappedDek, kek, meta.contentId); // throws DekUnwrapError on wrong key/tamper
   await decryptStreamToSink(url, meta, dek, sink);
 }

@@ -31,14 +31,15 @@ from src.api.routes.collections import (
 from src.api.routes.config import ConfigRoute
 from src.api.routes.health import HealthRoute
 from src.api.routes.items import (
-    AbortItemUploadRoute,
-    CompleteUploadRoute,
+    ContentUrlRoute,
     CreateItemRoute,
+    CreateItemUploadRoute,
     CreateUploadPartUrlsRoute,
     DeleteItemRoute,
-    DownloadItemRoute,
+    DeleteItemUploadRoute,
+    FinalizeItemUploadRoute,
     GetItemRoute,
-    InitiateUploadRoute,
+    GetItemUploadRoute,
     ListItemsRoute,
     UpdateItemRoute,
 )
@@ -279,15 +280,16 @@ class ServiceProvider:
             DeleteVaultRoute(vault_deletion_service=self.vault_deletion_service),
             UpdateVaultRotationRoute(vault_service=self.vault_service),
             CreateItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-            InitiateUploadRoute(item_service=self.item_service, vault_service=self.vault_service),
-            CompleteUploadRoute(item_service=self.item_service),
+            CreateItemUploadRoute(item_service=self.item_service, vault_service=self.vault_service),
+            GetItemUploadRoute(item_service=self.item_service),
+            FinalizeItemUploadRoute(item_service=self.item_service),
             CreateUploadPartUrlsRoute(item_service=self.item_service),
-            AbortItemUploadRoute(item_service=self.item_service),
+            DeleteItemUploadRoute(item_service=self.item_service),
             ListItemsRoute(item_service=self.item_service, vault_service=self.vault_service),
             GetItemRoute(item_service=self.item_service, vault_service=self.vault_service),
             UpdateItemRoute(item_service=self.item_service),
             DeleteItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-            DownloadItemRoute(item_service=self.item_service, vault_service=self.vault_service),
+            ContentUrlRoute(item_service=self.item_service, vault_service=self.vault_service),
             CreateCollectionRoute(
                 collection_service=self.collection_service, vault_service=self.vault_service
             ),

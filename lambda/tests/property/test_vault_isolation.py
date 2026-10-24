@@ -20,9 +20,8 @@ from botocore.stub import ANY
 
 from src.shared.exceptions import NotFoundError
 from src.shared.generated.models import (
-    AbortItemUploadRequestContent,
-    CompleteItemUploadRequestContent,
     CreateUploadPartUrlsRequestContent,
+    FinalizeItemUploadRequestContent,
     UploadPart,
 )
 from src.shared.models import ItemType
@@ -58,14 +57,14 @@ def _owner_item(user_id=OWNER):
 # AS THE ATTACKER. The ownership check in each must fire before any side effect.
 OPERATIONS = [
     ("get_item", lambda s: s.get_item(ATTACKER, ITEM_ID)),
-    ("get_download_url", lambda s: s.get_download_url(ATTACKER, ITEM_ID)),
+    ("get_content_url", lambda s: s.get_content_url(ATTACKER, ITEM_ID)),
     ("delete_item", lambda s: s.delete_item(ATTACKER, ITEM_ID)),
     (
-        "complete_upload",
-        lambda s: s.complete_upload(
+        "finalize_upload",
+        lambda s: s.finalize_upload(
             ATTACKER,
             ITEM_ID,
-            CompleteItemUploadRequestContent(
+            FinalizeItemUploadRequestContent(
                 upload_id="u1", parts=[UploadPart(part_number=1, e_tag='"e1"')]
             ),
         ),
@@ -76,10 +75,7 @@ OPERATIONS = [
             ATTACKER, ITEM_ID, CreateUploadPartUrlsRequestContent(upload_id="u1", part_numbers=[1])
         ),
     ),
-    (
-        "abort_upload",
-        lambda s: s.abort_upload(ATTACKER, ITEM_ID, AbortItemUploadRequestContent(upload_id="u1")),
-    ),
+    ("delete_upload", lambda s: s.delete_upload(ATTACKER, ITEM_ID)),
 ]
 
 

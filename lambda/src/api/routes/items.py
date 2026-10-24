@@ -22,19 +22,19 @@ from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
 from src.shared.exceptions import NotFoundError
 from src.shared.generated.models import (
-    AbortItemUploadRequestContent,
-    AbortItemUploadResponseContent,
-    CompleteItemUploadRequestContent,
-    CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
+    CreateItemUploadRequestContent,
+    CreateItemUploadResponseContent,
     CreateUploadPartUrlsRequestContent,
     CreateUploadPartUrlsResponseContent,
     DeleteItemResponseContent,
-    GetItemDownloadUrlResponseContent,
+    DeleteItemUploadResponseContent,
+    FinalizeItemUploadRequestContent,
+    FinalizeItemUploadResponseContent,
+    GetItemContentUrlResponseContent,
     GetItemResponseContent,
-    InitiateItemUploadRequestContent,
-    InitiateItemUploadResponseContent,
+    GetItemUploadResponseContent,
     ItemData,
     ListItemsResponseContent,
     UpdateItemRequestContent,
@@ -119,22 +119,21 @@ class CreateItemRoute(BaseRoute):
             return response
 
 
-class InitiateUploadRoute(BaseRoute):
-    """Handle upload initialization for MEDIA items."""
+class CreateItemUploadRoute(BaseRoute):
+    """Create a blob upload and hand back a presigned S3 URL."""
 
     def __init__(self, item_service: ItemService, vault_service: VaultService):
-        """Initialize the upload initiation route."""
         self.item_service = item_service
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post("/v1/items/upload/init", response_model=InitiateItemUploadResponseContent)
+        @app.post("/v1/items/upload", response_model=CreateItemUploadResponseContent)
         def handle(
-            request: InitiateItemUploadRequestContent,
+            request: CreateItemUploadRequestContent,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Initialize upload for MEDIA items, get presigned URL.
+            Create the pending item and its upload URL.
 
             For files >100MB, initiates multipart upload server-side; for smaller
             files, generates a simple presigned PUT URL. The presigned PUT is
@@ -144,12 +143,12 @@ class InitiateUploadRoute(BaseRoute):
 
             Requirements: 1.4, 1.5, 7.1, 7.2, 24.1, 24.2
             """
-            _require_vault(self.vault_service, user_id, request.vault_id, "initiate_upload")
+            _require_vault(self.vault_service, user_id, request.vault_id, "create_item_upload")
 
-            response = self.item_service.initiate_upload(user_id, request)
+            response = self.item_service.create_item_upload(user_id, request)
 
             logger.info(
-                "Upload initiated successfully",
+                "Item upload created",
                 item_id=response.item_id,
                 size_bytes=request.size_bytes,
             )
@@ -157,39 +156,53 @@ class InitiateUploadRoute(BaseRoute):
             return response
 
 
-class CompleteUploadRoute(BaseRoute):
-    """Handle upload completion for MEDIA items."""
+class GetItemUploadRoute(BaseRoute):
+    """Report whether a blob upload is pending or complete."""
 
     def __init__(self, item_service: ItemService):
-        """Initialize the upload completion route."""
+        self.item_service = item_service
+
+    def register(self, app: APIRouter) -> None:
+        @app.get("/v1/items/{item_id}/upload", response_model=GetItemUploadResponseContent)
+        def handle(
+            item_id: str,
+            user_id: str = Depends(get_current_user),
+        ):
+            """Return the upload status; ownership is checked by the service."""
+            return self.item_service.get_upload_status(user_id, item_id)
+
+
+class FinalizeItemUploadRoute(BaseRoute):
+    """Verify an uploaded object (assembling multipart parts) and mark it complete."""
+
+    def __init__(self, item_service: ItemService):
         self.item_service = item_service
 
     def register(self, app: APIRouter) -> None:
         @app.post(
-            "/v1/items/{item_id}/upload/complete",
-            response_model=CompleteItemUploadResponseContent,
+            "/v1/items/{item_id}/upload/finalize",
+            response_model=FinalizeItemUploadResponseContent,
         )
         def handle(
             item_id: str,
-            request: CompleteItemUploadRequestContent | None = None,
+            request: FinalizeItemUploadRequestContent | None = None,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Mark MEDIA upload complete, store metadata.
+            Finalize a blob upload.
 
-            Verifies the upload succeeded and flips the item from PENDING to
-            COMPLETE. The item id comes from the path (Smithy contract). The
-            body is optional: multipart uploads send uploadId + parts, single-PUT
-            uploads send no body.
+            Verifies the object exists and flips the item from PENDING to
+            COMPLETE. The body is optional: multipart uploads send uploadId +
+            parts, single-PUT uploads send no body.
 
             Requirements: 1.4, 2.2, 2.5, 24.2
             """
-            response = self.item_service.complete_upload(
+            response = self.item_service.finalize_upload(
                 user_id=user_id, item_id=item_id, request=request
             )
 
             logger.info(
-                "Upload completed successfully",
+                "Upload finalized successfully",
                 item_id=response.item_id,
             )
 
@@ -204,7 +217,7 @@ class CreateUploadPartUrlsRoute(BaseRoute):
 
     def register(self, app: APIRouter) -> None:
         @app.post(
-            "/v1/items/{item_id}/upload/parts",
+            "/v1/items/{item_id}/upload/part-urls",
             response_model=CreateUploadPartUrlsResponseContent,
         )
         def handle(
@@ -216,24 +229,23 @@ class CreateUploadPartUrlsRoute(BaseRoute):
             return self.item_service.create_upload_part_urls(user_id, item_id, request)
 
 
-class AbortItemUploadRoute(BaseRoute):
-    """Abort an in-progress multipart upload."""
+class DeleteItemUploadRoute(BaseRoute):
+    """Abort a pending upload and delete the pending item."""
 
     def __init__(self, item_service: ItemService):
         self.item_service = item_service
 
     def register(self, app: APIRouter) -> None:
-        @app.post(
-            "/v1/items/{item_id}/upload/abort",
-            response_model=AbortItemUploadResponseContent,
+        @app.delete(
+            "/v1/items/{item_id}/upload",
+            response_model=DeleteItemUploadResponseContent,
         )
         def handle(
             item_id: str,
-            request: AbortItemUploadRequestContent,
             user_id: str = Depends(get_current_user),
         ):
-            """Abort an in-progress multipart upload and delete the pending item."""
-            return self.item_service.abort_upload(user_id, item_id, request)
+            """Abort a pending multipart upload and delete the pending item."""
+            return self.item_service.delete_upload(user_id, item_id)
 
 
 class ListItemsRoute(BaseRoute):
@@ -386,38 +398,37 @@ class DeleteItemRoute(BaseRoute):
             )
 
 
-class DownloadItemRoute(BaseRoute):
-    """Handle item download URL generation."""
+class ContentUrlRoute(BaseRoute):
+    """Handle presigned content URL generation."""
 
     def __init__(self, item_service: ItemService, vault_service: VaultService):
-        """Initialize the download item route."""
         self.item_service = item_service
         self.vault_service = vault_service
 
     def register(self, app: APIRouter) -> None:
-        @app.get("/v1/items/{item_id}/download", response_model=GetItemDownloadUrlResponseContent)
+        @app.get("/v1/items/{item_id}/content-url", response_model=GetItemContentUrlResponseContent)
         def handle(
             item_id: str,
             user_id: str = Depends(get_current_user),
         ):
             """
-            Get a presigned download URL (for MEDIA items).
+            Get a presigned content URL for a blob item.
 
             Generates a time-limited presigned S3 URL. Returns an error for
-            non-MEDIA items.
+            inline items.
 
             Requirements: 4.1, 4.3, 24.2
             """
-            download_url, expires_at, _encrypted_metadata, _s3_key = (
-                self.item_service.get_download_url(user_id, item_id)
+            content_url, expires_at, _encrypted_metadata, _s3_key = (
+                self.item_service.get_content_url(user_id, item_id)
             )
 
             logger.info(
-                "Generated download URL successfully",
+                "Generated content URL successfully",
                 item_id=item_id,
             )
 
-            return GetItemDownloadUrlResponseContent(
-                download_url=download_url,
+            return GetItemContentUrlResponseContent(
+                content_url=content_url,
                 expires_at=expires_at.timestamp(),
             )

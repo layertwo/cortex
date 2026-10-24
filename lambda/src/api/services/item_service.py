@@ -17,16 +17,15 @@ from botocore.exceptions import ClientError
 
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
-    AbortItemUploadRequestContent,
-    AbortItemUploadResponseContent,
-    CompleteItemUploadRequestContent,
-    CompleteItemUploadResponseContent,
     CreateItemRequestContent,
     CreateItemResponseContent,
+    CreateItemUploadRequestContent,
+    CreateItemUploadResponseContent,
     CreateUploadPartUrlsRequestContent,
     CreateUploadPartUrlsResponseContent,
-    InitiateItemUploadRequestContent,
-    InitiateItemUploadResponseContent,
+    DeleteItemUploadResponseContent,
+    FinalizeItemUploadRequestContent,
+    FinalizeItemUploadResponseContent,
     UpdateItemRequestContent,
     UpdateItemResponseContent,
     UploadPartUrl,
@@ -168,9 +167,9 @@ class ItemService:
             version=1,
         )
 
-    def initiate_upload(
-        self, user_id: str, request: InitiateItemUploadRequestContent
-    ) -> InitiateItemUploadResponseContent:
+    def create_item_upload(
+        self, user_id: str, request: CreateItemUploadRequestContent
+    ) -> CreateItemUploadResponseContent:
         """
         Initiate MEDIA item upload and generate presigned S3 URL.
 
@@ -276,7 +275,7 @@ class ItemService:
         # Store metadata
         self.items_repo.put_item(item)
 
-        return InitiateItemUploadResponseContent(
+        return CreateItemUploadResponseContent(
             item_id=item_id,
             upload_url=upload_url,
             expires_at=int(expires_at.timestamp()),
@@ -315,31 +314,45 @@ class ItemService:
         ]
         return CreateUploadPartUrlsResponseContent(urls=urls)
 
-    def abort_upload(
-        self, user_id: str, item_id: str, request: AbortItemUploadRequestContent
-    ) -> AbortItemUploadResponseContent:
-        """Abort an in-progress multipart upload and delete the pending item."""
+    def get_upload_status(self, user_id: str, item_id: str) -> dict:
+        """Report a blob upload's status for the owner (404 for inline or missing items)."""
+        item = self.items_repo.get_item(item_key(item_id))
+        if not item or item["user_id"] != user_id or item.get("storage_kind") != StorageKind.BLOB:
+            raise NotFoundError("Item not found")
+        pending = item.get("upload_status") == "PENDING"
+        return {
+            "item_id": item_id,
+            "status": "PENDING" if pending else "COMPLETE",
+            "expires_at": float(item["ttl"]) if pending and item.get("ttl") else None,
+        }
+
+    def delete_upload(self, user_id: str, item_id: str) -> DeleteItemUploadResponseContent:
+        """Abort a pending multipart upload and delete the pending item."""
         key = item_key(item_id)
         item = self.items_repo.get_item(key)
-        if not item or item["user_id"] != user_id:
+        if not item or item["user_id"] != user_id or item.get("storage_kind") != StorageKind.BLOB:
             raise NotFoundError("Item not found")
+        if item.get("upload_status") != "PENDING":
+            raise BadRequestError("Upload is already complete")
 
-        self.s3_repo.abort_multipart_upload(item["s3_key"], request.upload_id)
+        upload_id = item.get("upload_id")
+        if upload_id:
+            self.s3_repo.abort_multipart_upload(item["s3_key"], upload_id)
         self.items_repo.delete_item(key)
         logger.info(
-            "Aborted upload",
-            **{"item_id": item_id, "upload_id": request.upload_id},
+            "Deleted pending upload",
+            **{"item_id": item_id, "upload_id": upload_id},
         )
-        return AbortItemUploadResponseContent(message="Upload aborted")
+        return DeleteItemUploadResponseContent(message="Upload deleted")
 
-    def complete_upload(
+    def finalize_upload(
         self,
         user_id: str,
         item_id: str,
-        request: CompleteItemUploadRequestContent | None = None,
-    ) -> CompleteItemUploadResponseContent:
+        request: FinalizeItemUploadRequestContent | None = None,
+    ) -> FinalizeItemUploadResponseContent:
         """
-        Mark MEDIA upload as complete and finalize metadata.
+        Verify the uploaded object and mark the item complete.
 
         This method verifies the upload succeeded and updates the item
         status from PENDING to COMPLETE. Uses conditional updates to prevent
@@ -479,7 +492,7 @@ class ItemService:
             },
         )
 
-        return CompleteItemUploadResponseContent(
+        return FinalizeItemUploadResponseContent(
             item_id=item_id,
             completed_at=int(now.timestamp()),
             message="Upload completed successfully",
@@ -768,9 +781,9 @@ class ItemService:
                 **{"item_id": item_id, "error": str(e)},
             )
 
-    def get_download_url(self, user_id: str, item_id: str) -> tuple[str, datetime, bytes, str]:
+    def get_content_url(self, user_id: str, item_id: str) -> tuple[str, datetime, bytes, str]:
         """
-        Generate presigned download URL for MEDIA items.
+        Generate a presigned content URL for a blob item.
 
         This method verifies the item exists, is owned by the user, and is a
         MEDIA type before generating a time-limited presigned S3 URL.
@@ -836,21 +849,21 @@ class ItemService:
                 self._delete_tag_index_rows(item["vault_id"], item_id, encrypted_tags)
             raise NotFoundError("File not found in storage")
 
-        # Generate presigned download URL
-        download_url = self.s3_repo.generate_download_url(s3_key, PRESIGNED_URL_EXPIRATION)
+        # Generate the presigned content URL
+        content_url = self.s3_repo.generate_download_url(s3_key, PRESIGNED_URL_EXPIRATION)
 
         # Calculate expiration time
         now = datetime.now(tz=timezone.utc)
         expires_at = now + timedelta(seconds=PRESIGNED_URL_EXPIRATION)
 
         logger.info(
-            "Generated download URL",
+            "Generated content URL",
             **{
                 "item_id": item_id,
             },
         )
 
-        return download_url, expires_at, item["encrypted_metadata"], s3_key
+        return content_url, expires_at, item["encrypted_metadata"], s3_key
 
     def delete_item(self, user_id: str, item_id: str) -> None:
         """
