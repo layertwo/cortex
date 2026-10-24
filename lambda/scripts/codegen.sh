@@ -20,6 +20,9 @@ GENERATED_DIR="$REPO_ROOT/lambda/src/shared/generated"
 # the openapi plugin; the gradle build supplies it. --rerun-tasks is required:
 # the smithy-gradle plugin falsely reports UP-TO-DATE after a .smithy edit.
 echo "==> gradle smithyBuild"
+# Smithy's TS projection output is additive; remove it first so deleted or
+# renamed operations don't leave stale command files behind.
+rm -rf "$REPO_ROOT/build/smithy/typescript"
 (cd "$REPO_ROOT" && smithy/gradlew smithyBuild --project-dir smithy --rerun-tasks -q)
 
 rm -f "$GENERATED_DIR/models.py"

@@ -1,10 +1,10 @@
 import {
-  InitiateItemUploadCommand,
-  CompleteItemUploadCommand,
+  CreateItemUploadCommand,
+  FinalizeItemUploadCommand,
   CreateUploadPartUrlsCommand,
-  AbortItemUploadCommand,
+  DeleteItemUploadCommand,
   ListItemsCommand,
-  GetItemDownloadUrlCommand,
+  GetItemContentUrlCommand,
   DeleteItemCommand,
   SearchByTagCommand,
   UpdateItemCommand,
@@ -14,7 +14,7 @@ import { makeClient } from './client';
 
 export type UploadedPart = { partNumber: number; eTag: string };
 
-export async function initiateUpload(args: {
+export async function createItemUpload(args: {
   vaultId: string;
   encryptedMetadata: Uint8Array;
   sizeBytes: number;
@@ -22,8 +22,8 @@ export async function initiateUpload(args: {
   dekVersion: number;
   encryptedTags?: Uint8Array[];
 }): Promise<{ itemId: string; uploadUrl: string; uploadId?: string }> {
-  const out = await makeClient().send(new InitiateItemUploadCommand(args));
-  if (!out.itemId || !out.uploadUrl) throw new Error('initiateUpload: incomplete response');
+  const out = await makeClient().send(new CreateItemUploadCommand(args));
+  if (!out.itemId || !out.uploadUrl) throw new Error('createItemUpload: incomplete response');
   // uploadId is present only when the server chose multipart (sizeBytes > threshold).
   return { itemId: out.itemId, uploadUrl: out.uploadUrl, uploadId: out.uploadId };
 }
@@ -61,15 +61,15 @@ export async function createUploadPartUrls(
   });
 }
 
-export async function completeUpload(
+export async function finalizeUpload(
   itemId: string,
   opts?: { uploadId: string; parts: UploadedPart[] },
 ): Promise<void> {
-  await makeClient().send(new CompleteItemUploadCommand({ itemId, ...opts }));
+  await makeClient().send(new FinalizeItemUploadCommand({ itemId, ...opts }));
 }
 
-export async function abortUpload(itemId: string, uploadId: string): Promise<void> {
-  await makeClient().send(new AbortItemUploadCommand({ itemId, uploadId }));
+export async function deleteUpload(itemId: string): Promise<void> {
+  await makeClient().send(new DeleteItemUploadCommand({ itemId }));
 }
 
 export async function listItems(vaultId: string): Promise<ItemData[]> {
@@ -95,10 +95,10 @@ export async function searchByTag(vaultId: string, encryptedTag: string): Promis
   return out.items ?? [];
 }
 
-export async function getDownloadUrl(itemId: string): Promise<string> {
-  const out = await makeClient().send(new GetItemDownloadUrlCommand({ itemId }));
-  if (!out.downloadUrl) throw new Error('getDownloadUrl: missing download URL');
-  return out.downloadUrl;
+export async function getContentUrl(itemId: string): Promise<string> {
+  const out = await makeClient().send(new GetItemContentUrlCommand({ itemId }));
+  if (!out.contentUrl) throw new Error('getContentUrl: missing content URL');
+  return out.contentUrl;
 }
 
 export async function deleteItem(itemId: string): Promise<void> {

@@ -590,7 +590,7 @@ logger = Logger(child=True)
 tracer = Tracer()
 
 def register_routes(app: APIGatewayRestResolver):
-    @app.post("/v1/items/upload/init")
+    @app.post("/v1/items/upload")
     @tracer.capture_method
     def initiate_upload():
         user_id = get_user_from_context(app.current_event)
@@ -865,13 +865,16 @@ logger.info("File uploaded", extra={
 
 **Item Operations (BLOB files and INLINE content; logical type is encrypted):**
 - `POST /v1/items` - Create item (NOTE, TASK, EVENT with inline content)
-- `POST /v1/items/upload/init` - Initialize upload for MEDIA items, get presigned URL
-- `POST /v1/items/upload/complete` - Mark MEDIA upload complete, store metadata
+- `POST /v1/items/upload` - Create a blob upload (pending item + presigned URL)
+- `GET /v1/items/{id}/upload` - Poll the upload status (PENDING/COMPLETE)
+- `POST /v1/items/{id}/upload/part-urls` - Mint presigned URLs for multipart parts
+- `POST /v1/items/{id}/upload/finalize` - Verify the object (assembling parts) and mark it complete
+- `DELETE /v1/items/{id}/upload` - Abort a pending upload and delete the pending item
 - `GET /v1/items` - List items (tags, date buckets); filtering by logical type happens client-side
 - `GET /v1/items/{id}` - Get item metadata
 - `PUT /v1/items/{id}` - Update item
 - `DELETE /v1/items/{id}` - Delete item (MEDIA: deletes S3 + DynamoDB; NOTE/TASK/EVENT: deletes DynamoDB only)
-- `GET /v1/items/{id}/download` - Get presigned download URL (for MEDIA items)
+- `GET /v1/items/{id}/content-url` - Get a presigned content URL (for BLOB items)
 
 **Collections:**
 - `POST /v1/collections` - Create collection

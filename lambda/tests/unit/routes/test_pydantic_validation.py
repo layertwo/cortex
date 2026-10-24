@@ -35,10 +35,10 @@ class TestPydanticValidationErrorHandling:
 
         assert response.status_code == 422
 
-    def test_initiate_upload_invalid_size(self, client):
+    def test_create_item_upload_invalid_size(self, client):
         """Test that invalid size_bytes type returns validation error."""
         response = client.post(
-            "/v1/items/upload/init",
+            "/v1/items/upload",
             json={
                 "vault_id": "vault-123",
                 "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
