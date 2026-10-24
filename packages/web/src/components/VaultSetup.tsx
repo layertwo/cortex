@@ -8,7 +8,7 @@ import { Link } from '@astryxdesign/core/Link';
 import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { useSession } from '../auth/SessionContext';
-import { DEFAULT_VAULT_NAME } from '../vault/registry';
+import { DEFAULT_VAULT_NAME, vaultLabel } from '../vault/registry';
 import AuthFrame from './common/AuthFrame';
 import { SETUP_STEPS } from './common/SetupRail';
 import PasswordStrength from './common/PasswordStrength';
@@ -44,7 +44,10 @@ export default function VaultSetup() {
         description="They are the only way back in if you forget your vault password. Store them offline; they will not be shown again."
         rail={{ steps: SETUP_STEPS, active: 3 }}
       >
-        <RecoveryPhrase phrase={recovery} kit={activeVault ?? undefined} />
+        <RecoveryPhrase
+          phrase={recovery}
+          kit={activeVault ? { name: vaultLabel(activeVault), vaultId: activeVault.vaultId } : undefined}
+        />
         <CheckboxInput label="I have saved my recovery phrase" value={saved} onChange={setSaved} />
         <Button
           label="Open my vault"

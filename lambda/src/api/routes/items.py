@@ -72,8 +72,6 @@ def _item_fields(item: dict) -> dict:
         "encrypted_content": _encode_binary(item.get("encrypted_content")),
         "encrypted_metadata": _encode_binary(item["encrypted_metadata"]),
         "encrypted_tags": [_encode_binary(t) for t in tags] if tags else None,
-        "encrypted_date_bucket": _encode_binary(item.get("encrypted_date_bucket")),
-        "time_bucket": item.get("time_bucket"),
         "size_bytes": int(item["size_bytes"]) if item.get("size_bytes") is not None else None,
         "s3_key": item.get("s3_key"),
         "wrapped_dek": _encode_binary(item.get("wrapped_dek")),

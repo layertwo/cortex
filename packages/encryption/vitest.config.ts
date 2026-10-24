@@ -15,9 +15,9 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['tests/**/*.test.ts'],
-    // Property tests run many HMAC/key-derivation iterations; Jest's 5s default
-    // is tight on CI runners.
-    testTimeout: 30_000,
+    // Property tests run many Argon2id key derivations. 30s is tight when vitest
+    // runs the files in parallel and several derivations contend for CPU.
+    testTimeout: 120_000,
     hookTimeout: 30_000,
     coverage: {
       provider: 'v8',

@@ -10,6 +10,7 @@ import {
   clearKeys,
   retrieveKeys,
   bytesToBase64,
+  base64ToBytes,
   secureZeroize,
 } from '@cortex/encryption';
 import {
@@ -39,7 +40,6 @@ import { getUserManager } from './oidc';
 import {
   listVaults,
   upsertVault,
-  renameInRegistry,
   activeVaultId,
   setActiveVault,
   removeVault,
@@ -188,16 +188,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setVaultsState(list);
   }, []);
 
-  // Re-read the registry and re-attach the in-memory salt of each vault, optionally replacing
-  // one vault's salt with a freshly learned value.
+  // Re-read the registry and re-attach the session-only name/salt of each vault,
+  // optionally replacing one vault's values with freshly learned ones.
   const refreshVaults = useCallback(
-    (memory?: { vaultId: string; vaultSalt?: Uint8Array }) => {
+    (memory?: { vaultId: string; vaultSalt?: Uint8Array; name?: string }) => {
       setVaults(
         listVaults().map((v) => {
           const prev = vaultsRef.current.find((p) => p.vaultId === v.vaultId);
           const fresh = memory?.vaultId === v.vaultId ? memory : undefined;
           const vaultSalt = fresh?.vaultSalt ?? prev?.vaultSalt;
-          return { ...v, ...(vaultSalt ? { vaultSalt } : {}) };
+          const name = fresh?.name ?? prev?.name;
+          return {
+            ...v,
+            ...(name ? { name } : {}),
+            ...(vaultSalt ? { vaultSalt } : {}),
+          };
         }),
       );
     },
@@ -209,7 +214,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // a registry/pointer mismatch must self-heal with a default entry rather than throw.
   const activate = useCallback(
     (vaultId: string) => {
-      const entry = listVaults().find((v) => v.vaultId === vaultId) ?? { vaultId, name: DEFAULT_VAULT_NAME };
+      const entry = listVaults().find((v) => v.vaultId === vaultId) ?? { vaultId };
       setActiveVault(vaultId);
       upsertVault({ ...entry, lastOpened: Date.now() });
       refreshVaults();
@@ -223,9 +228,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // re-attaches the salt: the patch's value when given, the one already held otherwise.
   const patchEntry = useCallback(
     (vaultId: string, patch: Partial<VaultEntry>) => {
-      const onDisk = listVaults().find((v) => v.vaultId === vaultId) ?? { vaultId, name: DEFAULT_VAULT_NAME };
+      const onDisk = listVaults().find((v) => v.vaultId === vaultId) ?? { vaultId };
       upsertVault({ ...onDisk, ...patch });
-      refreshVaults({ vaultId, vaultSalt: patch.vaultSalt });
+      refreshVaults({ vaultId, name: patch.name, vaultSalt: patch.vaultSalt });
     },
     [refreshVaults],
   );
@@ -234,7 +239,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // are kept, vaults the server no longer lists are dropped. Offline, the cache stands.
   const syncRegistry = useCallback(async () => {
     try {
-      setVaults(syncFromServer(await listAllVaults()));
+      setVaults(syncFromServer(await listAllVaults(), vaultsRef.current));
     } catch (err) {
       console.warn('Vault sync skipped:', err instanceof Error ? err.message : String(err));
       refreshVaults();
@@ -308,7 +313,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         currentVmkVersion: 1,
         rotationState: 'IDLE',
       });
-      refreshVaults({ vaultId, vaultSalt });
+      refreshVaults({ vaultId, name: displayName, vaultSalt });
       activate(vaultId);
       setStatus('unlocked');
       return recovery;
@@ -328,15 +333,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       secureZeroize(vmk); // only the derived keys are needed past this point
       await storeKeys(vaultId, keys);
       const entry = vaultsRef.current.find((v) => v.vaultId === vaultId);
-      if (vault.encryptedName && (entry?.name ?? DEFAULT_VAULT_NAME) === DEFAULT_VAULT_NAME) {
-        // First unlock on this device of a vault discovered from the server: reveal its name.
+      let name = entry?.name;
+      if (vault.encryptedName && !name) {
+        // First unlock this session of a vault discovered from the server: reveal its name.
         try {
-          renameInRegistry(vaultId, decryptCollectionName(vault.encryptedName, keys.metadataEncryptionKey));
+          name = decryptCollectionName(vault.encryptedName, keys.metadataEncryptionKey);
         } catch {
-          // Undecryptable name (written under other keys): keep the default.
+          // Undecryptable name (written under other keys): keep the locked label.
         }
       }
       patchEntry(vaultId, {
+        ...(name ? { name } : {}),
         currentVmkVersion: vault.currentVmkVersion,
         rotationState: vault.rotationState,
         ...(vault.encryptedName ? { encryptedName: bytesToBase64(vault.encryptedName) } : {}),
@@ -352,11 +359,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const switchVault = useCallback(
     async (vaultId: string): Promise<'unlocked' | 'locked'> => {
       // A storage failure in retrieveKeys routes to the unlock dialog, same as "no keys here".
-      if (!(await retrieveKeys(vaultId).catch(() => null))) return 'locked';
+      const keys = await retrieveKeys(vaultId).catch(() => null);
+      if (!keys) return 'locked';
+      // Names are not persisted; decrypt this device's copy now that its keys are available.
+      const encryptedName = listVaults().find((v) => v.vaultId === vaultId)?.encryptedName;
+      if (encryptedName) {
+        try {
+          patchEntry(vaultId, {
+            name: decryptCollectionName(base64ToBytes(encryptedName), keys.metadataEncryptionKey),
+          });
+        } catch {
+          // Undecryptable name (written under other keys): keep the locked label.
+        }
+      }
       activate(vaultId);
       return 'unlocked';
     },
-    [activate],
+    [activate, patchEntry],
   );
 
   const renameVault = useCallback(
@@ -368,7 +387,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const encryptedName = await encryptCollectionName(trimmed, keys.metadataEncryptionKey);
       await updateVault(vaultId, { encryptedName });
       upsertVault({ vaultId, name: trimmed, encryptedName: bytesToBase64(encryptedName) });
-      refreshVaults();
+      refreshVaults({ vaultId, name: trimmed });
     },
     [refreshVaults],
   );
@@ -503,7 +522,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
         const plaintext = vault.encryptedName
           ? decryptCollectionName(vault.encryptedName, keysOld.metadataEncryptionKey)
-          : listVaults().find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
+          : vaultsRef.current.find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
         const newEncryptedName = await encryptCollectionName(plaintext, keysNew.metadataEncryptionKey);
         await updateVaultRotation({ vaultId, action: 'RELEASE', expectedState: 'IN_PROGRESS', newEncryptedName });
         released = true;
@@ -569,7 +588,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // when it is absent (a name write that failed, or a legacy row) fall back to a
         // current-generation item or collection. If there is nothing at all to prove against,
         // refuse: a wrong but well-formed phrase must never overwrite the surviving VMK.
-        let name = target?.name ?? known.find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
+        let name = target?.name ?? vaultsRef.current.find((v) => v.vaultId === vaultId)?.name ?? DEFAULT_VAULT_NAME;
         if (vault.encryptedName) {
           try {
             name = decryptCollectionName(vault.encryptedName, keys.metadataEncryptionKey);
@@ -614,7 +633,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           currentVmkVersion: newVersion,
           rotationState: 'IDLE',
         });
-        refreshVaults({ vaultId, vaultSalt: vault.vaultSalt });
+        refreshVaults({ vaultId, name, vaultSalt: vault.vaultSalt });
         activate(vaultId);
         setStatus('unlocked');
         return { phrase: normalizePhrase(phrase), vaultId, name };

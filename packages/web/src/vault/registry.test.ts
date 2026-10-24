@@ -5,10 +5,11 @@ import {
   upsertVault,
   activeVaultId,
   setActiveVault,
-  renameInRegistry,
   removeVault,
   migrateLegacyRegistry,
   syncFromServer,
+  vaultLabel,
+  LOCKED_VAULT_NAME,
 } from './registry';
 
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
@@ -36,16 +37,29 @@ describe('vault registry', () => {
     expect(activeVaultId()).toBeNull();
   });
 
-  it('upserts by vaultId and keeps insertion order under the namespaced key', () => {
+  it('upserts by vaultId, keeps insertion order, and never persists the name', () => {
     upsertVault({ vaultId: 'a', name: 'Personal' });
     upsertVault({ vaultId: 'b', name: 'Family' });
     upsertVault({ vaultId: 'a', name: 'Personal', lastOpened: 5 });
-    expect(listVaults()).toEqual([
-      { vaultId: 'a', name: 'Personal', lastOpened: 5 },
-      { vaultId: 'b', name: 'Family' },
-    ]);
-    expect(JSON.parse(localStorage.getItem('cortex_vaults:u1')!)).toHaveLength(2);
+    expect(listVaults()).toEqual([{ vaultId: 'a', lastOpened: 5 }, { vaultId: 'b' }]);
+    const raw = JSON.parse(localStorage.getItem('cortex_vaults:u1')!);
+    expect(raw).toHaveLength(2);
+    expect(raw[0]).not.toHaveProperty('name');
+    expect(raw[1]).not.toHaveProperty('name');
     expect(localStorage.getItem('cortex_vaults')).toBeNull();
+  });
+
+  it('ignores a plaintext name left by an older build', () => {
+    localStorage.setItem(
+      'cortex_vaults:u1',
+      JSON.stringify([{ vaultId: 'a', name: 'Secret', lastOpened: 1 }]),
+    );
+    expect(listVaults()).toEqual([{ vaultId: 'a', lastOpened: 1 }]);
+  });
+
+  it('labels a vault whose name is not in session memory', () => {
+    expect(vaultLabel({ name: 'Family' })).toBe('Family');
+    expect(vaultLabel({})).toBe(LOCKED_VAULT_NAME);
   });
 
   it('tracks the active vault through the namespaced pointer', () => {
@@ -56,17 +70,11 @@ describe('vault registry', () => {
     expect(localStorage.getItem('cortex_vault_id')).toBeNull();
   });
 
-  it('renameInRegistry changes only the name', () => {
-    upsertVault({ vaultId: 'a', name: 'Personal', lastOpened: 3, currentVmkVersion: 2 });
-    renameInRegistry('a', 'Me');
-    expect(listVaults()).toEqual([{ vaultId: 'a', name: 'Me', lastOpened: 3, currentVmkVersion: 2 }]);
-  });
-
   it('never persists vaultSalt', () => {
     upsertVault({ vaultId: 'a', name: 'Personal', vaultSalt: new Uint8Array(16) });
     const raw = localStorage.getItem('cortex_vaults:u1')!;
     expect(raw).not.toContain('vaultSalt');
-    expect(listVaults()).toEqual([{ vaultId: 'a', name: 'Personal' }]);
+    expect(listVaults()).toEqual([{ vaultId: 'a' }]);
   });
 
   it('survives a corrupt registry value', () => {
@@ -87,7 +95,7 @@ describe('vault registry', () => {
     upsertVault({ vaultId: 'b', name: 'Work' });
     setActiveVault('a');
     removeVault('a');
-    expect(listVaults()).toEqual([{ vaultId: 'b', name: 'Work' }]);
+    expect(listVaults()).toEqual([{ vaultId: 'b' }]);
     expect(activeVaultId()).toBeNull();
     setActiveVault('b');
     removeVault('zzz');
@@ -108,7 +116,6 @@ describe('without a resolved account', () => {
   it('writers throw', () => {
     expect(() => upsertVault({ vaultId: 'a', name: 'Personal' })).toThrow('No account resolved');
     expect(() => setActiveVault('a')).toThrow('No account resolved');
-    expect(() => renameInRegistry('a', 'x')).toThrow('No account resolved');
     expect(() => removeVault('a')).toThrow('No account resolved');
     expect(() => migrateLegacyRegistry()).toThrow('No account resolved');
     expect(() => syncFromServer([])).toThrow('No account resolved');
@@ -117,19 +124,22 @@ describe('without a resolved account', () => {
 
 describe('migrateLegacyRegistry', () => {
   it('moves the legacy list and pointer under the account and deletes the legacy keys', () => {
-    localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Me' }, { vaultId: 'v2', name: 'Work' }]));
+    localStorage.setItem(
+      'cortex_vaults',
+      JSON.stringify([{ vaultId: 'v1', name: 'Me' }, { vaultId: 'v2', name: 'Work' }]),
+    );
     localStorage.setItem('cortex_vault_id', 'v2');
     migrateLegacyRegistry();
-    expect(listVaults()).toEqual([{ vaultId: 'v1', name: 'Me' }, { vaultId: 'v2', name: 'Work' }]);
+    expect(listVaults()).toEqual([{ vaultId: 'v1' }, { vaultId: 'v2' }]);
     expect(activeVaultId()).toBe('v2');
     expect(localStorage.getItem('cortex_vaults')).toBeNull();
     expect(localStorage.getItem('cortex_vault_id')).toBeNull();
   });
 
-  it('seeds a Personal entry from a pointer-only legacy device', () => {
+  it('seeds an entry from a pointer-only legacy device', () => {
     localStorage.setItem('cortex_vault_id', 'v-old');
     migrateLegacyRegistry();
-    expect(listVaults()).toEqual([{ vaultId: 'v-old', name: 'Personal' }]);
+    expect(listVaults()).toEqual([{ vaultId: 'v-old' }]);
     expect(activeVaultId()).toBe('v-old');
     expect(localStorage.getItem('cortex_vault_id')).toBeNull();
   });
@@ -140,7 +150,7 @@ describe('migrateLegacyRegistry', () => {
     localStorage.setItem('cortex_vaults', JSON.stringify([{ vaultId: 'v1', name: 'Me' }]));
     localStorage.setItem('cortex_vault_id', 'v1');
     migrateLegacyRegistry();
-    expect(listVaults()).toEqual([{ vaultId: 'mine', name: 'Mine' }]);
+    expect(listVaults()).toEqual([{ vaultId: 'mine' }]);
     expect(activeVaultId()).toBe('mine');
     expect(localStorage.getItem('cortex_vaults')).toBeNull();
     expect(localStorage.getItem('cortex_vault_id')).toBeNull();
@@ -154,12 +164,13 @@ describe('migrateLegacyRegistry', () => {
 });
 
 describe('syncFromServer', () => {
-  it('server fields win, device keeps name and lastOpened, memory fields are returned but not persisted', () => {
-    upsertVault({ vaultId: 'v1', name: 'Me', lastOpened: 42, currentVmkVersion: 1, rotationState: 'IDLE' });
+  it('server fields win, session memory keeps name/lastOpened, and nothing is persisted', () => {
     const encryptedName = new Uint8Array([1, 2, 3]);
-    const merged = syncFromServer([
-      summary('v1', { encryptedName, currentVmkVersion: 3, rotationState: 'IN_PROGRESS' }),
-    ]);
+    const memory = [{ vaultId: 'v1', name: 'Me', lastOpened: 42 }];
+    const merged = syncFromServer(
+      [summary('v1', { encryptedName, currentVmkVersion: 3, rotationState: 'IN_PROGRESS' })],
+      memory,
+    );
     expect(merged).toEqual([
       {
         vaultId: 'v1',
@@ -172,17 +183,34 @@ describe('syncFromServer', () => {
       },
     ]);
     expect(listVaults()).toEqual([
-      { vaultId: 'v1', name: 'Me', lastOpened: 42, encryptedName: b64(encryptedName), currentVmkVersion: 3, rotationState: 'IN_PROGRESS' },
+      {
+        vaultId: 'v1',
+        lastOpened: 42,
+        encryptedName: b64(encryptedName),
+        currentVmkVersion: 3,
+        rotationState: 'IN_PROGRESS',
+      },
     ]);
-    expect(localStorage.getItem('cortex_vaults:u1')).not.toContain('vaultSalt');
+    const raw = localStorage.getItem('cortex_vaults:u1')!;
+    expect(raw).not.toContain('vaultSalt');
+    expect(raw).not.toContain('"name"');
   });
 
-  it('adds unknown vaults with the default name when the server has none', () => {
+  it('adds unknown vaults without a name and drops a stale one from storage', () => {
+    localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v2', name: 'Old' }]));
     const merged = syncFromServer([summary('v2')]);
-    expect(merged).toEqual([
-      { vaultId: 'v2', name: 'Personal', currentVmkVersion: 1, rotationState: 'IDLE', vaultSalt: new Uint8Array(16).fill(7) },
-    ]);
-    expect(listVaults()).toEqual([{ vaultId: 'v2', name: 'Personal', currentVmkVersion: 1, rotationState: 'IDLE' }]);
+    expect(merged[0]).not.toHaveProperty('name');
+    expect(vaultLabel(merged[0])).toBe(LOCKED_VAULT_NAME);
+    expect(listVaults()).toEqual([{ vaultId: 'v2', currentVmkVersion: 1, rotationState: 'IDLE' }]);
+  });
+
+  it('takes names from session memory only for listed vaults', () => {
+    const memory = [
+      { vaultId: 'kept', name: 'Kept' },
+      { vaultId: 'gone', name: 'Gone' },
+    ];
+    const merged = syncFromServer([summary('kept')], memory);
+    expect(merged.map((v) => v.name)).toEqual(['Kept']);
   });
 
   it('drops entries the server no longer lists and clears the active pointer if it pointed at one', () => {

@@ -8,12 +8,12 @@ import { Banner } from '@astryxdesign/core/Banner';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
 import { useSession } from '../auth/SessionContext';
-import type { VaultEntry } from '../vault/registry';
+import { vaultLabel, type VaultEntry } from '../vault/registry';
 import DeleteVaultDialog from './DeleteVaultDialog';
 
 // Held as a draft so a select-all-and-clear doesn't get refilled by the controlled
 // registry value on every keystroke (it commits, and can be rejected, only on
-// blur/Enter). `key={name}` at the call site resets the draft when the name changes
+// blur/Enter). The call-site key includes the name so the draft resets when it changes
 // from outside (e.g. a successful commit, or another tab renaming it). A locked vault
 // cannot be renamed: the name is encrypted under keys this device does not hold.
 function RenameField({
@@ -86,14 +86,19 @@ export default function ManageVaultsDialog({
                   const isOpen = v.vaultId === activeVault?.vaultId;
                   return (
                     <HStack key={v.vaultId} gap={3} vAlign="end" wrap="wrap">
-                      <RenameField key={v.name} name={v.name} isLocked={!isOpen} onCommit={(name) => rename(v.vaultId, name)} />
+                      <RenameField
+                        key={`${v.vaultId}:${vaultLabel(v)}`}
+                        name={vaultLabel(v)}
+                        isLocked={!isOpen}
+                        onCommit={(name) => rename(v.vaultId, name)}
+                      />
                       <Text type="supporting">{isOpen ? 'Open' : 'Locked'}</Text>
                       {isOpen ? (
                         <Button label="Change password" size="sm" onClick={onChangePassword} />
                       ) : (
-                        <Button label={`Unlock ${v.name}`} size="sm" onClick={() => onUnlock(v)} />
+                        <Button label={`Unlock ${vaultLabel(v)}`} size="sm" onClick={() => onUnlock(v)} />
                       )}
-                      <Button label={`Delete ${v.name}`} size="sm" variant="ghost" onClick={() => setDeleting(v)} />
+                      <Button label={`Delete ${vaultLabel(v)}`} size="sm" variant="ghost" onClick={() => setDeleting(v)} />
                     </HStack>
                   );
                 })}

@@ -8,7 +8,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
 import { useSession, DELETE_REFUSED } from '../auth/SessionContext';
-import type { VaultEntry } from '../vault/registry';
+import { vaultLabel, type VaultEntry } from '../vault/registry';
 
 const FORM_ID = 'delete-vault-form';
 
@@ -45,7 +45,7 @@ export default function DeleteVaultDialog({ vault, onClose }: { vault: VaultEntr
     <Dialog isOpen onOpenChange={(open) => !open && !pending && onClose()} purpose="form">
       <Layout
         height="auto"
-        header={<DialogHeader title={`Delete ${vault.name}`} onOpenChange={() => !pending && onClose()} />}
+        header={<DialogHeader title={`Delete ${vaultLabel(vault)}`} onOpenChange={() => !pending && onClose()} />}
         content={
           <LayoutContent>
             <form id={FORM_ID} onSubmit={onSubmit}>
