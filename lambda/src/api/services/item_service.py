@@ -317,11 +317,7 @@ class ItemService:
     def get_upload_status(self, user_id: str, item_id: str) -> dict:
         """Report a blob upload's status for the owner (404 for inline or missing items)."""
         item = self.items_repo.get_item(item_key(item_id))
-        if (
-            not item
-            or item["user_id"] != user_id
-            or item.get("storage_kind") != StorageKind.BLOB
-        ):
+        if not item or item["user_id"] != user_id or item.get("storage_kind") != StorageKind.BLOB:
             raise NotFoundError("Item not found")
         pending = item.get("upload_status") == "PENDING"
         return {
@@ -334,11 +330,7 @@ class ItemService:
         """Abort a pending multipart upload and delete the pending item."""
         key = item_key(item_id)
         item = self.items_repo.get_item(key)
-        if (
-            not item
-            or item["user_id"] != user_id
-            or item.get("storage_kind") != StorageKind.BLOB
-        ):
+        if not item or item["user_id"] != user_id or item.get("storage_kind") != StorageKind.BLOB:
             raise NotFoundError("Item not found")
         if item.get("upload_status") != "PENDING":
             raise BadRequestError("Upload is already complete")

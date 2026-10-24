@@ -224,9 +224,7 @@ class TestGetItemUploadRoute:
 class TestDeleteItemUploadRoute:
     """Test suite for DeleteItemUploadRoute."""
 
-    def test_deletes_pending_upload(
-        self, client, dynamodb_stubber, s3_stubber, files_bucket_name
-    ):
+    def test_deletes_pending_upload(self, client, dynamodb_stubber, s3_stubber, files_bucket_name):
         item_id = "item-1"
         s3_key = f"vaults/v1/files/{item_id}/x"
         dynamodb_stubber.add_response(

@@ -280,9 +280,7 @@ class ServiceProvider:
             DeleteVaultRoute(vault_deletion_service=self.vault_deletion_service),
             UpdateVaultRotationRoute(vault_service=self.vault_service),
             CreateItemRoute(item_service=self.item_service, vault_service=self.vault_service),
-            CreateItemUploadRoute(
-                item_service=self.item_service, vault_service=self.vault_service
-            ),
+            CreateItemUploadRoute(item_service=self.item_service, vault_service=self.vault_service),
             GetItemUploadRoute(item_service=self.item_service),
             FinalizeItemUploadRoute(item_service=self.item_service),
             CreateUploadPartUrlsRoute(item_service=self.item_service),
