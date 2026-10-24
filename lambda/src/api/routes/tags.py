@@ -30,7 +30,6 @@ def _tag_item_data(item) -> ItemData:
     fields = {
         "item_id": item.item_id,
         "vault_id": item.vault_id,
-        "item_type": item.item_type,
         "encrypted_content": _encode_binary(item.encrypted_content),
         "encrypted_metadata": _encode_binary(item.encrypted_metadata),
         "encrypted_tags": (

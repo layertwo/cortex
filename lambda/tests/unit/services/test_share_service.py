@@ -39,7 +39,7 @@ class TestCreateShare:
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
                     "vault_id": {"S": "vault-123"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "s3_key": {"S": f"vaults/vault-123/files/{item_id}/test"},
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
                 }
@@ -76,7 +76,7 @@ class TestCreateShare:
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
                     "vault_id": {"S": "vault-123"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                 }
             },
             {"TableName": "test-items-table", "Key": {"PK": f"ITEM#{item_id}", "SK": "METADATA"}},
@@ -204,7 +204,7 @@ class TestGetShare:
                     "user_id": {"S": "user-123"},
                     "vault_id": {"S": "vault-123"},
                     "s3_key": {"S": s3_key},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
                 }
             },

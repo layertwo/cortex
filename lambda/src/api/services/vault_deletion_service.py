@@ -19,7 +19,7 @@ from src.api.services.item_service import tag_index_key
 from src.api.services.vault_service import VaultService
 from src.shared.exceptions import InternalError
 from src.shared.logger import get_logger
-from src.shared.models import ItemType
+from src.shared.models import StorageKind
 from src.shared.repository import DynamoDBRepository, S3Repository
 
 logger = get_logger("vault_deletion_service")
@@ -147,7 +147,7 @@ class VaultDeletionService:
     def _delete_media_object(self, vault_id: str, item: dict) -> None:
         """S3 before DynamoDB: abort a pending multipart upload, then delete the object."""
         s3_key = item.get("s3_key")
-        if item.get("item_type") != ItemType.MEDIA or not s3_key:
+        if item.get("storage_kind") != StorageKind.BLOB or not s3_key:
             return
         try:
             if item.get("upload_status") == "PENDING" and item.get("upload_id"):

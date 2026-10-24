@@ -491,8 +491,8 @@ Environments: `dev`, `staging`, `prod`
 
 **Items Table (single-table design within Data Table):**
 - PK: `ITEM#{itemId}`, SK: `METADATA` (constant)
-- Stores: itemId, vaultId, userId, itemType (MEDIA/NOTE/TASK/EVENT), s3Key (MEDIA only), encryptedMetadata (binary), encryptedContent (non-MEDIA), encryptedTags (list<binary>), createdAt, updatedAt, sizeBytes (MEDIA), upload_status (PENDING/COMPLETE for MEDIA), ttl (Unix epoch, for PENDING uploads only), version, wrappedDek (binary, MEDIA only), dekVersion (number, MEDIA only)
-- GSI1: PK: `VAULT#{vaultId}#TYPE#{itemType}`, SK: `ITEM#{itemId}` (for type-filtered queries)
+- Stores: itemId, vaultId, userId, storage_kind (BLOB for S3-backed files, INLINE for row-backed content; derived from the write path, never sent by the caller), s3Key (BLOB only), encryptedMetadata (binary), encryptedContent (INLINE only), encryptedTags (list<binary>), createdAt, updatedAt, sizeBytes (BLOB), upload_status (PENDING/COMPLETE for BLOB), ttl (Unix epoch, for PENDING uploads only), version, wrappedDek (binary, BLOB only), dekVersion (number, BLOB only). The logical type (media/note/task/event) lives inside encryptedMetadata, not on the row.
+- GSI1: PK: `ITEM#{itemId}`, SK: `COLLECTION#{collectionId}` (reverse item→collection lookup; item rows no longer carry a type index)
 - GSI2: PK: `VAULT#{vaultId}`, SK: `ITEM#{itemId}` (for listing all items in vault without type filter)
 - TTL: Pending uploads auto-expire after 48 hours to prevent data inconsistency from failed/abandoned uploads
 - Note: vault_id is a property on the item record, not part of the primary key
@@ -504,7 +504,7 @@ Environments: `dev`, `staging`, `prod`
 **Item-Collection Association Table:**
 - PK: `COLLECTION#{collectionId}`, SK: `ITEM#{itemId}`
 - GSI1: PK: `ITEM#{itemId}`, SK: `COLLECTION#{collectionId}` (reverse lookup)
-- Stores: collectionId, itemId, itemType, vaultId, userId, addedAt
+- Stores: collectionId, itemId, vaultId, userId, addedAt
 
 **Shares Table:**
 - PK: `SHARE#{shareId}`, SK: `METADATA`
@@ -863,11 +863,11 @@ logger.info("File uploaded", extra={
 - `POST /v1/vaults/{id}/password` - `UpdateVaultPassword`: replace the whole VMK envelope set under a new password, guarded by `expectedEnvelopeVersion` (409 on mismatch; no version add/drop)
 - `POST /v1/vaults/{id}/rotation` - VMK rotation lock, two actions only: ACQUIRE (appends a freshly wrapped VMK, bumps currentVmkVersion/envelopeVersion, takes the lock) and RELEASE (returns to IDLE, optionally storing newEncryptedName). A resumed sweep re-derives the from-generation envelope until zero stragglers remain
 
-**Item Operations (Generic for all types: MEDIA, NOTE, TASK, EVENT):**
+**Item Operations (BLOB files and INLINE content; logical type is encrypted):**
 - `POST /v1/items` - Create item (NOTE, TASK, EVENT with inline content)
 - `POST /v1/items/upload/init` - Initialize upload for MEDIA items, get presigned URL
 - `POST /v1/items/upload/complete` - Mark MEDIA upload complete, store metadata
-- `GET /v1/items` - List items (filter by type, tags, date buckets)
+- `GET /v1/items` - List items (tags, date buckets); filtering by logical type happens client-side
 - `GET /v1/items/{id}` - Get item metadata
 - `PUT /v1/items/{id}` - Update item
 - `DELETE /v1/items/{id}` - Delete item (MEDIA: deletes S3 + DynamoDB; NOTE/TASK/EVENT: deletes DynamoDB only)

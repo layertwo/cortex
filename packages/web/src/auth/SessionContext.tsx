@@ -79,7 +79,7 @@ export const RECOVERY_BLOCKED_BY_ROTATION = 'A key rotation is in progress; fini
 async function provesOwnership(vaultId: string, currentVmkVersion: number, metadataKey: Uint8Array): Promise<boolean> {
   const [items, collections] = await Promise.all([listItems(vaultId), listAllCollections(vaultId)]);
   const currentItems = items.filter(
-    (i) => i.itemType === 'MEDIA' && i.encryptedMetadata && i.dekVersion === currentVmkVersion,
+    (i) => i.encryptedMetadata && i.wrappedDek && i.dekVersion === currentVmkVersion,
   );
   if (currentItems.length) {
     return currentItems.some((i) => {
