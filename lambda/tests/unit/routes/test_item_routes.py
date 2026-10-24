@@ -48,7 +48,7 @@ class TestCreateItemRoute:
             "/v1/items",
             json={
                 "vaultId": vault_id,
-                            "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
+                "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
                 "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
         )
