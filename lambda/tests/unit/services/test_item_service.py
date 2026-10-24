@@ -25,7 +25,6 @@ from src.shared.generated.models import (
     InitiateItemUploadRequestContent,
     UpdateItemRequestContent,
 )
-from src.shared.models import ItemType
 
 
 class TestTagIndexKey:
@@ -46,13 +45,47 @@ class TestTagIndexKey:
 
 
 class TestCreateItem:
-    """Tests for create_item method (NOTE, TASK, EVENT items)."""
+    """Tests for create_item method (inline items)."""
+
+    def test_create_item_stores_storage_kind_not_a_type(self, item_service, dynamodb_stubber):
+        """INLINE is derived from the endpoint; no caller-declared type is stored."""
+        request = CreateItemRequestContent(
+            vault_id="vault-123",
+            encrypted_content=base64.b64encode(b"content"),
+            encrypted_metadata=base64.b64encode(b"metadata"),
+        )
+        # The stub asserts the exact row key set: storage_kind is present and item_type is not.
+        dynamodb_stubber.add_response(
+            "put_item",
+            {},
+            {
+                "TableName": "test-items-table",
+                "Item": {
+                    "PK": ANY,
+                    "SK": "METADATA",
+                    "item_id": ANY,
+                    "storage_kind": "INLINE",
+                    "vault_id": "vault-123",
+                    "user_id": "user-123",
+                    "encrypted_content": ANY,
+                    "encrypted_metadata": ANY,
+                    "created_at": ANY,
+                    "updated_at": ANY,
+                    "version": 1,
+                    "GSI2PK": "VAULT#vault-123",
+                    "GSI2SK": ANY,
+                },
+            },
+        )
+
+        response = item_service.create_item("user-123", request)
+
+        assert not hasattr(response, "item_type")
 
     def test_create_note_item(self, item_service, dynamodb_stubber):
         """Creating a tagged item writes the item row, then the tag-index rows."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=ItemType.NOTE,
             encrypted_content=base64.b64encode(b"encrypted-note-content"),
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             encrypted_tags=[base64.b64encode(b"tag1"), base64.b64encode(b"tag2")],
@@ -79,14 +112,12 @@ class TestCreateItem:
         response = item_service.create_item("user-123", request)
 
         assert response.item_id is not None
-        assert response.item_type == ItemType.NOTE
         assert isinstance(response.created_at, (int, float))
 
     def test_create_item_survives_tag_index_failure(self, item_service, dynamodb_stubber):
         """A failed tag-index write must not fail the create or lose the item row."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=ItemType.NOTE,
             encrypted_content=base64.b64encode(b"encrypted-note-content"),
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             encrypted_tags=[base64.b64encode(b"tag1")],
@@ -109,7 +140,6 @@ class TestCreateItem:
         """Test creating a TASK item with date bucket."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=ItemType.TASK,
             encrypted_content=base64.b64encode(b"encrypted-task-content"),
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             encrypted_date_bucket=base64.b64encode(b"encrypted-bucket"),
@@ -123,14 +153,12 @@ class TestCreateItem:
         response = item_service.create_item("user-123", request)
 
         assert response.item_id is not None
-        assert response.item_type == ItemType.TASK
         assert isinstance(response.created_at, (int, float))
 
     def test_create_event_item(self, item_service, dynamodb_stubber):
         """Test creating an EVENT item."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=ItemType.EVENT,
             encrypted_content=base64.b64encode(b"encrypted-event-content"),
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
         )
@@ -142,13 +170,11 @@ class TestCreateItem:
         response = item_service.create_item("user-123", request)
 
         assert response.item_id is not None
-        assert response.item_type == ItemType.EVENT
 
     def test_create_item_without_tags_uses_put_item(self, item_service, dynamodb_stubber):
         """Test that creating item without tags uses simple put_item."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=ItemType.NOTE,
             encrypted_content=base64.b64encode(b"content"),
             encrypted_metadata=base64.b64encode(b"metadata"),
         )
@@ -269,7 +295,7 @@ class TestCompleteUpload:
                     "PK": {"S": f"ITEM#{item_id}"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": item_id},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "s3_key": {"S": f"vaults/vault-123/files/{item_id}/test"},
@@ -426,7 +452,7 @@ class TestListItems:
                         "PK": {"S": "ITEM#item-1"},
                         "SK": {"S": "METADATA"},
                         "item_id": {"S": "item-1"},
-                        "item_type": {"S": "NOTE"},
+                        "storage_kind": {"S": "INLINE"},
                         "vault_id": {"S": "vault-123"},
                         "user_id": {"S": "user-123"},
                         "encrypted_metadata": {"B": b"encrypted-metadata-1"},
@@ -438,7 +464,7 @@ class TestListItems:
                         "PK": {"S": "ITEM#item-2"},
                         "SK": {"S": "METADATA"},
                         "item_id": {"S": "item-2"},
-                        "item_type": {"S": "MEDIA"},
+                        "storage_kind": {"S": "BLOB"},
                         "vault_id": {"S": "vault-123"},
                         "user_id": {"S": "user-123"},
                         "encrypted_metadata": {"B": b"encrypted-metadata-2"},
@@ -466,7 +492,6 @@ class TestListItems:
         items, next_token = item_service.list_items(
             user_id="user-123",
             vault_id="vault-123",
-            item_type=None,
             page_size=50,
             next_token=None,
             sort_order="desc",
@@ -475,54 +500,6 @@ class TestListItems:
         assert len(items) == 2
         assert items[0]["item_id"] == "item-1"
         assert items[1]["item_id"] == "item-2"
-        assert next_token is None
-
-    def test_list_items_with_type_filter(self, item_service, dynamodb_stubber):
-        """Test listing items filtered by type using GSI1."""
-        dynamodb_stubber.add_response(
-            "query",
-            {
-                "Items": [
-                    {
-                        "PK": {"S": "ITEM#item-1"},
-                        "SK": {"S": "METADATA"},
-                        "item_id": {"S": "item-1"},
-                        "item_type": {"S": "MEDIA"},
-                        "vault_id": {"S": "vault-123"},
-                        "user_id": {"S": "user-123"},
-                        "encrypted_metadata": {"B": b"encrypted-metadata"},
-                        "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
-                        "size_bytes": {"N": "2048"},
-                        "upload_status": {"S": "COMPLETE"},
-                        "created_at": {"N": "1234567890"},
-                        "updated_at": {"N": "1234567890"},
-                        "version": {"N": "1"},
-                    }
-                ],
-                "Count": 1,
-            },
-            {
-                "TableName": "test-items-table",
-                "IndexName": "GSI1",
-                "KeyConditionExpression": ANY,
-                "ExpressionAttributeValues": ANY,
-                "FilterExpression": ANY,
-                "ScanIndexForward": False,
-                "Limit": 50,
-            },
-        )
-
-        items, next_token = item_service.list_items(
-            user_id="user-123",
-            vault_id="vault-123",
-            item_type=ItemType.MEDIA,
-            page_size=50,
-            next_token=None,
-            sort_order="desc",
-        )
-
-        assert len(items) == 1
-        assert items[0]["item_type"] == "MEDIA"
         assert next_token is None
 
 
@@ -538,7 +515,7 @@ class TestGetItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "encrypted_content": {"B": b"encrypted-content"},
@@ -555,7 +532,7 @@ class TestGetItem:
 
         assert item is not None
         assert item["item_id"] == "item-1"
-        assert item["item_type"] == "NOTE"
+        assert item["storage_kind"] == "INLINE"
         assert item["user_id"] == "user-123"
 
     def test_get_item_not_found(self, item_service, dynamodb_stubber):
@@ -578,7 +555,7 @@ class TestGetItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "other-user"},
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
@@ -602,7 +579,7 @@ class TestGetItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
@@ -634,7 +611,7 @@ class TestGetDownloadUrl:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
@@ -682,7 +659,7 @@ class TestGetDownloadUrl:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "other-user"},
                     "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
@@ -698,7 +675,7 @@ class TestGetDownloadUrl:
         with pytest.raises(NotFoundError, match="Item not found"):
             item_service.get_download_url("user-123", "item-1")
 
-    def test_get_download_url_not_media_type(self, item_service, dynamodb_stubber):
+    def test_get_download_url_rejects_inline_item(self, item_service, dynamodb_stubber):
         """Test download URL for non-MEDIA item type."""
         dynamodb_stubber.add_response(
             "get_item",
@@ -707,7 +684,7 @@ class TestGetDownloadUrl:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "encrypted_metadata": {"B": b"encrypted-metadata"},
@@ -719,7 +696,7 @@ class TestGetDownloadUrl:
             {"TableName": "test-items-table", "Key": ANY},
         )
 
-        with pytest.raises(BadRequestError, match="Download URL only available for MEDIA items"):
+        with pytest.raises(BadRequestError, match="Download URL only available for blob items"):
             item_service.get_download_url("user-123", "item-1")
 
     def test_get_download_url_pending_upload(self, item_service, dynamodb_stubber):
@@ -731,7 +708,7 @@ class TestGetDownloadUrl:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
@@ -764,7 +741,7 @@ class TestGetDownloadUrl:
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "upload_status": {"S": "COMPLETE"},
                     "encrypted_metadata": {"B": b"meta"},
                     "s3_key": {"S": s3_key},
@@ -804,7 +781,7 @@ class TestDeleteItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
@@ -838,7 +815,7 @@ class TestDeleteItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "encrypted_content": {"B": b"encrypted-content"},
@@ -873,7 +850,7 @@ class TestDeleteItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "other-user"},
                     "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
@@ -900,7 +877,7 @@ class TestDeleteItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "s3_key": {"S": "vaults/vault-123/files/item-1/file.jpg"},
@@ -944,7 +921,7 @@ class TestDeleteItem:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "vault_id": {"S": "vault-123"},
                     "user_id": {"S": "user-123"},
                     "encrypted_content": {"B": b"encrypted-content"},
@@ -1221,7 +1198,7 @@ class TestUpdateItem:
             "PK": {"S": "ITEM#item-1"},
             "SK": {"S": "METADATA"},
             "item_id": {"S": "item-1"},
-            "item_type": {"S": "MEDIA"},
+            "storage_kind": {"S": "BLOB"},
             "vault_id": {"S": "vault-123"},
             "user_id": {"S": user_id},
             "encrypted_metadata": {"B": b"old-metadata"},

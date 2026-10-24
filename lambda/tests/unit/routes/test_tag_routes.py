@@ -91,7 +91,6 @@ class TestSearchTagsRoute:
         mock_items = [
             ItemMetadata(
                 item_id="item-1",
-                item_type="NOTE",
                 vault_id="vault-123",
                 user_id="user-123",
                 encrypted_content=b"encrypted-content",
@@ -123,7 +122,6 @@ class TestSearchTagsRoute:
         assert "items" in body
         assert len(body["items"]) == 1
         assert body["items"][0]["itemId"] == "item-1"
-        assert body["items"][0]["itemType"] == "NOTE"
         assert "encryptedMetadata" in body["items"][0]
         assert "encryptedTags" in body["items"][0]
         assert "createdAt" in body["items"][0]
@@ -139,7 +137,6 @@ class TestSearchTagsRoute:
         mock_items = [
             ItemMetadata(
                 item_id="item-1",
-                item_type="MEDIA",
                 vault_id="vault-123",
                 user_id="user-123",
                 encrypted_content=None,
@@ -182,7 +179,6 @@ class TestSearchTagsRoute:
         mock_items = [
             ItemMetadata(
                 item_id="item-1",
-                item_type="NOTE",
                 vault_id="vault-123",
                 user_id="user-123",
                 encrypted_content=b"encrypted-content",
@@ -249,7 +245,6 @@ class TestSearchTagsRoute:
         mock_items = [
             ItemMetadata(
                 item_id="item-1",
-                item_type="NOTE",
                 vault_id="vault-123",
                 user_id="user-123",
                 encrypted_content=b"encrypted-content",

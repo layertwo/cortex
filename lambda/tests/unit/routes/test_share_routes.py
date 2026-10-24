@@ -32,7 +32,7 @@ class TestCreateShareRoute:
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
                     "vault_id": {"S": vault_id},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "s3_key": {"S": f"vaults/{vault_id}/files/{item_id}/test"},
                 }
             },
@@ -144,7 +144,7 @@ class TestGetShareRoute:
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
                     "vault_id": {"S": vault_id},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "s3_key": {"S": s3_key},
                     "encrypted_metadata": {"B": b"encrypted-meta"},
                 }

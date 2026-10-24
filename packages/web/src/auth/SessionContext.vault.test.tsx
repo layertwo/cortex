@@ -218,7 +218,6 @@ async function mediaItem(dekVersion: number, keys: ReturnType<typeof deriveKeys>
   return {
     itemId: 'm1',
     vaultId: 'v1',
-    itemType: 'MEDIA',
     encryptedMetadata: await encryptMetadata(meta, keys.metadataEncryptionKey),
     wrappedDek,
     dekVersion,
@@ -589,7 +588,6 @@ describe('rotateEncryptionKeys', () => {
     const straggler: ItemData = {
       itemId: 'late',
       vaultId: 'v1',
-      itemType: 'MEDIA',
       encryptedMetadata: new Uint8Array([1]),
       wrappedDek: new Uint8Array(97),
       dekVersion: 1,

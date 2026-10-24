@@ -27,6 +27,13 @@ class ItemType(str):
     EVENT = "EVENT"
 
 
+class StorageKind(str):
+    """Where an item's content lives. Derived from the write path, never supplied by the caller."""
+
+    BLOB = "BLOB"
+    INLINE = "INLINE"
+
+
 # ============================================================================
 # Request/Response Models for API Operations
 # ============================================================================
@@ -164,7 +171,6 @@ class ItemMetadata(BaseModel):
     """Model for an item with encrypted metadata."""
 
     item_id: str = Field(..., description="Unique item identifier")
-    item_type: str = Field(..., description="Item type: MEDIA, NOTE, TASK, EVENT")
     vault_id: str = Field(..., description="Vault ID")
     user_id: str = Field(..., description="Owner user ID")
     encrypted_content: Optional[bytes] = Field(

@@ -20,7 +20,6 @@ from src.shared.generated.models import (
     CreateItemRequestContent,
     InitiateItemUploadRequestContent,
 )
-from src.shared.models import ItemType
 
 TABLE = "test-items-table"
 
@@ -32,7 +31,7 @@ def _media_item(item_id, *, status="COMPLETE", s3_key, user_id="user-123"):
             "PK": {"S": f"ITEM#{item_id}"},
             "SK": {"S": "METADATA"},
             "item_id": {"S": item_id},
-            "item_type": {"S": ItemType.MEDIA},
+            "storage_kind": {"S": "BLOB"},
             "vault_id": {"S": "vault-123"},
             "user_id": {"S": user_id},
             "s3_key": {"S": s3_key},
@@ -79,7 +78,7 @@ class TestReferentialIntegrity:
                 "PK": {"S": "ITEM#note-1"},
                 "SK": {"S": "METADATA"},
                 "item_id": {"S": "note-1"},
-                "item_type": {"S": ItemType.NOTE},
+                "storage_kind": {"S": "INLINE"},
                 "vault_id": {"S": "vault-123"},
                 "user_id": {"S": "user-123"},
                 "encrypted_content": {"B": b"opaque"},
@@ -131,12 +130,10 @@ class TestGenericItemApiSupportsAllTypes:
     Validates: Requirements 24.1, 24.2, 24.3
     """
 
-    @pytest.mark.parametrize("item_type", [ItemType.NOTE, ItemType.TASK, ItemType.EVENT])
-    def test_create_inline_item_for_each_type(self, item_service, dynamodb_stubber, item_type):
-        """create_item handles NOTE/TASK/EVENT identically, storing one DynamoDB record."""
+    def test_create_inline_item_stores_one_opaque_row(self, item_service, dynamodb_stubber):
+        """create_item stores one DynamoDB row and never inspects the logical type."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=item_type,
             encrypted_content=base64.b64encode(b"opaque-content"),
             encrypted_metadata=base64.b64encode(b"opaque-metadata"),
         )
@@ -144,7 +141,6 @@ class TestGenericItemApiSupportsAllTypes:
 
         response = item_service.create_item("user-123", request)
 
-        assert response.item_type == item_type
         assert response.item_id
         dynamodb_stubber.assert_no_pending_responses()
 
@@ -156,7 +152,6 @@ class TestGenericItemApiSupportsAllTypes:
         garbage = bytes(range(256))  # every byte value, not decodable as text/JSON
         request = CreateItemRequestContent(
             vault_id="vault-123",
-            item_type=ItemType.NOTE,
             encrypted_content=base64.b64encode(garbage),
             encrypted_metadata=base64.b64encode(garbage),
         )

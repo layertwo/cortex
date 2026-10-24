@@ -14,7 +14,6 @@ from tests.fixtures.vault_deletion import stub_vault_lookup, vault_row
 USER_ID = "test-user-id"  # the get_current_user override in conftest
 
 NOTE_BODY = {
-    "itemType": "NOTE",
     "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
     "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
 }
@@ -49,8 +48,7 @@ class TestCreateItemRoute:
             "/v1/items",
             json={
                 "vaultId": vault_id,
-                "itemType": "NOTE",
-                "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
+                            "encryptedContent": "ZW5jcnlwdGVkLWNvbnRlbnQ=",
                 "encryptedMetadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
         )
@@ -59,12 +57,10 @@ class TestCreateItemRoute:
         body = response.json()
 
         assert "itemId" in body, "Response should include itemId"
-        assert "itemType" in body, "Response should include itemType"
         assert "createdAt" in body, "Response should include createdAt"
 
         assert isinstance(body["itemId"], str), "itemId should be a string"
         assert len(body["itemId"]) > 0, "itemId should not be empty"
-        assert body["itemType"] == "NOTE", f"itemType should be NOTE, got {body['itemType']}"
 
         # createdAt is an epoch timestamp (number), not an ISO string
         assert isinstance(body["createdAt"], (int, float))
@@ -398,7 +394,7 @@ class TestListItemsRoute:
                 "Items": [
                     {
                         "item_id": {"S": "item-1"},
-                        "item_type": {"S": "MEDIA"},
+                        "storage_kind": {"S": "BLOB"},
                         "vault_id": {"S": vault_id},
                         "user_id": {"S": user_id},
                         "encrypted_metadata": {"B": b"meta"},
@@ -445,7 +441,7 @@ class TestGetItemRoute:
                 "Item": {
                     "user_id": {"S": user_id},
                     "item_id": {"S": item_id},
-                    "item_type": {"S": "EVENT"},
+                    "storage_kind": {"S": "INLINE"},
                     "vault_id": {"S": vault_id},
                     "encrypted_content": {"B": b"secret-content"},
                     "encrypted_metadata": {"B": b"foobar"},
@@ -465,7 +461,6 @@ class TestGetItemRoute:
         assert response.status_code == 200
         body = response.json()
         assert body["itemId"] == item_id
-        assert body["itemType"] == "EVENT"
         assert body["vaultId"] == vault_id
         # blobs are base64 on the wire now (not raw UTF-8)
         assert body["encryptedMetadata"] == base64.b64encode(b"foobar").decode()
@@ -484,7 +479,7 @@ class TestUpdateItemRoute:
                     "PK": {"S": "ITEM#item-1"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": "item-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": "vault-1"},
                     "user_id": {"S": "test-user-id"},
                     "encrypted_metadata": {"B": b"old"},
@@ -544,7 +539,7 @@ class TestDeleteItemRoute:
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
                     "vault_id": {"S": vault_id},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "encrypted_metadata": {"B": b"test-metadata"},
                 }
             },
@@ -589,7 +584,7 @@ class TestDeleteItemRoute:
                     "item_id": {"S": item_id},
                     "user_id": {"S": different_user_id},
                     "vault_id": {"S": vault_id},
-                    "item_type": {"S": "NOTE"},
+                    "storage_kind": {"S": "INLINE"},
                     "encrypted_metadata": {"B": b"test-metadata"},
                 }
             },
@@ -645,7 +640,7 @@ class TestDownloadItemRoute:
                     "user_id": {"S": user_id},
                     "vault_id": {"S": f"VAULT#{vault_id}"},
                     "s3_key": {"S": s3_key},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "upload_status": {"S": "COMPLETED"},
                     "encrypted_metadata": {"B": "foobar".encode()},
                 }

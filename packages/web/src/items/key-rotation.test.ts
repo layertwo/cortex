@@ -83,7 +83,6 @@ async function makeMediaItem(opts: {
   const item: ItemData = {
     itemId: opts.itemId ?? crypto.randomUUID(),
     vaultId,
-    itemType: 'MEDIA',
     encryptedMetadata,
     wrappedDek,
     dekVersion: opts.dekVersion,
@@ -98,7 +97,6 @@ describe('stragglers', () => {
   const media = (itemId: string, dekVersion: number): ItemData => ({
     itemId,
     vaultId,
-    itemType: 'MEDIA',
     encryptedMetadata: new Uint8Array([1]),
     wrappedDek: new Uint8Array(97),
     dekVersion,
@@ -107,27 +105,25 @@ describe('stragglers', () => {
     version: 1,
   });
 
-  it('returns only MEDIA items below the target dekVersion', () => {
-    const note: ItemData = {
+  it('returns only keyed items below the target dekVersion', () => {
+    const inline: ItemData = {
       itemId: 'note',
       vaultId,
-      itemType: 'NOTE',
       encryptedMetadata: new Uint8Array([1]),
       createdAt: new Date(0),
       updatedAt: new Date(0),
       version: 1,
     };
-    expect(stragglers([media('old', 1), media('new', 2), note], 2).map((i) => i.itemId)).toEqual(['old']);
+    expect(stragglers([media('old', 1), media('new', 2), inline], 2).map((i) => i.itemId)).toEqual(['old']);
     expect(stragglers([media('new', 2)], 2)).toEqual([]);
   });
 
-  it('ignores MEDIA items the sweep cannot re-key (no wrappedDek/encryptedMetadata)', () => {
+  it('ignores items the sweep cannot re-key (no wrappedDek/encryptedMetadata)', () => {
     // rotateItems skips these (nothing to re-wrap), so counting them as stragglers
     // would withhold RELEASE forever.
     const unkeyable: ItemData = {
       itemId: 'pending',
       vaultId,
-      itemType: 'MEDIA',
       encryptedMetadata: new Uint8Array([1]), // no wrappedDek: the sweep has nothing to re-wrap
       dekVersion: 1,
       createdAt: new Date(0),
@@ -176,11 +172,10 @@ describe('rotateItems', () => {
     );
   });
 
-  it('skips non-MEDIA items even when present in the list', async () => {
+  it('skips items without a wrappedDek even when present in the list', async () => {
     const noteItem: ItemData = {
       itemId: 'note-1',
       vaultId,
-      itemType: 'NOTE',
       encryptedMetadata: new Uint8Array([1, 2, 3]),
       createdAt: new Date(0),
       updatedAt: new Date(0),
@@ -211,7 +206,6 @@ describe('rotateItems', () => {
     const alreadyRotated = (itemId: string): ItemData => ({
       itemId,
       vaultId,
-      itemType: 'MEDIA',
       // Deliberately bogus ciphertext — must never be touched, since these items
       // are filtered out before any decrypt/re-wrap happens.
       encryptedMetadata: new Uint8Array([9, 9, 9]),

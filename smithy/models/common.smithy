@@ -2,21 +2,6 @@ $version: "2.0"
 
 namespace layertwo.cortex
 
-/// Type of item stored in the vault
-enum ItemType {
-    @documentation("Media file (photo, video, document) stored in S3")
-    MEDIA = "MEDIA"
-
-    @documentation("Text note with optional rich formatting stored inline")
-    NOTE = "NOTE"
-
-    @documentation("Task/to-do item with optional due date stored inline")
-    TASK = "TASK"
-
-    @documentation("Calendar event with start/end times stored inline")
-    EVENT = "EVENT"
-}
-
 /// List of encrypted tags
 @length(max: 50)
 list EncryptedTagList {
@@ -76,11 +61,7 @@ structure ItemData {
     @documentation("Vault identifier")
     vaultId: String
 
-    @required
-    @documentation("Item type")
-    itemType: ItemType
-
-    @documentation("Encrypted item content (absent for MEDIA items, whose content lives in S3)")
+    @documentation("Encrypted item content (absent for BLOB items, whose content lives in S3)")
     encryptedContent: Blob
 
     @required

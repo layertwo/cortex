@@ -3,7 +3,7 @@ $version: "2.0"
 namespace layertwo.cortex
 
 // ============================================================================
-// Item Resource (Generic for all types: MEDIA, NOTE, TASK, EVENT)
+// Item Resource (blob and inline items)
 // ============================================================================
 @documentation("Item resource for managing all types of encrypted items")
 resource Item {
@@ -30,7 +30,7 @@ resource Item {
 // Item Operations
 // ============================================================================
 @http(method: "POST", uri: "/v1/items")
-@documentation("Create new item of any type (MEDIA, NOTE, TASK, EVENT)")
+@documentation("Create a new inline item")
 operation CreateItem {
     input: CreateItemInput
     output: CreateItemOutput
@@ -150,10 +150,6 @@ structure CreateItemInput {
     vaultId: String
 
     @required
-    @documentation("Item type (MEDIA, NOTE, TASK, EVENT)")
-    itemType: ItemType
-
-    @required
     @documentation("Encrypted item content (type-specific JSON)")
     encryptedContent: Blob
 
@@ -175,10 +171,6 @@ structure CreateItemOutput {
     @required
     @documentation("Item identifier")
     itemId: String
-
-    @required
-    @documentation("Item type")
-    itemType: ItemType
 
     @required
     @documentation("Creation timestamp")
@@ -238,7 +230,7 @@ structure InitiateItemUploadOutput {
 structure CompleteItemUploadInput {
     @required
     @httpLabel
-    @documentation("Item identifier (must be MEDIA type)")
+    @documentation("Item identifier (must be a BLOB item)")
     itemId: String
 
     @documentation("Multipart upload id (omit for single-PUT uploads)")
@@ -266,10 +258,6 @@ structure ListItemsInput {
     @httpQuery("vaultId")
     @documentation("Vault identifier")
     vaultId: String
-
-    @httpQuery("itemType")
-    @documentation("Filter by item type (optional)")
-    itemType: ItemType
 
     @httpQuery("timeBucket")
     @documentation("Filter by time bucket for tasks/events (optional)")
@@ -315,11 +303,7 @@ structure GetItemOutput {
     @documentation("Vault identifier")
     vaultId: String
 
-    @required
-    @documentation("Item type")
-    itemType: ItemType
-
-    @documentation("Encrypted item content (absent for MEDIA items, whose content lives in S3)")
+    @documentation("Encrypted item content (absent for BLOB items, whose content lives in S3)")
     encryptedContent: Blob
 
     @required
@@ -408,7 +392,7 @@ structure UpdateItemOutput {
 structure GetItemDownloadUrlInput {
     @required
     @httpLabel
-    @documentation("Item identifier (must be MEDIA type)")
+    @documentation("Item identifier (must be a BLOB item)")
     itemId: String
 }
 
@@ -498,7 +482,7 @@ operation CreateUploadPartUrls {
 structure CreateUploadPartUrlsInput {
     @required
     @httpLabel
-    @documentation("Item identifier (must be a pending MEDIA upload)")
+    @documentation("Item identifier (must be a pending BLOB upload)")
     itemId: String
 
     @required
