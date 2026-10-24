@@ -131,12 +131,6 @@ class ItemService:
         if request.encrypted_tags:
             item["encrypted_tags"] = request.encrypted_tags
 
-        if request.encrypted_date_bucket:
-            item["encrypted_date_bucket"] = request.encrypted_date_bucket
-
-        if request.time_bucket:
-            item["time_bucket"] = request.time_bucket
-
         # Add GSI2 keys for listing all items in vault
         item["GSI2PK"] = f"VAULT#{request.vault_id}"
         item["GSI2SK"] = f"ITEM#{item_id}"
@@ -701,12 +695,6 @@ class ItemService:
         if request.encrypted_tags is not None:
             set_parts.append("encrypted_tags = :et")
             values[":et"] = request.encrypted_tags
-        if request.encrypted_date_bucket is not None:
-            set_parts.append("encrypted_date_bucket = :edb")
-            values[":edb"] = request.encrypted_date_bucket
-        if request.time_bucket is not None:
-            set_parts.append("time_bucket = :tb")
-            values[":tb"] = request.time_bucket
         if request.wrapped_dek is not None:
             set_parts.append("wrapped_dek = :wd")
             values[":wd"] = bytes(request.wrapped_dek)

@@ -20,7 +20,7 @@ import VaultSwitcher from './VaultSwitcher';
 import UnlockVaultDialog from './UnlockVaultDialog';
 import NewVaultDialog from './NewVaultDialog';
 import ManageVaultsDialog from './ManageVaultsDialog';
-import type { VaultEntry } from '../vault/registry';
+import { vaultLabel, type VaultEntry } from '../vault/registry';
 
 function viewTitle(view: View): string {
   if (view.kind === 'collection') return view.name;
@@ -122,7 +122,7 @@ export default function Dashboard() {
                 <WelcomeCard
                   key={activeVault.vaultId}
                   vaultId={activeVault.vaultId}
-                  name={activeVault.name}
+                  name={vaultLabel(activeVault)}
                   hasFiles={counts.files > 0}
                   hasCollections={counts.collections > 0}
                 />

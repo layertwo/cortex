@@ -9,6 +9,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
 import { useSession } from '../auth/SessionContext';
+import { vaultLabel } from '../vault/registry';
 import PasswordStrength from './common/PasswordStrength';
 import RecoveryPhrase from './common/RecoveryPhrase';
 import { useAsyncAction } from './common/useAsyncAction';
@@ -55,7 +56,7 @@ export default function NewVaultDialog({ onClose }: { onClose: () => void }) {
                 <Text as="p">Write these 24 words down. They are the only way back in if you forget this vault's password.</Text>
                 <RecoveryPhrase
                   phrase={phrase}
-                  kit={activeVault ? { name: activeVault.name, vaultId: activeVault.vaultId } : undefined}
+                  kit={activeVault ? { name: vaultLabel(activeVault), vaultId: activeVault.vaultId } : undefined}
                 />
                 <CheckboxInput label="I have saved my recovery phrase" value={saved} onChange={setSaved} />
               </VStack>

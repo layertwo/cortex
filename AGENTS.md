@@ -6,7 +6,7 @@ Cortex is a privacy-first photo and video backup solution where all encryption h
 
 **B2C Single-User Architecture:**
 - Individual users, not organizations or teams
-- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name), `UpdateVaultPassword` (the password-wrapped VMK envelopes, guarded by `envelopeVersion`), `UpdateVaultRotation` (`ACQUIRE` then `RELEASE` only) and a resumable `DeleteVault` (see PRs #287, #290 and #291). Each vault holds a random 256-bit VMK; the vault password never reaches the server and only unwraps the VMK's envelope. The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the OIDC subject (`sub`), `cortex_vaults:<sub>` the entries (name, `encryptedName`, `currentVmkVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, and salts stay in memory.
+- One user may have several named vaults, stored server-side: `ListVaults`, `UpdateVault` (encrypted name), `UpdateVaultPassword` (the password-wrapped VMK envelopes, guarded by `envelopeVersion`), `UpdateVaultRotation` (`ACQUIRE` then `RELEASE` only) and a resumable `DeleteVault` (see PRs #287, #290 and #291). Each vault holds a random 256-bit VMK; the vault password never reaches the server and only unwraps the VMK's envelope. The frontend registry is a per-account cache of `ListVaults`: `localStorage.cortex_account` holds the OIDC subject (`sub`), `cortex_vaults:<sub>` the entries (`encryptedName`, `currentVmkVersion`, `rotationState`, `lastOpened`) and `cortex_vault_id:<sub>` the active pointer; it is merged from the server on every sign-in, and both decrypted names and salts stay in memory only.
 - No multi-tenancy or team collaboration features
 - Simplified security model focused on personal data protection
 - Usage tracking and quotas per individual user
@@ -870,7 +870,7 @@ logger.info("File uploaded", extra={
 - `POST /v1/items/{id}/upload/part-urls` - Mint presigned URLs for multipart parts
 - `POST /v1/items/{id}/upload/finalize` - Verify the object (assembling parts) and mark it complete
 - `DELETE /v1/items/{id}/upload` - Abort a pending upload and delete the pending item
-- `GET /v1/items` - List items (tags, date buckets); filtering by logical type happens client-side
+- `GET /v1/items` - List items; tags, dates and logical type are filtered client-side from encrypted metadata
 - `GET /v1/items/{id}` - Get item metadata
 - `PUT /v1/items/{id}` - Update item
 - `DELETE /v1/items/{id}` - Delete item (MEDIA: deletes S3 + DynamoDB; NOTE/TASK/EVENT: deletes DynamoDB only)

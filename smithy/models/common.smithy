@@ -71,12 +71,6 @@ structure ItemData {
     @documentation("List of encrypted tags")
     encryptedTags: EncryptedTagList
 
-    @documentation("Encrypted date bucket (for tasks/events)")
-    encryptedDateBucket: Blob
-
-    @documentation("Plaintext time bucket (for tasks/events)")
-    timeBucket: String
-
     @documentation("File size in bytes (for MEDIA items)")
     sizeBytes: Long
 

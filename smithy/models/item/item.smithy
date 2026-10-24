@@ -85,7 +85,7 @@ operation FinalizeItemUpload {
 }
 
 @http(method: "GET", uri: "/v1/items")
-@documentation("List user's items with optional type filtering and pagination")
+@documentation("List a vault's items with pagination")
 @readonly
 operation ListItems {
     input: ListItemsInput
@@ -174,12 +174,6 @@ structure CreateItemInput {
 
     @documentation("List of encrypted tags")
     encryptedTags: EncryptedTagList
-
-    @documentation("Encrypted date bucket for tasks/events (deterministic)")
-    encryptedDateBucket: Blob
-
-    @documentation("Plaintext time bucket for server queries (15-min window)")
-    timeBucket: String
 }
 
 structure CreateItemOutput {
@@ -303,10 +297,6 @@ structure ListItemsInput {
     @documentation("Vault identifier")
     vaultId: String
 
-    @httpQuery("timeBucket")
-    @documentation("Filter by time bucket for tasks/events (optional)")
-    timeBucket: String
-
     @httpQuery("pageSize")
     @documentation("Number of items per page (10-100)")
     @range(min: 10, max: 100)
@@ -357,12 +347,6 @@ structure GetItemOutput {
     @documentation("List of encrypted tags")
     encryptedTags: EncryptedTagList
 
-    @documentation("Encrypted date bucket (for tasks/events)")
-    encryptedDateBucket: Blob
-
-    @documentation("Plaintext time bucket (for tasks/events)")
-    timeBucket: String
-
     @documentation("File size in bytes (for MEDIA items)")
     sizeBytes: Long
 
@@ -402,12 +386,6 @@ structure UpdateItemInput {
 
     @documentation("Updated encrypted tags")
     encryptedTags: EncryptedTagList
-
-    @documentation("Updated encrypted date bucket")
-    encryptedDateBucket: Blob
-
-    @documentation("Updated time bucket")
-    timeBucket: String
 
     @documentation("Expected version for optimistic locking")
     expectedVersion: Integer

@@ -96,6 +96,7 @@ import {
   RECOVERY_BLOCKED_BY_ROTATION,
   type SessionValue,
 } from './SessionContext';
+import { vaultLabel } from '../vault/registry';
 
 const sessionRef: { current: SessionValue | null } = { current: null };
 
@@ -106,8 +107,8 @@ function Probe() {
     <div>
       <span data-testid="status">{s.status}</span>
       <span data-testid="rotation-interrupted">{String(s.rotationInterrupted)}</span>
-      <span data-testid="vaults">{s.vaults.map((v) => v.name).join(',')}</span>
-      <span data-testid="active">{s.activeVault?.name ?? ''}</span>
+      <span data-testid="vaults">{s.vaults.map((v) => vaultLabel(v)).join(',')}</span>
+      <span data-testid="active">{s.activeVault ? vaultLabel(s.activeVault) : ''}</span>
       <span data-testid="version">{s.vaultVersion}</span>
       <button onClick={() => s.setupVault('vaultpw').then((r) => (document.title = r)).catch((e) => (document.title = e.message))}>
         setup
@@ -249,7 +250,7 @@ describe('account gate', () => {
     await renderProbe();
     expect(localStorage.getItem('cortex_account')).toBe('u1');
     expect(screen.getByTestId('status')).toHaveTextContent('signedInVaultLocked');
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal,Work');
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Locked vault,Locked vault');
   });
 
   it('adopts a pre-account registry, then merges the server list and drops vaults it no longer has', async () => {
@@ -259,9 +260,10 @@ describe('account gate', () => {
     await renderProbe();
     expect(localStorage.getItem('cortex_vaults')).toBeNull();
     expect(localStorage.getItem('cortex_vault_id')).toBeNull();
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Photos');
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Locked vault');
     expect(storedRegistry()).toHaveLength(1);
-    expect(storedRegistry()[0]).toMatchObject({ vaultId: 'v1', name: 'Photos', currentVmkVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).toMatchObject({ vaultId: 'v1', currentVmkVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).not.toHaveProperty('name');
     expect(storedRegistry()[0]).not.toHaveProperty('vaultSalt');
     expect(localStorage.getItem('cortex_vault_id:u1')).toBeNull(); // pointed at the dropped vault
   });
@@ -269,7 +271,7 @@ describe('account gate', () => {
   it('logout clears the in-memory vaults but keeps the registry; another account sees none of them', async () => {
     localStorage.setItem('cortex_vaults:u1', JSON.stringify([{ vaultId: 'v1', name: 'Personal' }]));
     const view = await renderProbe();
-    expect(screen.getByTestId('vaults')).toHaveTextContent('Personal');
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Locked vault');
     await act(async () => {
       screen.getByText('logout').click();
     });
@@ -321,11 +323,12 @@ describe('setupVault', () => {
     expect(decryptCollectionName(fields.encryptedName, deriveKeys(VMK).metadataEncryptionKey)).toBe('Family');
     expect(storedRegistry()[0]).toMatchObject({
       vaultId: 'v1',
-      name: 'Family',
       encryptedName: bytesToBase64(fields.encryptedName),
       currentVmkVersion: 1,
       rotationState: 'IDLE',
     });
+    expect(storedRegistry()[0]).not.toHaveProperty('name');
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Family');
     expect(storedRegistry()[0]).not.toHaveProperty('vaultSalt');
   });
 
@@ -398,7 +401,8 @@ describe('unlockVault', () => {
       screen.getByText('unlock').click();
     });
     expect(screen.getByTestId('vaults')).toHaveTextContent('Family');
-    expect(storedRegistry()[0]).toMatchObject({ name: 'Family', currentVmkVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).not.toHaveProperty('name');
   });
 });
 
@@ -415,7 +419,9 @@ describe('renameVault', () => {
     const [vaultId, fields] = api.updateVault.mock.calls[0] as [string, { encryptedName: Uint8Array }];
     expect(vaultId).toBe('v1');
     expect(decryptCollectionName(fields.encryptedName, keys.metadataEncryptionKey)).toBe('Work');
-    expect(storedRegistry()[0]).toMatchObject({ name: 'Work', encryptedName: bytesToBase64(fields.encryptedName) });
+    expect(storedRegistry()[0]).toMatchObject({ encryptedName: bytesToBase64(fields.encryptedName) });
+    expect(storedRegistry()[0]).not.toHaveProperty('name');
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Work');
   });
 
   it('rejects a locked vault without calling the server', async () => {
@@ -456,6 +462,21 @@ describe('vault registry integration', () => {
     expect(document.title).toBe('unlocked');
     expect(localStorage.getItem('cortex_vault_id:u1')).toBe('v9');
     expect(Number(screen.getByTestId('version').textContent)).toBe(versionBefore + 1);
+  });
+
+  it('switchVault reveals a name encrypted under the device keys', async () => {
+    const keys = deriveKeys(VMK);
+    const encryptedName = await encryptCollectionName('Family', keys.metadataEncryptionKey);
+    localStorage.setItem(
+      'cortex_vaults:u1',
+      JSON.stringify([{ vaultId: 'v9', encryptedName: bytesToBase64(encryptedName) }]),
+    );
+    vi.mocked(retrieveKeys).mockResolvedValueOnce(keys as never);
+    await renderProbe();
+    await act(async () => {
+      await sessionRef.current!.switchVault('v9');
+    });
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Family');
   });
 });
 
@@ -553,7 +574,9 @@ describe('rotateEncryptionKeys', () => {
     expect(release.action).toBe('RELEASE');
     expect(decryptCollectionName(release.newEncryptedName, deriveKeys(VMK_NEW).metadataEncryptionKey)).toBe('Holiday');
     expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK_NEW));
-    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 2, rotationState: 'IDLE', name: 'Holiday' });
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 2, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).not.toHaveProperty('name');
+    expect(screen.getByTestId('vaults')).toHaveTextContent('Holiday');
     expect(screen.getByTestId('rotation-interrupted')).toHaveTextContent('false');
   });
 
@@ -707,7 +730,8 @@ describe('recoverVault', () => {
     expect(unwrapVmk(envelopes[0].wrappedVmk, wrapKey('newpw'))).toEqual(VMK);
     expect(vi.mocked(storeKeys)).toHaveBeenCalledWith('v1', deriveKeys(VMK));
     expect(screen.getByTestId('status')).toHaveTextContent('unlocked');
-    expect(storedRegistry()[0]).toMatchObject({ name: 'Family', currentVmkVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).toMatchObject({ currentVmkVersion: 1, rotationState: 'IDLE' });
+    expect(storedRegistry()[0]).not.toHaveProperty('name');
   });
 
   it('refuses while rotationState is not IDLE', async () => {

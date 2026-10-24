@@ -1,6 +1,6 @@
 import { DropdownMenu, type DropdownMenuOption } from '@astryxdesign/core/DropdownMenu';
 import { useSession } from '../auth/SessionContext';
-import type { VaultEntry } from '../vault/registry';
+import { vaultLabel, type VaultEntry } from '../vault/registry';
 
 // Sidebar control for the active vault. Vaults already unlocked on this device switch
 // instantly; locked ones hand off to the parent, which opens UnlockVaultDialog.
@@ -14,7 +14,7 @@ export default function VaultSwitcher({
   onManage: () => void;
 }) {
   const { vaults, activeVault, switchVault } = useSession();
-  const current = activeVault?.name ?? 'Vault';
+  const current = activeVault ? vaultLabel(activeVault) : 'Vault';
 
   async function pick(v: VaultEntry) {
     if (v.vaultId === activeVault?.vaultId) return;
@@ -24,7 +24,7 @@ export default function VaultSwitcher({
   const items: DropdownMenuOption[] = [
     ...vaults.map<DropdownMenuOption>((v) => ({
       id: v.vaultId,
-      label: v.name,
+      label: vaultLabel(v),
       description: v.vaultId === activeVault?.vaultId ? 'Open' : undefined,
       onClick: () => void pick(v),
     })),

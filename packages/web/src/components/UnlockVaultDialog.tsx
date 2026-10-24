@@ -9,7 +9,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { VStack } from '@astryxdesign/core/VStack';
 import { HStack } from '@astryxdesign/core/HStack';
 import { useSession } from '../auth/SessionContext';
-import type { VaultEntry } from '../vault/registry';
+import { vaultLabel, type VaultEntry } from '../vault/registry';
 import { useAsyncAction } from './common/useAsyncAction';
 
 const FORM_ID = 'unlock-vault-form';
@@ -38,7 +38,7 @@ export default function UnlockVaultDialog({
     <Dialog isOpen onOpenChange={(open) => !open && onClose()} purpose="form">
       <Layout
         height="auto"
-        header={<DialogHeader title={`Unlock ${vault.name}`} onOpenChange={() => onClose()} />}
+        header={<DialogHeader title={`Unlock ${vaultLabel(vault)}`} onOpenChange={() => onClose()} />}
         content={
           <LayoutContent>
             <form id={FORM_ID} onSubmit={onSubmit}>

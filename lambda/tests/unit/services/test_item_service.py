@@ -136,14 +136,12 @@ class TestCreateItem:
 
         assert response.item_id is not None
 
-    def test_create_task_item_with_date_bucket(self, item_service, dynamodb_stubber):
-        """Test creating a TASK item with date bucket."""
+    def test_create_item_has_no_date_bucket_attributes(self, item_service, dynamodb_stubber):
+        """The item schema has no plaintext time bucket or encrypted date bucket."""
         request = CreateItemRequestContent(
             vault_id="vault-123",
             encrypted_content=base64.b64encode(b"encrypted-task-content"),
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
-            encrypted_date_bucket=base64.b64encode(b"encrypted-bucket"),
-            time_bucket="2026-01-24T14:00",
         )
 
         dynamodb_stubber.add_response(
