@@ -431,7 +431,6 @@ class CollectionService:
             "SK": f"ITEM#{item_id}",
             "collection_id": collection_id,
             "item_id": item_id,
-            "item_type": item["item_type"],  # Store item type for efficient lookups
             "vault_id": vault_id,
             "user_id": user_id,
             "added_at": int(now.timestamp()),

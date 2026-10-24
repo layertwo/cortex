@@ -37,16 +37,13 @@ export interface RotateItemsArgs {
   onProgress?: (done: number, total: number) => void;
 }
 
-// MEDIA items still wrapped under an older KEK generation than `targetDekVersion`. The sweep
+// Blob items still wrapped under an older KEK generation than `targetDekVersion`. The sweep
 // is complete (and RELEASE may fire) only when this is empty. Mirrors rotateItems' skip rule:
 // an item missing its wrappedDek/encryptedMetadata cannot be re-keyed, so it is not a straggler.
+// Selection is by key material, not a server-asserted type.
 export function stragglers(items: ItemData[], targetDekVersion: number): ItemData[] {
   return items.filter(
-    (it) =>
-      it.itemType === 'MEDIA' &&
-      (it.dekVersion ?? 0) < targetDekVersion &&
-      it.wrappedDek &&
-      it.encryptedMetadata,
+    (it) => (it.dekVersion ?? 0) < targetDekVersion && it.wrappedDek && it.encryptedMetadata,
   );
 }
 

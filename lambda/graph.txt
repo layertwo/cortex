@@ -1,0 +1,422 @@
+%% cgg: &lt;framework-entry&gt; nodes are SYNTHESIZED. No call to them exists
+%% in your source; they represent control entering from a framework.
+%% BEST EFFORT — see the coverage table for what cgg did and did not recognise.
+flowchart LR
+  C0["src.api.routes.base_route.BaseRoute.register"]
+  C1["src.api.routes.collections._collection_fields"]
+  C2["src.api.routes.collections.CreateCollectionRoute.__init__"]
+  C3["src.api.routes.collections.CreateCollectionRoute.register"]
+  C4["src.api.routes.collections.CreateCollectionRoute.register.handle"]
+  C5["src.api.routes.collections.ListCollectionsRoute.__init__"]
+  C6["src.api.routes.collections.ListCollectionsRoute.register"]
+  C7["src.api.routes.collections.ListCollectionsRoute.register.handle"]
+  C8["src.api.routes.collections.GetCollectionRoute.__init__"]
+  C9["src.api.routes.collections.GetCollectionRoute.register"]
+  C10["src.api.routes.collections.GetCollectionRoute.register.handle"]
+  C11["src.api.routes.collections.UpdateCollectionRoute.__init__"]
+  C12["src.api.routes.collections.UpdateCollectionRoute.register"]
+  C13["src.api.routes.collections.UpdateCollectionRoute.register.handle"]
+  C14["src.api.routes.collections.DeleteCollectionRoute.__init__"]
+  C15["src.api.routes.collections.DeleteCollectionRoute.register"]
+  C16["src.api.routes.collections.DeleteCollectionRoute.register.handle"]
+  C17["src.api.routes.collections.AddItemToCollectionRoute.__init__"]
+  C18["src.api.routes.collections.AddItemToCollectionRoute.register"]
+  C19["src.api.routes.collections.AddItemToCollectionRoute.register.handle"]
+  C20["src.api.routes.collections.RemoveItemFromCollectionRoute.__init__"]
+  C21["src.api.routes.collections.RemoveItemFromCollectionRoute.register"]
+  C22["src.api.routes.collections.RemoveItemFromCollectionRoute.register.handle"]
+  C23["src.api.routes.items._item_fields"]
+  C24["src.api.routes.items.CreateItemRoute.__init__"]
+  C25["src.api.routes.items.CreateItemRoute.register"]
+  C26["src.api.routes.items.CreateItemRoute.register.handle"]
+  C27["src.api.routes.items.InitiateUploadRoute.__init__"]
+  C28["src.api.routes.items.InitiateUploadRoute.register"]
+  C29["src.api.routes.items.InitiateUploadRoute.register.handle"]
+  C30["src.api.routes.items.CompleteUploadRoute.__init__"]
+  C31["src.api.routes.items.CompleteUploadRoute.register"]
+  C32["src.api.routes.items.CompleteUploadRoute.register.handle"]
+  C33["src.api.routes.items.CreateUploadPartUrlsRoute.__init__"]
+  C34["src.api.routes.items.CreateUploadPartUrlsRoute.register"]
+  C35["src.api.routes.items.CreateUploadPartUrlsRoute.register.handle"]
+  C36["src.api.routes.items.AbortItemUploadRoute.__init__"]
+  C37["src.api.routes.items.AbortItemUploadRoute.register"]
+  C38["src.api.routes.items.AbortItemUploadRoute.register.handle"]
+  C39["src.api.routes.items.ListItemsRoute.__init__"]
+  C40["src.api.routes.items.ListItemsRoute.register"]
+  C41["src.api.routes.items.ListItemsRoute.register.handle"]
+  C42["src.api.routes.items.GetItemRoute.__init__"]
+  C43["src.api.routes.items.GetItemRoute.register"]
+  C44["src.api.routes.items.GetItemRoute.register.handle"]
+  C45["src.api.routes.items.UpdateItemRoute.__init__"]
+  C46["src.api.routes.items.UpdateItemRoute.register"]
+  C47["src.api.routes.items.UpdateItemRoute.register.handle"]
+  C48["src.api.routes.items.DeleteItemRoute.__init__"]
+  C49["src.api.routes.items.DeleteItemRoute.register"]
+  C50["src.api.routes.items.DeleteItemRoute.register.handle"]
+  C51["src.api.routes.items.DownloadItemRoute.__init__"]
+  C52["src.api.routes.items.DownloadItemRoute.register"]
+  C53["src.api.routes.items.DownloadItemRoute.register.handle"]
+  C54["src.api.routes.items.SearchItemsRoute.__init__"]
+  C55["src.api.routes.items.SearchItemsRoute.register"]
+  C56["src.api.routes.items.SearchItemsRoute.register.handle"]
+  C57["src.api.routes.shares.CreateShareRoute.__init__"]
+  C58["src.api.routes.shares.CreateShareRoute.register"]
+  C59["src.api.routes.shares.CreateShareRoute.register.handle"]
+  C60["src.api.routes.shares.GetShareRoute.__init__"]
+  C61["src.api.routes.shares.GetShareRoute.register"]
+  C62["src.api.routes.shares.GetShareRoute.register.handle"]
+  C63["src.api.routes.shares.RevokeShareRoute.__init__"]
+  C64["src.api.routes.shares.RevokeShareRoute.register"]
+  C65["src.api.routes.shares.RevokeShareRoute.register.handle"]
+  C66["src.api.routes.tags._tag_item_data"]
+  C67["src.api.routes.tags.SearchTagsRoute.__init__"]
+  C68["src.api.routes.tags.SearchTagsRoute.register"]
+  C69["src.api.routes.tags.SearchTagsRoute.register.handle"]
+  C70["src.api.routes.vaults.CreateVaultRoute.__init__"]
+  C71["src.api.routes.vaults.CreateVaultRoute.register"]
+  C72["src.api.routes.vaults.CreateVaultRoute.register.handle"]
+  C73["src.api.routes.vaults.GetVaultSaltRoute.__init__"]
+  C74["src.api.routes.vaults.GetVaultSaltRoute.register"]
+  C75["src.api.routes.vaults.GetVaultSaltRoute.register.handle"]
+  C76["src.api.routes.vaults.GetVaultRoute.__init__"]
+  C77["src.api.routes.vaults.GetVaultRoute.register"]
+  C78["src.api.routes.vaults.GetVaultRoute.register.handle"]
+  C79["src.api.routes.vaults.UpdateVaultRotationRoute.__init__"]
+  C80["src.api.routes.vaults.UpdateVaultRotationRoute.register"]
+  C81["src.api.routes.vaults.UpdateVaultRotationRoute.register.handle"]
+  C82["src.api.services.collection_service.CollectionService.__init__"]
+  C83["src.api.services.collection_service.CollectionService.create_collection"]
+  C84["src.api.services.collection_service.CollectionService.list_collections"]
+  C85["src.api.services.collection_service.CollectionService.get_collection"]
+  C86["src.api.services.collection_service.CollectionService.update_collection"]
+  C87["src.api.services.collection_service.CollectionService.delete_collection"]
+  C88["src.api.services.collection_service.CollectionService.add_item_to_collection"]
+  C89["src.api.services.collection_service.CollectionService.remove_item_from_collection"]
+  C90["src.api.services.collection_service.CollectionService.get_items_in_collection"]
+  C91["src.api.services.collection_service.CollectionService.get_collections_for_item"]
+  C92["src.api.services.item_service.ItemService.__init__"]
+  C93["src.api.services.item_service.ItemService.create_item"]
+  C94["src.api.services.item_service.ItemService.initiate_upload"]
+  C95["src.api.services.item_service.ItemService.create_upload_part_urls"]
+  C96["src.api.services.item_service.ItemService.abort_upload"]
+  C97["src.api.services.item_service.ItemService.complete_upload"]
+  C98["src.api.services.item_service.ItemService.cleanup_failed_upload"]
+  C99["src.api.services.item_service.ItemService.list_items"]
+  C100["src.api.services.item_service.ItemService.get_item"]
+  C101["src.api.services.item_service.ItemService.update_item"]
+  C102["src.api.services.item_service.ItemService._reconcile_tag_rows"]
+  C103["src.api.services.item_service.ItemService.get_download_url"]
+  C104["src.api.services.item_service.ItemService.delete_item"]
+  C105["src.api.services.item_service.ItemService._delete_media_item"]
+  C106["src.api.services.item_service.ItemService._delete_inline_item"]
+  C107["src.api.services.item_service.ItemService._delete_tag_index_rows"]
+  C108["src.api.services.item_service.ItemService.search_by_tag"]
+  C109["src.api.services.share_service.ShareService.__init__"]
+  C110["src.api.services.share_service.ShareService.create_share"]
+  C111["src.api.services.share_service.ShareService.get_share"]
+  C112["src.api.services.share_service.ShareService.revoke_share"]
+  C113["src.api.services.share_service.ShareService._check_rate_limit"]
+  C114["src.api.services.vault_service.VaultService.__init__"]
+  C115["src.api.services.vault_service.VaultService.create_vault"]
+  C116["src.api.services.vault_service.VaultService.get_vault_salt"]
+  C117["src.api.services.vault_service.VaultService.vault_exists"]
+  C118["src.api.services.vault_service.VaultService.list_user_vaults"]
+  C119["src.api.services.vault_service.VaultService.get_vault"]
+  C120["src.api.services.vault_service.VaultService.update_vault_rotation"]
+  C121["src.entrypoint.api.handler"]
+  C122["src.entrypoint.container.main"]
+  C123["src.environment.service_provider._error_body"]
+  C124["src.environment.service_provider.SecurityHeadersMiddleware.dispatch"]
+  C125["src.environment.service_provider.create_service_provider"]
+  C126["src.environment.service_provider.lambda_entrypoint"]
+  C127["src.environment.service_provider.lambda_entrypoint.wrapper"]
+  C128["src.environment.service_provider.ServiceProvider.aws_region"]
+  C129["src.environment.service_provider.ServiceProvider.session"]
+  C130["src.environment.service_provider.ServiceProvider.vaults_table_name"]
+  C131["src.environment.service_provider.ServiceProvider.items_table_name"]
+  C132["src.environment.service_provider.ServiceProvider.collections_table_name"]
+  C133["src.environment.service_provider.ServiceProvider.shares_table_name"]
+  C134["src.environment.service_provider.ServiceProvider.files_bucket_name"]
+  C135["src.environment.service_provider.ServiceProvider.s3_client"]
+  C136["src.environment.service_provider.ServiceProvider.vault_service"]
+  C137["src.environment.service_provider.ServiceProvider.item_service"]
+  C138["src.environment.service_provider.ServiceProvider.collection_service"]
+  C139["src.environment.service_provider.ServiceProvider.share_service"]
+  C140["src.environment.service_provider.ServiceProvider.app"]
+  C141["src.environment.service_provider.ServiceProvider.app.cortex_error_handler"]
+  C142["src.environment.service_provider.ServiceProvider.app.unhandled_error_handler"]
+  C143["src.environment.service_provider.ServiceProvider.app.health"]
+  C144["src.environment.service_provider.ServiceProvider.handler"]
+  C145["src.shared.auth.extract_user_id"]
+  C146["src.shared.auth.get_current_user"]
+  C147["src.shared.exceptions.CortexError.__init__"]
+  C148["src.shared.exceptions.ShareRevokedError.__init__"]
+  C149["src.shared.exceptions.ShareExpiredError.__init__"]
+  C150["src.shared.exceptions.ConflictError.__init__"]
+  C151["src.shared.exceptions.RateLimitExceededError.__init__"]
+  C152["src.shared.logger.get_logger"]
+  C153["src.shared.models.CreateItemRequest.validate_item_type"]
+  C154["src.shared.models.ListItemsRequest.validate_sort_order"]
+  C155["src.shared.models.ListItemsRequest.validate_item_type"]
+  C156["src.shared.models.ListMediaRequest.validate_sort_order"]
+  C157["src.shared.models.CreateVaultRequest.decode_vault_salt"]
+  C158["src.shared.models.GetVaultSaltResponse.serialize_vault_salt"]
+  C159["src.shared.repository.DynamoDBRepository.__init__"]
+  C160["src.shared.repository.DynamoDBRepository.get_item"]
+  C161["src.shared.repository.DynamoDBRepository.put_item"]
+  C162["src.shared.repository.DynamoDBRepository.update_item"]
+  C163["src.shared.repository.DynamoDBRepository.update_item_conditional"]
+  C164["src.shared.repository.DynamoDBRepository.delete_item"]
+  C165["src.shared.repository.DynamoDBRepository.transact_write_items"]
+  C166["src.shared.repository.DynamoDBRepository.batch_get_items"]
+  C167["src.shared.repository.DynamoDBRepository.query"]
+  C168["src.shared.repository.S3Repository.__init__"]
+  C169["src.shared.repository.S3Repository.generate_upload_url"]
+  C170["src.shared.repository.S3Repository.generate_download_url"]
+  C171["src.shared.repository.S3Repository.generate_multipart_upload_url"]
+  C172["src.shared.repository.S3Repository.initiate_multipart_upload"]
+  C173["src.shared.repository.S3Repository.abort_multipart_upload"]
+  C174["src.shared.repository.S3Repository.complete_multipart_upload"]
+  C175["src.shared.repository.S3Repository.delete_object"]
+  C176["src.shared.repository.S3Repository.object_exists"]
+  C177["src.shared.repository.S3Repository.get_object_metadata"]
+  C178["src.shared.repository.build_s3_key"]
+  C179["src.shared.repository.parse_pagination_token"]
+  C180["src.shared.repository.encode_pagination_token"]
+  C181["src.shared.util._encode_binary"]
+  C182["src.shared.util._decode_binary"]
+  C183["&lt;framework-entry&gt;::network::fastapi::post('/v1/collections') ⟨framework entry callback⟩"]
+  C184["&lt;framework-entry&gt;::network::fastapi::get('/v1/collections') ⟨framework entry callback⟩"]
+  C185["&lt;framework-entry&gt;::network::fastapi::get('/v1/collections/{collection_id}') ⟨framework entry callback⟩"]
+  C186["&lt;framework-entry&gt;::network::fastapi::put('/v1/collections/{collection_id}') ⟨framework entry callback⟩"]
+  C187["&lt;framework-entry&gt;::network::fastapi::delete('/v1/collections/{collection_id}') ⟨framework entry callback⟩"]
+  C188["&lt;framework-entry&gt;::network::fastapi::post('/v1/collections/{collection_id}/items') ⟨framework entry callback⟩"]
+  C189["&lt;framework-entry&gt;::network::fastapi::delete('/v1/collections/{collection_id}/items/{item_id}') ⟨framework entry callback⟩"]
+  C190["&lt;framework-entry&gt;::network::fastapi::post('/v1/items') ⟨framework entry callback⟩"]
+  C191["&lt;framework-entry&gt;::network::fastapi::post('/v1/items/upload/init') ⟨framework entry callback⟩"]
+  C192["&lt;framework-entry&gt;::network::fastapi::post('/v1/items/{item_id}/upload/complete') ⟨framework entry callback⟩"]
+  C193["&lt;framework-entry&gt;::network::fastapi::post('/v1/items/{item_id}/upload/parts') ⟨framework entry callback⟩"]
+  C194["&lt;framework-entry&gt;::network::fastapi::post('/v1/items/{item_id}/upload/abort') ⟨framework entry callback⟩"]
+  C195["&lt;framework-entry&gt;::network::fastapi::get('/v1/items') ⟨framework entry callback⟩"]
+  C196["&lt;framework-entry&gt;::network::fastapi::get('/v1/items/{item_id}') ⟨framework entry callback⟩"]
+  C197["&lt;framework-entry&gt;::network::fastapi::put('/v1/items/{item_id}') ⟨framework entry callback⟩"]
+  C198["&lt;framework-entry&gt;::network::fastapi::delete('/v1/items/{item_id}') ⟨framework entry callback⟩"]
+  C199["&lt;framework-entry&gt;::network::fastapi::get('/v1/items/{item_id}/download') ⟨framework entry callback⟩"]
+  C200["&lt;framework-entry&gt;::network::fastapi::post('/v1/items/search') ⟨framework entry callback⟩"]
+  C201["&lt;framework-entry&gt;::network::fastapi::post('/v1/shares') ⟨framework entry callback⟩"]
+  C202["&lt;framework-entry&gt;::network::fastapi::get('/v1/shares/{share_id}') ⟨framework entry callback⟩"]
+  C203["&lt;framework-entry&gt;::network::fastapi::delete('/v1/shares/{share_id}') ⟨framework entry callback⟩"]
+  C204["&lt;framework-entry&gt;::network::fastapi::get('/v1/tags/search') ⟨framework entry callback⟩"]
+  C205["&lt;framework-entry&gt;::network::fastapi::post('/v1/vaults') ⟨framework entry callback⟩"]
+  C206["&lt;framework-entry&gt;::network::fastapi::get('/v1/vaults/{vault_id}/salt') ⟨framework entry callback⟩"]
+  C207["&lt;framework-entry&gt;::network::fastapi::get('/v1/vaults/{vault_id}') ⟨framework entry callback⟩"]
+  C208["&lt;framework-entry&gt;::network::fastapi::post('/v1/vaults/{vault_id}/rotation') ⟨framework entry callback⟩"]
+  C209["&lt;framework-entry&gt;::network::fastapi::src.environment.service_provider.ServiceProvider.app.cortex_error_handler ⟨framework entry callback⟩"]
+  C210["&lt;framework-entry&gt;::network::fastapi::src.environment.service_provider.ServiceProvider.app.unhandled_error_handler ⟨framework entry callback⟩"]
+  C211["&lt;framework-entry&gt;::network::fastapi::get('/health') ⟨framework entry callback⟩"]
+  C7 --> C1
+  C10 --> C1
+  C41 --> C23
+  C44 --> C23
+  C69 --> C66
+  C86 --> C85
+  C87 --> C85
+  C88 --> C85
+  C89 --> C85
+  C90 --> C85
+  C101 --> C102
+  C104 --> C105
+  C104 --> C106
+  C105 --> C107
+  C106 --> C107
+  C111 --> C113
+  C115 --> C115
+  C127 --> C125
+  C141 --> C123
+  C142 --> C123
+  C146 --> C145
+  C1 --> C181
+  C4 --> C117
+  C4 --> C83
+  C7 --> C117
+  C7 --> C84
+  C10 --> C117
+  C10 --> C85
+  C13 --> C117
+  C13 --> C86
+  C16 --> C117
+  C16 --> C87
+  C19 --> C117
+  C19 --> C88
+  C22 --> C117
+  C22 --> C89
+  C23 -->|5x| C181
+  C26 --> C93
+  C29 --> C94
+  C32 --> C97
+  C35 --> C95
+  C38 --> C96
+  C41 --> C117
+  C41 --> C99
+  C44 --> C100
+  C44 --> C160
+  C47 --> C101
+  C47 --> C162
+  C50 --> C104
+  C50 --> C164
+  C53 --> C103
+  C59 --> C110
+  C62 --> C111
+  C65 --> C112
+  C66 -->|3x| C181
+  C69 --> C117
+  C69 --> C108
+  C72 --> C115
+  C75 --> C116
+  C78 --> C119
+  C81 --> C120
+  C83 --> C161
+  C84 --> C179
+  C84 --> C167
+  C84 --> C180
+  C85 --> C100
+  C85 --> C160
+  C86 --> C101
+  C86 --> C162
+  C87 --> C167
+  C87 -->|2x| C104
+  C87 -->|2x| C164
+  C88 --> C100
+  C88 --> C160
+  C88 --> C161
+  C88 --> C101
+  C88 --> C162
+  C89 --> C100
+  C89 --> C160
+  C89 --> C104
+  C89 --> C164
+  C89 --> C101
+  C89 --> C162
+  C90 --> C179
+  C90 --> C167
+  C90 --> C180
+  C91 --> C179
+  C91 --> C167
+  C91 --> C180
+  C93 --> C165
+  C93 --> C161
+  C94 --> C178
+  C94 --> C172
+  C94 --> C171
+  C94 --> C169
+  C94 --> C161
+  C95 --> C100
+  C95 --> C160
+  C95 --> C171
+  C96 --> C100
+  C96 --> C160
+  C96 --> C173
+  C96 --> C104
+  C96 --> C164
+  C97 --> C100
+  C97 --> C160
+  C97 --> C174
+  C97 --> C177
+  C97 --> C173
+  C97 -->|2x| C104
+  C97 -->|2x| C164
+  C97 --> C163
+  C97 --> C176
+  C98 --> C173
+  C98 --> C175
+  C98 --> C104
+  C98 --> C164
+  C99 --> C179
+  C99 --> C167
+  C99 --> C180
+  C100 --> C160
+  C101 --> C100
+  C101 --> C160
+  C101 --> C163
+  C101 --> C162
+  C102 --> C104
+  C102 --> C164
+  C102 --> C161
+  C103 --> C100
+  C103 --> C160
+  C103 --> C176
+  C103 --> C170
+  C104 --> C100
+  C104 --> C160
+  C105 -->|3x| C104
+  C105 -->|3x| C164
+  C105 --> C173
+  C105 --> C175
+  C106 --> C104
+  C106 --> C164
+  C107 --> C104
+  C107 --> C164
+  C108 --> C179
+  C108 --> C167
+  C108 --> C166
+  C108 --> C180
+  C110 --> C100
+  C110 --> C160
+  C110 --> C161
+  C111 -->|2x| C100
+  C111 -->|2x| C160
+  C111 --> C170
+  C111 --> C101
+  C111 --> C162
+  C111 --> C181
+  C112 --> C100
+  C112 --> C160
+  C112 --> C101
+  C112 --> C162
+  C113 -->|2x| C101
+  C113 -->|2x| C162
+  C115 --> C161
+  C116 --> C100
+  C116 --> C160
+  C117 --> C100
+  C117 --> C160
+  C118 --> C167
+  C119 --> C100
+  C119 --> C160
+  C120 --> C101
+  C120 --> C162
+  C121 --> C144
+  C160 --> C100
+  C162 --> C101
+  C163 --> C101
+  C163 --> C162
+  C164 --> C104
+  C183 -->|entry| C4
+  C184 -->|entry| C7
+  C185 -->|entry| C10
+  C186 -->|entry| C13
+  C187 -->|entry| C16
+  C188 -->|entry| C19
+  C189 -->|entry| C22
+  C190 -->|entry| C26
+  C191 -->|entry| C29
+  C192 -->|entry| C32
+  C193 -->|entry| C35
+  C194 -->|entry| C38
+  C195 -->|entry| C41
+  C196 -->|entry| C44
+  C197 -->|entry| C47
+  C198 -->|entry| C50
+  C199 -->|entry| C53
+  C200 -->|entry| C56
+  C201 -->|entry| C59
+  C202 -->|entry| C62
+  C203 -->|entry| C65
+  C204 -->|entry| C69
+  C205 -->|entry| C72
+  C206 -->|entry| C75
+  C207 -->|entry| C78
+  C208 -->|entry| C81
+  C209 -->|entry| C141
+  C210 -->|entry| C142
+  C211 -->|entry| C143

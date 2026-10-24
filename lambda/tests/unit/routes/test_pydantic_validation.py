@@ -15,7 +15,6 @@ class TestPydanticValidationErrorHandling:
             "/v1/items",
             json={
                 "vault_id": "vault-123",
-                "item_type": "NOTE",
                 "encrypted_content": 12345,  # Invalid type (should be string)
                 "encrypted_metadata": "ZW5jcnlwdGVkLW1ldGFkYXRh",
             },
@@ -30,7 +29,7 @@ class TestPydanticValidationErrorHandling:
             "/v1/items",
             json={
                 "vault_id": "vault-123",
-                # Missing item_type, encrypted_content, encrypted_metadata
+                # Missing encrypted_content and encrypted_metadata
             },
         )
 

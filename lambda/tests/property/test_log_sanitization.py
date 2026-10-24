@@ -268,7 +268,7 @@ class TestRuntimeLogCapture:
                     "item_id": {"S": item_id},
                     "user_id": {"S": user_id},
                     "vault_id": {"S": "vault-1"},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "s3_key": {"S": f"vaults/vault-1/files/{item_id}/blob"},
                     "encrypted_metadata": {"B": b"opaque"},
                 }

@@ -20,7 +20,7 @@ from src.api.routes.base_route import BaseRoute
 from src.api.services.item_service import ItemService
 from src.api.services.vault_service import VaultService
 from src.shared.auth import get_current_user
-from src.shared.exceptions import BadRequestError, NotFoundError
+from src.shared.exceptions import NotFoundError
 from src.shared.generated.models import (
     AbortItemUploadRequestContent,
     AbortItemUploadResponseContent,
@@ -36,7 +36,6 @@ from src.shared.generated.models import (
     InitiateItemUploadRequestContent,
     InitiateItemUploadResponseContent,
     ItemData,
-    ItemType,
     ListItemsResponseContent,
     UpdateItemRequestContent,
     UpdateItemResponseContent,
@@ -70,7 +69,6 @@ def _item_fields(item: dict) -> dict:
     return {
         "item_id": item["item_id"],
         "vault_id": item["vault_id"],
-        "item_type": item["item_type"],
         "encrypted_content": _encode_binary(item.get("encrypted_content")),
         "encrypted_metadata": _encode_binary(item["encrypted_metadata"]),
         "encrypted_tags": [_encode_binary(t) for t in tags] if tags else None,
@@ -116,7 +114,6 @@ class CreateItemRoute(BaseRoute):
             logger.info(
                 "Item created successfully",
                 item_id=response.item_id,
-                item_type=response.item_type,
             )
 
             return response
@@ -251,35 +248,25 @@ class ListItemsRoute(BaseRoute):
         @app.get("/v1/items", response_model=ListItemsResponseContent)
         def handle(
             vault_id: str = Query(..., alias="vaultId", description="Vault ID"),
-            item_type: str | None = Query(None, alias="itemType"),
             page_size: int = Query(50, alias="pageSize", ge=1, le=100),
             next_token: str | None = Query(None, alias="nextToken"),
             sort_order: str = Query("desc", alias="sortOrder", pattern="^(asc|desc)$"),
             user_id: str = Depends(get_current_user),
         ):
             """
-            List items (filter by type), returning encrypted metadata only.
+            List items, returning encrypted metadata only.
 
             The server cannot decrypt the returned data. Vault ownership is
             verified before listing (deny by default).
 
             Requirements: 2.3, 10.1, 10.2, 24.1, 24.2
             """
-            if item_type and item_type not in (
-                ItemType.media,
-                ItemType.note,
-                ItemType.task,
-                ItemType.event,
-            ):
-                raise BadRequestError("item_type must be MEDIA, NOTE, TASK, or EVENT")
-
             # Verify vault ownership BEFORE listing items - deny by default
             _require_vault(self.vault_service, user_id, vault_id, "list_items")
 
             items, next_page_token = self.item_service.list_items(
                 user_id=user_id,
                 vault_id=vault_id,
-                item_type=item_type,
                 page_size=page_size,
                 next_token=next_token,
                 sort_order=sort_order,
@@ -290,7 +277,6 @@ class ListItemsRoute(BaseRoute):
             logger.info(
                 "Listed items successfully",
                 vault_id=vault_id,
-                item_type=item_type,
                 count=len(item_models),
             )
 
@@ -330,7 +316,6 @@ class GetItemRoute(BaseRoute):
             logger.info(
                 "Retrieved item successfully",
                 item_id=item_id,
-                item_type=item["item_type"],
             )
 
             return GetItemResponseContent(**_item_fields(item))

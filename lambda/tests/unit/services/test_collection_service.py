@@ -884,7 +884,7 @@ class TestAddItemToCollection:
                     "PK": {"S": f"ITEM#{item_id}"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": item_id},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": vault_id},
                     "user_id": {"S": user_id},
                     "encrypted_metadata": {"B": b"item-metadata"},
@@ -973,7 +973,7 @@ class TestAddItemToCollection:
                     "PK": {"S": f"ITEM#{item_id}"},
                     "SK": {"S": "METADATA"},
                     "item_id": {"S": item_id},
-                    "item_type": {"S": "MEDIA"},
+                    "storage_kind": {"S": "BLOB"},
                     "vault_id": {"S": vault_id},
                     "user_id": {"S": user_id},
                     "encrypted_metadata": {"B": b"item-metadata"},
@@ -1111,7 +1111,7 @@ class TestAddItemToCollectionAuthorization:
         service.items_repo.get_item = MagicMock(  # type: ignore[method-assign]
             return_value={
                 "item_id": "item-123",
-                "item_type": "MEDIA",
+                "storage_kind": "BLOB",
                 "vault_id": "vault-123",
                 "user_id": "different-user",  # Different user!
                 "upload_status": "COMPLETE",

@@ -32,7 +32,7 @@ from src.shared.generated.models import (
     UploadPartUrl,
 )
 from src.shared.logger import get_logger
-from src.shared.models import ItemType, SearchByTagResponse
+from src.shared.models import SearchByTagResponse, StorageKind
 from src.shared.repository import (
     DynamoDBRepository,
     S3Repository,
@@ -118,7 +118,7 @@ class ItemService:
             "PK": f"ITEM#{item_id}",
             "SK": "METADATA",  # Constant SK for items (PK-only design with required SK)
             "item_id": item_id,
-            "item_type": request.item_type,
+            "storage_kind": StorageKind.INLINE,
             "vault_id": request.vault_id,
             "user_id": user_id,
             "encrypted_content": request.encrypted_content,
@@ -138,11 +138,7 @@ class ItemService:
         if request.time_bucket:
             item["time_bucket"] = request.time_bucket
 
-        # Add GSI1 keys for type-based queries
-        item["GSI1PK"] = f"VAULT#{request.vault_id}#TYPE#{request.item_type}"
-        item["GSI1SK"] = f"ITEM#{item_id}"
-
-        # Add GSI2 keys for listing all items in vault (without type filter)
+        # Add GSI2 keys for listing all items in vault
         item["GSI2PK"] = f"VAULT#{request.vault_id}"
         item["GSI2SK"] = f"ITEM#{item_id}"
 
@@ -161,14 +157,13 @@ class ItemService:
             **{
                 "vault_id": request.vault_id,
                 "item_id": item_id,
-                "item_type": request.item_type,
+                "storage_kind": StorageKind.INLINE,
                 "tag_count": len(request.encrypted_tags) if request.encrypted_tags else 0,
             },
         )
 
         return CreateItemResponseContent(
             item_id=item_id,
-            item_type=request.item_type,
             created_at=int(now.timestamp()),
             version=1,
         )
@@ -245,7 +240,7 @@ class ItemService:
             "PK": f"ITEM#{item_id}",
             "SK": "METADATA",  # Constant SK for items (PK-only design with required SK)
             "item_id": item_id,
-            "item_type": ItemType.MEDIA,
+            "storage_kind": StorageKind.BLOB,
             "vault_id": request.vault_id,
             "user_id": user_id,
             "s3_key": s3_key,
@@ -274,11 +269,7 @@ class ItemService:
         if upload_id:
             item["upload_id"] = upload_id
 
-        # Add GSI1 keys for type-based queries
-        item["GSI1PK"] = f"VAULT#{request.vault_id}#TYPE#{ItemType.MEDIA}"
-        item["GSI1SK"] = f"ITEM#{item_id}"
-
-        # Add GSI2 keys for listing all items in vault (without type filter)
+        # Add GSI2 keys for listing all items in vault
         item["GSI2PK"] = f"VAULT#{request.vault_id}"
         item["GSI2SK"] = f"ITEM#{item_id}"
 
@@ -554,22 +545,20 @@ class ItemService:
         self,
         user_id: str,
         vault_id: str,
-        item_type: Optional[str] = None,
         page_size: int = 50,
         next_token: Optional[str] = None,
         sort_order: str = "desc",
     ) -> tuple[list[dict], Optional[str]]:
         """
-        List items with optional type filter and pagination.
+        List one page of a vault's items.
 
-        This method queries DynamoDB for user's encrypted metadata and supports
-        filtering by item type. All data returned is encrypted and cannot be
-        decrypted by the server.
+        All data returned is encrypted and cannot be decrypted by the server.
+        The logical item type lives inside encrypted metadata, so there is no
+        server-side type filter.
 
         Args:
             user_id: Authenticated user ID
             vault_id: Vault ID to list items from
-            item_type: Optional filter by item type (MEDIA, NOTE, TASK, EVENT)
             page_size: Number of items per page (1-100)
             next_token: Pagination token from previous response
             sort_order: Sort order ('asc' or 'desc')
@@ -584,23 +573,12 @@ class ItemService:
         # Parse pagination token
         exclusive_start_key = parse_pagination_token(next_token)
 
-        # Build query based on whether we're filtering by type
-        if item_type:
-            # Use GSI1 for type-based queries
-            key_condition_expression = "GSI1PK = :pk"
-            expression_attribute_values = {
-                ":pk": f"VAULT#{vault_id}#TYPE#{item_type}",
-                ":pending": "PENDING",
-            }
-            index_name = "GSI1"
-        else:
-            # Use GSI2 for listing all items in vault (without type filter)
-            key_condition_expression = "GSI2PK = :pk"
-            expression_attribute_values = {
-                ":pk": f"VAULT#{vault_id}",
-                ":pending": "PENDING",
-            }
-            index_name = "GSI2"
+        key_condition_expression = "GSI2PK = :pk"
+        expression_attribute_values = {
+            ":pk": f"VAULT#{vault_id}",
+            ":pending": "PENDING",
+        }
+        index_name = "GSI2"
 
         # Filter out PENDING uploads at query level (not application level)
         # This ensures consistent page sizes and reduces data transfer
@@ -627,7 +605,6 @@ class ItemService:
             "Listed items",
             **{
                 "vault_id": vault_id,
-                "item_type": item_type,
                 "count": len(items),
                 "has_more": next_page_token is not None,
             },
@@ -676,7 +653,7 @@ class ItemService:
             "Retrieved item",
             **{
                 "item_id": item_id,
-                "item_type": item.get("item_type"),
+                "storage_kind": item.get("storage_kind"),
             },
         )
 
@@ -823,16 +800,16 @@ class ItemService:
         if item["user_id"] != user_id:
             raise NotFoundError("Item not found")
 
-        # Verify item type is MEDIA
-        if item["item_type"] != ItemType.MEDIA:
+        # Only blob items have an S3 object to sign
+        if item.get("storage_kind") != StorageKind.BLOB:
             logger.warning(
-                "Item is not a MEDIA type",
+                "Item is not a blob",
                 **{
                     "item_id": item_id,
-                    "item_type": item["item_type"],
+                    "storage_kind": item.get("storage_kind"),
                 },
             )
-            raise BadRequestError("Download URL only available for MEDIA items")
+            raise BadRequestError("Download URL only available for blob items")
 
         # Verify upload is complete
         if item.get("upload_status") == "PENDING":
@@ -911,19 +888,17 @@ class ItemService:
         if item["user_id"] != user_id:
             raise NotFoundError("Item not found")
 
-        # Handle deletion based on item type
-        if item["item_type"] == ItemType.MEDIA:
-            # For MEDIA items: Delete S3 object and DynamoDB metadata atomically
+        # Blob items own an S3 object; inline items are the row only
+        if item.get("storage_kind") == StorageKind.BLOB:
             self._delete_media_item(user_id, item_id, item, key)
         else:
-            # For NOTE/TASK/EVENT items: Delete DynamoDB record only
             self._delete_inline_item(user_id, item_id, key, item)
 
         logger.info(
             "Item deleted successfully",
             **{
                 "item_id": item_id,
-                "item_type": item["item_type"],
+                "storage_kind": item.get("storage_kind"),
             },
         )
 
@@ -1182,7 +1157,6 @@ class ItemService:
 
             item_metadata = ItemMetadata(
                 item_id=item["item_id"],
-                item_type=item["item_type"],
                 vault_id=item["vault_id"],
                 user_id=item["user_id"],
                 encrypted_content=encrypted_content,
