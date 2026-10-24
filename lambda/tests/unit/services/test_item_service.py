@@ -22,7 +22,7 @@ from src.api.services.item_service import tag_index_key
 from src.shared.exceptions import BadRequestError, NotFoundError
 from src.shared.generated.models import (
     CreateItemRequestContent,
-    InitiateItemUploadRequestContent,
+    CreateItemUploadRequestContent,
     UpdateItemRequestContent,
 )
 
@@ -189,13 +189,13 @@ class TestCreateItem:
 
 
 class TestInitiateUpload:
-    """Tests for initiate_upload method (MEDIA items)."""
+    """Tests for create_item_upload method (MEDIA items)."""
 
     def test_initiate_small_file_upload(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test initiating upload for small file (<100MB)."""
-        request = InitiateItemUploadRequestContent(
+        request = CreateItemUploadRequestContent(
             vault_id="vault-123",
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             size_bytes=50 * 1024 * 1024,  # 50MB
@@ -208,7 +208,7 @@ class TestInitiateUpload:
             "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
         )
 
-        response = item_service.initiate_upload("user-123", request)
+        response = item_service.create_item_upload("user-123", request)
 
         assert response.item_id is not None
         assert response.upload_url is not None
@@ -220,7 +220,7 @@ class TestInitiateUpload:
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test initiating multipart upload for large file (>100MB)."""
-        request = InitiateItemUploadRequestContent(
+        request = CreateItemUploadRequestContent(
             vault_id="vault-123",
             encrypted_metadata=base64.b64encode(b"encrypted-metadata"),
             size_bytes=150 * 1024 * 1024,  # 150MB
@@ -247,14 +247,14 @@ class TestInitiateUpload:
             "put_item", {}, {"TableName": "test-items-table", "Item": ANY}
         )
 
-        response = item_service.initiate_upload("user-123", request)
+        response = item_service.create_item_upload("user-123", request)
 
         assert response.item_id is not None
         assert response.upload_url is not None
         assert response.s3_key is not None
 
-    def test_initiate_upload_persists_wrapped_dek(self, item_service):
-        """Verify initiate_upload stores wrapped_dek and dek_version on the DynamoDB item."""
+    def test_create_item_upload_persists_wrapped_dek(self, item_service):
+        """Verify create_item_upload stores wrapped_dek and dek_version on the DynamoDB item."""
         from unittest.mock import patch
 
         wrapped = bytes(range(97))
@@ -264,14 +264,14 @@ class TestInitiateUpload:
             captured["item"] = item
 
         with patch.object(item_service.items_repo, "put_item", side_effect=capture_put):
-            request = InitiateItemUploadRequestContent(
+            request = CreateItemUploadRequestContent(
                 vault_id="v1",
                 encrypted_metadata=base64.b64encode(b"meta"),
                 size_bytes=32,
                 wrapped_dek=base64.b64encode(wrapped),
                 dek_version=1,
             )
-            item_service.initiate_upload("user-1", request)
+            item_service.create_item_upload("user-1", request)
 
         stored = captured["item"]
         assert stored["wrapped_dek"] == wrapped
@@ -281,7 +281,7 @@ class TestInitiateUpload:
 class TestCompleteUpload:
     """Tests for method."""
 
-    def test_complete_upload_success(
+    def test_finalize_upload_success(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test successfully completing an upload."""
@@ -330,18 +330,18 @@ class TestCompleteUpload:
             },
         )
 
-        response = item_service.complete_upload("user-123", item_id)
+        response = item_service.finalize_upload("user-123", item_id)
 
         assert response.item_id == item_id
 
-    def test_complete_upload_item_not_found(self, item_service, dynamodb_stubber):
+    def test_finalize_upload_item_not_found(self, item_service, dynamodb_stubber):
         """Test completing upload when item doesn't exist."""
         dynamodb_stubber.add_response("get_item", {}, {"TableName": "test-items-table", "Key": ANY})
 
         with pytest.raises(NotFoundError):
-            item_service.complete_upload("user-123", "nonexistent-item")
+            item_service.finalize_upload("user-123", "nonexistent-item")
 
-    def test_complete_upload_unauthorized(self, item_service, dynamodb_stubber):
+    def test_finalize_upload_unauthorized(self, item_service, dynamodb_stubber):
         """Test completing upload when user doesn't own the item."""
         item_id = str(uuid.uuid4())
 
@@ -360,9 +360,9 @@ class TestCompleteUpload:
         )
 
         with pytest.raises(NotFoundError):
-            item_service.complete_upload("user-123", item_id)
+            item_service.finalize_upload("user-123", item_id)
 
-    def test_complete_upload_s3_object_missing(self, item_service, dynamodb_stubber, s3_stubber):
+    def test_finalize_upload_s3_object_missing(self, item_service, dynamodb_stubber, s3_stubber):
         """Test completing upload when S3 object doesn't exist."""
         item_id = str(uuid.uuid4())
 
@@ -389,7 +389,7 @@ class TestCompleteUpload:
         )
 
         with pytest.raises(BadRequestError, match="Uploaded object not found"):
-            item_service.complete_upload("user-123", item_id)
+            item_service.finalize_upload("user-123", item_id)
 
 
 class TestCleanupFailedUpload:
@@ -598,9 +598,9 @@ class TestGetItem:
 
 
 class TestGetDownloadUrl:
-    """Tests for get_download_url method."""
+    """Tests for get_content_url method."""
 
-    def test_get_download_url_success(
+    def test_get_content_url_success(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         """Test successfully generating download URL for MEDIA item."""
@@ -635,7 +635,7 @@ class TestGetDownloadUrl:
             {"Bucket": files_bucket_name, "Key": "vaults/vault-123/files/item-1/file.jpg"},
         )
 
-        download_url, expires_at, encrypted_metadata, s3_key = item_service.get_download_url(
+        content_url, expires_at, encrypted_metadata, s3_key = item_service.get_content_url(
             "user-123", "item-1"
         )
 
@@ -643,14 +643,14 @@ class TestGetDownloadUrl:
         assert encrypted_metadata == b"encrypted-metadata"
         assert expires_at is not None
 
-    def test_get_download_url_item_not_found(self, item_service, dynamodb_stubber):
+    def test_get_content_url_item_not_found(self, item_service, dynamodb_stubber):
         """Test download URL when item doesn't exist."""
         dynamodb_stubber.add_response("get_item", {}, {"TableName": "test-items-table", "Key": ANY})
 
         with pytest.raises(NotFoundError, match="Item not found"):
-            item_service.get_download_url("user-123", "nonexistent")
+            item_service.get_content_url("user-123", "nonexistent")
 
-    def test_get_download_url_unauthorized(self, item_service, dynamodb_stubber):
+    def test_get_content_url_unauthorized(self, item_service, dynamodb_stubber):
         """Test download URL when user doesn't own item."""
         dynamodb_stubber.add_response(
             "get_item",
@@ -673,9 +673,9 @@ class TestGetDownloadUrl:
         )
 
         with pytest.raises(NotFoundError, match="Item not found"):
-            item_service.get_download_url("user-123", "item-1")
+            item_service.get_content_url("user-123", "item-1")
 
-    def test_get_download_url_rejects_inline_item(self, item_service, dynamodb_stubber):
+    def test_get_content_url_rejects_inline_item(self, item_service, dynamodb_stubber):
         """Test download URL for non-MEDIA item type."""
         dynamodb_stubber.add_response(
             "get_item",
@@ -697,9 +697,9 @@ class TestGetDownloadUrl:
         )
 
         with pytest.raises(BadRequestError, match="Download URL only available for blob items"):
-            item_service.get_download_url("user-123", "item-1")
+            item_service.get_content_url("user-123", "item-1")
 
-    def test_get_download_url_pending_upload(self, item_service, dynamodb_stubber):
+    def test_get_content_url_pending_upload(self, item_service, dynamodb_stubber):
         """Test download URL when upload is still pending."""
         dynamodb_stubber.add_response(
             "get_item",
@@ -723,9 +723,9 @@ class TestGetDownloadUrl:
         )
 
         with pytest.raises(BadRequestError, match="Item upload not yet complete"):
-            item_service.get_download_url("user-123", "item-1")
+            item_service.get_content_url("user-123", "item-1")
 
-    def test_get_download_url_missing_s3_object_raises_not_found(
+    def test_get_content_url_missing_s3_object_raises_not_found(
         self, item_service, dynamodb_stubber, s3_stubber
     ):
         """S3 object absent at download time → NotFoundError, not RuntimeError."""
@@ -762,7 +762,7 @@ class TestGetDownloadUrl:
         )
 
         with pytest.raises(NotFoundError, match="File not found"):
-            item_service.get_download_url(user_id, item_id)
+            item_service.get_content_url(user_id, item_id)
 
         dynamodb_stubber.assert_no_pending_responses()
 
@@ -1004,7 +1004,7 @@ class TestCreateUploadPartUrls:
 
 
 class TestCompleteMultipartUpload:
-    """complete_upload assembles multipart parts before verifying the object."""
+    """finalize_upload assembles multipart parts before verifying the object."""
 
     def _pending(self, item_id, user_id="user-123"):
         return {
@@ -1021,7 +1021,7 @@ class TestCompleteMultipartUpload:
     def test_assembles_parts_then_completes(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
-        from src.shared.generated.models import CompleteItemUploadRequestContent, UploadPart
+        from src.shared.generated.models import FinalizeItemUploadRequestContent, UploadPart
 
         item = self._pending("item-1")
         dynamodb_stubber.add_response(
@@ -1060,10 +1060,10 @@ class TestCompleteMultipartUpload:
             },
         )
 
-        req = CompleteItemUploadRequestContent(
+        req = FinalizeItemUploadRequestContent(
             upload_id="u1", parts=[UploadPart(part_number=1, e_tag='"e1"')]
         )
-        resp = item_service.complete_upload("user-123", "item-1", req)
+        resp = item_service.finalize_upload("user-123", "item-1", req)
         assert resp.item_id == "item-1"
         s3_stubber.assert_no_pending_responses()
 
@@ -1094,27 +1094,27 @@ class TestCompleteMultipartUpload:
                 "ReturnValues": "ALL_NEW",
             },
         )
-        resp = item_service.complete_upload("user-123", "item-2", None)  # no body → single-PUT
+        resp = item_service.finalize_upload("user-123", "item-2", None)  # no body → single-PUT
         assert resp.item_id == "item-2"
 
 
-class TestAbortUpload:
-    def _pending(self, item_id, user_id="user-123"):
+class TestDeleteUpload:
+    def _pending(self, item_id, user_id="user-123", status="PENDING"):
         return {
             "PK": f"ITEM#{item_id}",
             "SK": "METADATA",
             "item_id": item_id,
             "user_id": user_id,
             "vault_id": "vault-1",
+            "storage_kind": "BLOB",
             "s3_key": f"vault-1/{item_id}",
+            "upload_status": status,
             "upload_id": "u1",
         }
 
     def test_aborts_and_deletes_pending_item(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
-        from src.shared.generated.models import AbortItemUploadRequestContent
-
         item = self._pending("item-1")
         dynamodb_stubber.add_response(
             "get_item",
@@ -1128,15 +1128,11 @@ class TestAbortUpload:
         )
         dynamodb_stubber.add_response("delete_item", {}, {"TableName": ANY, "Key": ANY})
 
-        resp = item_service.abort_upload(
-            "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
-        )
+        resp = item_service.delete_upload("user-123", "item-1")
         assert resp.message
         s3_stubber.assert_no_pending_responses()
 
     def test_rejects_foreign_item(self, item_service, dynamodb_stubber):
-        from src.shared.generated.models import AbortItemUploadRequestContent
-
         item = self._pending("item-1", user_id="someone-else")
         dynamodb_stubber.add_response(
             "get_item",
@@ -1144,9 +1140,18 @@ class TestAbortUpload:
             {"Key": ANY, "TableName": ANY},
         )
         with pytest.raises(NotFoundError):
-            item_service.abort_upload(
-                "user-123", "item-1", AbortItemUploadRequestContent(upload_id="u1")
-            )
+            item_service.delete_upload("user-123", "item-1")
+
+    def test_rejects_completed_upload(self, item_service, dynamodb_stubber):
+        """DELETE /upload is only for pending uploads; completed items use DELETE /items/{id}."""
+        item = self._pending("item-1", status="COMPLETE")
+        dynamodb_stubber.add_response(
+            "get_item",
+            {"Item": {k: {"S": str(v)} for k, v in item.items()}},
+            {"Key": ANY, "TableName": ANY},
+        )
+        with pytest.raises(BadRequestError, match="already complete"):
+            item_service.delete_upload("user-123", "item-1")
 
 
 class TestInitiateReturnsUploadId:
@@ -1165,28 +1170,28 @@ class TestInitiateReturnsUploadId:
         )
         dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
 
-        req = InitiateItemUploadRequestContent(
+        req = CreateItemUploadRequestContent(
             vault_id="vault-1",
             encrypted_metadata=base64.b64encode(b"m"),
             size_bytes=200 * 1024 * 1024,
             wrapped_dek=base64.b64encode(bytes(range(97))),
             dek_version=1,
         )
-        resp = item_service.initiate_upload("user-123", req)
+        resp = item_service.create_item_upload("user-123", req)
         assert resp.upload_id == "mp-123"
 
     def test_single_put_has_no_upload_id(
         self, item_service, dynamodb_stubber, s3_stubber, files_bucket_name
     ):
         dynamodb_stubber.add_response("put_item", {}, {"Item": ANY, "TableName": ANY})
-        req = InitiateItemUploadRequestContent(
+        req = CreateItemUploadRequestContent(
             vault_id="vault-1",
             encrypted_metadata=base64.b64encode(b"m"),
             size_bytes=1024,
             wrapped_dek=base64.b64encode(bytes(range(97))),
             dek_version=1,
         )
-        resp = item_service.initiate_upload("user-123", req)
+        resp = item_service.create_item_upload("user-123", req)
         assert resp.upload_id is None
 
 

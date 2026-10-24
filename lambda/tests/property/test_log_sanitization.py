@@ -24,7 +24,7 @@ from botocore.stub import ANY
 
 from src.shared.generated.models import (
     CreateItemRequestContent,
-    InitiateItemUploadRequestContent,
+    CreateItemUploadRequestContent,
 )
 from src.shared.models import ItemType
 from tests.fixtures.vault_deletion import (
@@ -217,13 +217,13 @@ class TestRuntimeLogCapture:
         entries = self._capture_log_entries(capsys)
         self._assert_no_banned_fields(entries, "create_item")
 
-    def test_item_service_initiate_upload_log_has_no_user_id(
+    def test_item_service_create_item_upload_log_has_no_user_id(
         self, item_service, dynamodb_stubber, capsys
     ):
-        """initiate_upload logs item_id + size_bytes, never user_id or s3_key."""
+        """create_item_upload logs item_id + size_bytes, never user_id or s3_key."""
         import base64
 
-        request = InitiateItemUploadRequestContent(
+        request = CreateItemUploadRequestContent(
             vault_id="vault-456",
             encrypted_metadata=base64.b64encode(b"opaque"),
             size_bytes=1024,
@@ -234,10 +234,10 @@ class TestRuntimeLogCapture:
         # client-side, no S3 API call, so no s3_stubber needed).
         dynamodb_stubber.add_response("put_item", {}, {"TableName": self.ITEMS_TABLE, "Item": ANY})
 
-        item_service.initiate_upload("user-abc-123", request)
+        item_service.create_item_upload("user-abc-123", request)
 
         entries = self._capture_log_entries(capsys)
-        self._assert_no_banned_fields(entries, "initiate_upload")
+        self._assert_no_banned_fields(entries, "create_item_upload")
 
     def test_collection_service_create_collection_log_has_no_user_id(
         self, collection_service, dynamodb_stubber, capsys
